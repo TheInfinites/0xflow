@@ -1,3 +1,6 @@
+.claude/
+CODEBASE.md
+TAURI_MIGRATION.md
 node_modules/
 src-tauri/target/
 src-tauri/gen/
