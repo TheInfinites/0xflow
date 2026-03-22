@@ -82,6 +82,42 @@ body.on-canvas.light #dot-grid {
     linear-gradient(rgba(0,0,0,0.03) 1px, transparent 1px),
     linear-gradient(90deg, rgba(0,0,0,0.03) 1px, transparent 1px) !important;
 }
+body.on-canvas.light #img-ctx-menu {
+  background: rgba(255,255,255,0.92);
+  border-color: rgba(0,0,0,0.12);
+}
+body.on-canvas.light .ictx-item {
+  color: rgba(0,0,0,0.7);
+}
+body.on-canvas.light .ictx-item:hover {
+  background: rgba(0,0,0,0.06);
+  color: rgba(0,0,0,0.9);
+}
+body.on-canvas.light .ictx-item svg { color: rgba(0,0,0,0.4); }
+body.on-canvas.light .fb-panel {
+  background: rgba(255,255,255,0.92);
+  border-color: rgba(0,0,0,0.12);
+}
+body.on-canvas.light .fb-header { color: rgba(0,0,0,0.7); }
+body.on-canvas.light .fb-folder-item {
+  color: rgba(0,0,0,0.65);
+}
+body.on-canvas.light .fb-folder-item:hover,
+body.on-canvas.light .fb-folder-item.active {
+  background: rgba(0,0,0,0.06);
+  color: rgba(0,0,0,0.9);
+}
+body.on-canvas.light .fb-folder-item .fb-chevron { color: rgba(0,0,0,0.2); }
+body.on-canvas.light .fb-action-btn {
+  color: rgba(0,0,0,0.5);
+  border-color: rgba(0,0,0,0.1);
+}
+body.on-canvas.light .fb-action-btn:hover {
+  background: rgba(0,0,0,0.06);
+  border-color: rgba(0,0,0,0.18);
+  color: rgba(0,0,0,0.85);
+}
+body.on-canvas.light .fb-empty { color: rgba(0,0,0,0.3); }
 
 html, body {
   width: 100%; height: 100%;
@@ -288,27 +324,27 @@ body.dash-light #dash-content {
 /* grid */
 #project-grid {
   display: grid; grid-template-columns: repeat(3, 1fr);
-  gap: 1px; background: rgba(255,255,255,0.05);
+  gap: 10px; padding: 16px; background: transparent;
 }
-@media (min-width: 1800px) { #project-grid { grid-template-columns: repeat(6, 1fr); } }
-@media (min-width: 1400px) and (max-width: 1799px) { #project-grid { grid-template-columns: repeat(5, 1fr); } }
-@media (min-width: 1100px) and (max-width: 1399px) { #project-grid { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 1800px) { #project-grid { grid-template-columns: repeat(5, 1fr); } }
+@media (min-width: 1400px) and (max-width: 1799px) { #project-grid { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 1100px) and (max-width: 1399px) { #project-grid { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 900px) { #project-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 580px) { #project-grid { grid-template-columns: 1fr; } }
-#project-grid.list-view { grid-template-columns: 1fr !important; }
+#project-grid.list-view { grid-template-columns: 1fr !important; gap: 2px; padding: 8px 16px; }
 
 .project-card.dragging { opacity: 0.25; pointer-events: none; }
 .project-card[draggable="true"] { cursor: grab; }
 
 /* card */
 .project-card {
-  background: #0a0a0a; cursor: pointer; position: relative; overflow: hidden;
-  transition: background 0.1s; animation: fadeUp 0.18s ease both;
-  min-height: 148px; padding: 20px;
+  background: #131314; cursor: pointer; position: relative; overflow: hidden;
+  transition: background 0.15s, border-color 0.15s;
+  min-height: 148px; padding: 22px;
   display: flex; flex-direction: column; justify-content: space-between;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.07); border-radius: 8px;
 }
-.project-card:hover { background: rgba(255,255,255,0.03); }
+.project-card:hover { background: #1a1a1c; border-color: rgba(255,255,255,0.14); }
 
 .project-card:hover .card-actions { opacity: 1; }
 .card-thumb { display: none !important; }
@@ -346,7 +382,7 @@ body.dash-light #dash-content {
 .card-action-btn:hover { color: rgba(255,255,255,0.75); }
 
 /* list view adjustments */
-#project-grid.list-view .project-card { min-height: 48px; padding: 0 20px; flex-direction: row; align-items: center; }
+#project-grid.list-view .project-card { min-height: 48px; padding: 0 20px; flex-direction: row; align-items: center; border-radius: 6px; }
 #project-grid.list-view .card-body { flex-direction: row; align-items: center; gap: 16px; }
 #project-grid.list-view .card-index { display: none; }
 #project-grid.list-view .card-name { font-size: 16px; }
@@ -354,17 +390,18 @@ body.dash-light #dash-content {
 
 /* new project card */
 .new-project-card {
-  background: #0a0a0a; border: none; border-bottom: 1px solid rgba(255,255,255,0.05); cursor: pointer; transition: background 0.1s;
+  background: transparent; border: 1px dashed rgba(255,255,255,0.08); border-radius: 8px; cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
   display: flex; flex-direction: column; align-items: flex-start;
-  justify-content: flex-end; min-height: 148px; padding: 20px;
-  color: rgba(255,255,255,0.18); animation: fadeUp 0.2s ease both; position: relative;
+  justify-content: flex-end; min-height: 148px; padding: 22px;
+  color: rgba(255,255,255,0.18); position: relative;
 }
 .new-project-card::before {
   content: '+'; position: absolute; top: 14px; left: 20px;
   font-family: 'Barlow Condensed', sans-serif; font-size: 52px; font-weight: 700;
   color: rgba(255,255,255,0.05); line-height: 1; transition: color 0.1s; pointer-events: none;
 }
-.new-project-card:hover { background: rgba(255,255,255,0.03); color: rgba(255,255,255,0.4); }
+.new-project-card:hover { background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.15); color: rgba(255,255,255,0.4); }
 .new-project-card:hover::before { color: rgba(232,68,10,0.12); }
 .new-project-card svg { display: none; }
 .new-project-card span { font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: inherit; }
@@ -572,10 +609,9 @@ body.dash-light .sort-btn.active { color: rgba(0,0,0,0.85); }
 body.dash-light .view-btn { border-left-color: rgba(0,0,0,0.1); color: rgba(0,0,0,0.3); }
 body.dash-light .view-btn:hover { color: rgba(0,0,0,0.7); }
 body.dash-light .view-btn.active { color: rgba(0,0,0,0.85); }
-body.dash-light #project-grid { background: rgba(0,0,0,0.1); }
-body.dash-light .project-card { background: #F0EDE8; border-bottom-color: rgba(0,0,0,0.07);
-}
-body.dash-light .project-card:hover { background: #E6E2DC; }
+body.dash-light #project-grid { background: transparent; }
+body.dash-light .project-card { background: #f5f2ed; border-color: rgba(0,0,0,0.08); }
+body.dash-light .project-card:hover { background: #eae7e1; border-color: rgba(0,0,0,0.14); }
 body.dash-light .card-index { color: rgba(0,0,0,0.2); }
 body.dash-light .card-index-line { background: rgba(0,0,0,0.08); }
 body.dash-light .card-name { color: rgba(0,0,0,0.85); }
@@ -583,8 +619,8 @@ body.dash-light .card-meta { color: rgba(0,0,0,0.3); }
 body.dash-light .card-arrow { color: rgba(0,0,0,0.4); }
 body.dash-light .card-action-btn { color: rgba(0,0,0,0.3); }
 body.dash-light .card-action-btn:hover { color: rgba(0,0,0,0.7); }
-body.dash-light .new-project-card { background: #F0EDE8; border-bottom-color: rgba(0,0,0,0.07); color: rgba(0,0,0,0.2); }
-body.dash-light .new-project-card:hover { background: #E6E2DC; color: rgba(0,0,0,0.5); }
+body.dash-light .new-project-card { background: transparent; border-color: rgba(0,0,0,0.12); color: rgba(0,0,0,0.2); }
+body.dash-light .new-project-card:hover { background: rgba(0,0,0,0.03); border-color: rgba(0,0,0,0.2); color: rgba(0,0,0,0.5); }
 body.dash-light #card-ctx-menu { background: #F0EDE8; border-color: rgba(0,0,0,0.14); }
 body.dash-light .ctx-item { color: rgba(0,0,0,0.5); }
 body.dash-light .ctx-item:hover { background: rgba(0,0,0,0.05); color: rgba(0,0,0,0.85); }
@@ -657,7 +693,7 @@ body.dash-light #toast { background: #1a1a1a; }
 /* top bar */
 #bar {
   position: fixed; top: 0; left: 0; right: 0; height: 48px; z-index: 900;
-  display: flex; align-items: center; justify-content: space-between; padding: 0 16px;
+  display: flex; align-items: center; justify-content: space-between; padding: 0 16px; gap: 12px;
   background: rgba(10,10,10,0.92); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
   border-bottom: 1px solid rgba(255,255,255,0.06);
 }
@@ -671,7 +707,7 @@ body.dash-light #toast { background: #1a1a1a; }
 }
 .win-ctrl:hover { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.9); }
 .win-close:hover { background: #e81123; color: #fff; }
-#bar-left { display: flex; align-items: center; gap: 10px; }
+#bar-left { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 #back-btn {
   height: 26px; padding: 0 12px;
   background: transparent; border: 1px solid rgba(255,255,255,0.1); border-radius: 0;
@@ -701,8 +737,8 @@ body.dash-light #toast { background: #1a1a1a; }
   color: rgba(255,255,255,0.85); background: rgba(255,255,255,0.07); border: 1px solid rgba(232,68,10,0.5);
   border-radius: 3px; padding: 1px 5px; outline: none; width: 180px; max-width: 220px;
 }
-#bar-center { display: flex; align-items: center; gap: 2px; position: absolute; left: 50%; transform: translateX(-50%); }
-#bar-right { display: flex; align-items: center; gap: 2px; }
+#bar-center { display: flex; align-items: center; gap: 4px; margin: 0 auto; flex-shrink: 0; }
+#bar-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 
 .bar-btn {
   height: 26px; padding: 0 10px;
@@ -713,8 +749,6 @@ body.dash-light #toast { background: #1a1a1a; }
 }
 .bar-btn svg { width: 11px; height: 11px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .bar-btn:hover { color: rgba(255,255,255,0.75); border-color: rgba(255,255,255,0.2); }
-.bar-btn.primary { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.18); color: rgba(255,255,255,0.85); }
-.bar-btn.primary:hover { background: rgba(255,255,255,0.1); }
 .bar-btn:disabled { opacity: 0.25; cursor: default; }
 
 /* toolbar — bottom center */
@@ -1242,7 +1276,7 @@ body.dash-light #toast { background: #1a1a1a; }
 #sel-bar {
   position: fixed; z-index: 2000; display: none; align-items: center; gap: 0;
   background: rgba(10,10,10,0.95); backdrop-filter: blur(20px);
-  border: 1px solid rgba(255,255,255,0.1); border-radius: 0; padding: 4px 5px;
+  border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 4px 5px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.5); transform: translateX(-50%); pointer-events: all;
 }
 #sel-bar.show { display: flex; }
@@ -1274,6 +1308,7 @@ body.dash-light #toast { background: #1a1a1a; }
   backdrop-filter: blur(16px); white-space: nowrap; z-index: 100;
 }
 .img-card.selected .img-toolbar { display: flex; }
+body.has-sel-bar .img-toolbar { display: none !important; }
 .img-tb-btn { height: 22px; padding: 0 8px; background: none; border: 1px solid transparent; border-radius: 0; font-family: 'Geist Mono', monospace; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255,255,255,0.4); cursor: pointer; transition: all 0.1s; white-space: nowrap; }
 .img-tb-btn:hover { color: rgba(255,255,255,0.85); background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.1); }
 .img-tb-btn.danger:hover { color: #E8440A; }
@@ -1575,10 +1610,8 @@ html, body, #bar, #toolbar, #status, .note, .img-card, .bar-btn, .t, .sel-btn, #
       <button class="bar-btn" onclick="clearAll()">clear</button>
       <button class="bar-btn" onclick="triggerImg()">image</button>
       <button class="bar-btn" onclick="summariseCanvas()">✦ summarise</button>
-      <button class="bar-btn" onclick="clusterCanvas()">✦ cluster</button>
       <button class="bar-btn" onclick="openExportPanel()">↑ export</button>
       <button class="bar-btn" id="proj-dir-btn" onclick="pickProjectDir()" title="Set project directory for file operations">📁 project dir</button>
-      <button class="bar-btn primary" onclick="addNote()">+ note</button>
       <div id="win-controls" style="display:none;margin-left:12px;gap:1px;align-items:center;">
         <button class="win-ctrl" id="win-min" title="Minimize">─</button>
         <button class="win-ctrl" id="win-max" title="Maximize">□</button>
@@ -1626,6 +1659,7 @@ html, body, #bar, #toolbar, #status, .note, .img-card, .bar-btn, .t, .sel-btn, #
     <div class="sep"></div>
     <button class="t" id="tb-brainstorm" data-tip="AI brainstorm  b" onclick="toggleBrainstorm()" style=""><svg viewBox="0 0 15 15"><path d="M7.5 2a4 4 0 014 4c0 1.5-.8 2.8-2 3.5V11h-4V9.5C4.3 8.8 3.5 7.5 3.5 6a4 4 0 014-4z"/><line x1="5.5" y1="13" x2="9.5" y2="13"/><line x1="6.5" y1="11" x2="6.5" y2="13"/><line x1="8.5" y1="11" x2="8.5" y2="13"/></svg></button>
     <button class="t" id="tb-ai" data-tip="AI note  i" onclick="addAiNote()" style="color:#E8440A;"><svg viewBox="0 0 15 15"><circle cx="7.5" cy="7.5" r="5.5" stroke-width="1.2"/><path d="M5 7.5h5M7.5 5v5" stroke-width="1.2"/><circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/></svg></button>
+    <button class="t" id="tb-cluster" data-tip="AI cluster  c" onclick="clusterCanvas()"><svg viewBox="0 0 15 15"><circle cx="4" cy="4" r="2"/><circle cx="11" cy="4" r="2"/><circle cx="7.5" cy="11" r="2"/><line x1="5.5" y1="5" x2="6.5" y2="9.5"/><line x1="9.5" y1="5" x2="8.5" y2="9.5"/><line x1="6" y1="4" x2="9" y2="4"/></svg></button>
     <div class="sep"></div>
     <button class="t" data-tip="zoom in  +" onclick="doZoom(0.15)"><svg viewBox="0 0 15 15"><circle cx="6.5" cy="6.5" r="4"/><line x1="9.8" y1="9.8" x2="13" y2="13"/><line x1="6.5" y1="4.5" x2="6.5" y2="8.5"/><line x1="4.5" y1="6.5" x2="8.5" y2="6.5"/></svg></button>
     <button class="t" data-tip="zoom out  -" onclick="doZoom(-0.15)"><svg viewBox="0 0 15 15"><circle cx="6.5" cy="6.5" r="4"/><line x1="9.8" y1="9.8" x2="13" y2="13"/><line x1="4.5" y1="6.5" x2="8.5" y2="6.5"/></svg></button>
@@ -1862,9 +1896,7 @@ const ACCENT_COLORS = [null,null,null,'rgba(180,100,100,0.8)','rgba(100,140,180,
 
 // seed demo data once
 if(projects.length===0){
-  [['product brainstorm',8],['q3 planning',5],['user research',3]].forEach(([name,n],i)=>{
-    projects.push({id:'demo_'+i,name,createdAt:Date.now()-i*172800000,updatedAt:Date.now()-i*86400000,noteCount:n,accent:[null,'rgba(100,140,180,0.8)',null][i],folderId:null});
-  });
+  projects.push({id:'demo_0',name:'untitled',createdAt:Date.now(),updatedAt:Date.now(),noteCount:0,accent:null,folderId:null});
   saveProjects(projects);
 }
 // migrate old projects without folderId
@@ -2487,7 +2519,7 @@ function clearSelection(){ selected.forEach(el=>{el.classList.remove('selected')
 function updateSelBar(){
   const n=selected.size; selCount.textContent=n+(n===1?' item':' items');
   if(n>0){
-    selBar.classList.add('show');positionSelBar();
+    selBar.classList.add('show');document.body.classList.add('has-sel-bar');positionSelBar();
     // show align buttons only when 2+ non-SVG items selected
     const domEls=[...selected].filter(e=>!(e instanceof SVGElement));
     const alignDiv=document.getElementById('sel-align');
@@ -2506,7 +2538,7 @@ function updateSelBar(){
     const lockBtn=document.getElementById('sel-lock-btn');
     if(lockLabel) lockLabel.textContent=allLocked?'unlock':'lock';
     if(lockBtn) lockBtn.style.color=allLocked?'#E8440A':'';
-  }else{selBar.classList.remove('show');}
+  }else{selBar.classList.remove('show');document.body.classList.remove('has-sel-bar');}
 }
 
 function getElBounds(el) {
@@ -2599,7 +2631,7 @@ function positionSelBar(){
     mnX=Math.min(mnX,r.left);mnY=Math.min(mnY,r.top);mxX=Math.max(mxX,r.right);mxY=Math.max(mxY,r.bottom);
   });
   if(mnX===Infinity) return;
-  selBar.style.left=(mnX+mxX)/2+'px'; selBar.style.top=Math.max(50,mnY-46)+'px';
+  selBar.style.left=(mnX+mxX)/2+'px'; selBar.style.top=Math.max(50,mnY-52)+'px';
 }
 function getElementsInsideFrame(frame) {
   const fl = parseFloat(frame.style.left) || 0;
@@ -5133,7 +5165,7 @@ if (IS_TAURI) {
   border-radius: 6px;
   padding: 3px;
   min-width: 200px;
-  box-shadow: 0 16px 48px rgba(0,0,0,0.7);
+  box-shadow: none;
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   display: none;
@@ -5198,7 +5230,7 @@ if (IS_TAURI) {
   min-width: 180px;
   max-height: 300px;
   overflow-y: auto;
-  box-shadow: 0 16px 48px rgba(0,0,0,0.7);
+  box-shadow: none;
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   flex-shrink: 0;
@@ -5421,11 +5453,12 @@ function setDragLine(x1, y1, x2, y2) {
   let line = svg.querySelector('line');
   if (!line) {
     line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    line.setAttribute('stroke', 'rgba(255,255,255,0.18)');
     line.setAttribute('stroke-width', '1');
     line.setAttribute('stroke-dasharray', '5 5');
     svg.appendChild(line);
   }
+  const isLight = document.body.classList.contains('light');
+  line.setAttribute('stroke', isLight ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.35)');
   line.setAttribute('x1', x1 - ox); line.setAttribute('y1', y1 - oy);
   line.setAttribute('x2', x2 - ox); line.setAttribute('y2', y2 - oy);
   svg.style.display = 'block';
@@ -5507,6 +5540,7 @@ function openImgCtxMenu(x, y, card) {
 function closeImgCtxMenu() {
   imgCtxMenu.classList.remove('show');
   _ctxCard = null;
+  clearDragLine();
 }
 
 function closeAllFolderUI() {
@@ -5635,6 +5669,7 @@ async function buildFolderPanel(dirPath, depth, x, y) {
         _hoverTimer = setTimeout(() => {
           const rect = item.getBoundingClientRect();
           const panelRect = panel.getBoundingClientRect();
+          // Pass right edge as x; buildFolderPanel will flip if needed
           buildFolderPanel(path, depth + 1, panelRect.right + 4, rect.top);
         }, 80);
       });
@@ -5642,17 +5677,38 @@ async function buildFolderPanel(dirPath, depth, x, y) {
     });
   }
 
-  // Position panel
-  panel.style.left = (x || 0) + 'px';
-  panel.style.top = (y || 0) + 'px';
+  // Position panel — place offscreen first to measure
+  panel.style.left = '-9999px';
+  panel.style.top = '-9999px';
   folderBrowser.appendChild(panel);
 
-  // Clamp to viewport
+  // Smart positioning: flip to left if no room on right, flip up if no room below
   requestAnimationFrame(() => {
     const vw = window.innerWidth, vh = window.innerHeight;
-    const pr = panel.getBoundingClientRect();
-    if (pr.right > vw - 8) panel.style.left = Math.max(8, vw - pr.width - 8) + 'px';
-    if (pr.bottom > vh - 8) panel.style.top = Math.max(8, vh - pr.height - 8) + 'px';
+    const pw = panel.offsetWidth, ph = panel.offsetHeight;
+    const margin = 8;
+
+    let finalX = x || 0;
+    let finalY = y || 0;
+
+    // Horizontal: if panel overflows right, try placing to the left of the parent panel
+    if (finalX + pw > vw - margin && depth > 0) {
+      const prevPanel = folderBrowser.children[depth - 1];
+      if (prevPanel) {
+        const prevRect = prevPanel.getBoundingClientRect();
+        finalX = prevRect.left - pw - 4;
+      }
+    }
+    // Still overflows? clamp to viewport edge
+    if (finalX + pw > vw - margin) finalX = vw - pw - margin;
+    if (finalX < margin) finalX = margin;
+
+    // Vertical: if panel overflows bottom, shift up so bottom aligns with viewport
+    if (finalY + ph > vh - margin) finalY = vh - ph - margin;
+    if (finalY < margin) finalY = margin;
+
+    panel.style.left = finalX + 'px';
+    panel.style.top = finalY + 'px';
   });
 }
 </script>
