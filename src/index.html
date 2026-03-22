@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>freeflow</title>
+<!-- Mock Tauri APIs for browser dev mode (no-op inside real Tauri) -->
+<script src="./tauri-mock.js"></script>
 <!-- Fonts bundled locally -->
 <style>
 @font-face { font-family: 'Geist Mono'; font-weight: 300; src: url('./fonts/GeistMono-Light.ttf'); }
@@ -1575,6 +1577,7 @@ html, body, #bar, #toolbar, #status, .note, .img-card, .bar-btn, .t, .sel-btn, #
       <button class="bar-btn" onclick="summariseCanvas()">✦ summarise</button>
       <button class="bar-btn" onclick="clusterCanvas()">✦ cluster</button>
       <button class="bar-btn" onclick="openExportPanel()">↑ export</button>
+      <button class="bar-btn" id="proj-dir-btn" onclick="pickProjectDir()" title="Set project directory for file operations">📁 project dir</button>
       <button class="bar-btn primary" onclick="addNote()">+ note</button>
       <div id="win-controls" style="display:none;margin-left:12px;gap:1px;align-items:center;">
         <button class="win-ctrl" id="win-min" title="Minimize">─</button>
@@ -2703,6 +2706,7 @@ function syncInkPointerEvents(){
 cv.addEventListener('mousedown',e=>{
   if(panning||e.button!==0) return;
   closeMenu();
+  if(imgCtxMenu.classList.contains('show')) closeAllFolderUI();
   if(curTool==='arrow'){arrowSt=c2w(e.clientX,e.clientY);return;}
   if(curTool==='pen'||curTool==='eraser') return;
   if(curTool==='text') return;
@@ -2722,6 +2726,7 @@ cv.addEventListener('mousedown',e=>{
 });
 
 function onElemMouseDown(e){
+  if(e.button===0 && imgCtxMenu.classList.contains('show')) closeAllFolderUI();
   if(e.target.tagName==='TEXTAREA'||e.target.tagName==='BUTTON') return;
   if(curTool==='arrow') return;
   if(e.currentTarget.classList.contains('locked')){e.stopPropagation();return;}
@@ -2776,6 +2781,7 @@ document.addEventListener('mouseup',()=>{ if(_sdEl){_sdEl.classList.remove('drag
 cv.addEventListener('dblclick',e=>{ if(e.target!==cv&&e.target!==world&&!e.target.closest('#ink'))return; if(curTool==='text')return; const p=c2w(e.clientX,e.clientY);snapshot();makeNote(p.x-100,p.y-64); });
 cv.addEventListener('click',e=>{ if(curTool!=='text')return; if(e.target!==cv&&e.target!==world)return; const p=c2w(e.clientX,e.clientY);makeLabel(p.x,p.y); });
 cv.addEventListener('mousedown',e=>{
+  if(e.button===0 && imgCtxMenu.classList.contains('show')) closeAllFolderUI();
   // deselect and unfocus when clicking on empty canvas
   if(!e.target.closest('.note,.lbl,.ai-note,.img-card,.frame,.stroke-wrap')){
     clearSelection();
@@ -3597,7 +3603,7 @@ cv.addEventListener('mouseup',e=>{
 // ════════════════════════════════════════════
 // IMAGE STORE — Tauri filesystem (with IndexedDB fallback for browser)
 // ════════════════════════════════════════════
-const IS_TAURI = !!(window.__TAURI__);
+const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 
 // ── Tauri filesystem image store ──
 let _tauriImagesDir = null;
@@ -3698,7 +3704,7 @@ async function getBlobURL(id) {
 }
 
 // ── place image from File/Blob at canvas centre (or given world coords) ──
-async function placeImageBlob(blob, wx, wy) {
+async function placeImageBlob(blob, wx, wy, sourcePath) {
   // First convert to a stable data URL so it always works (no blob URL expiry issues)
   const dataURL = await new Promise((res, rej) => {
     const reader = new FileReader();
@@ -3729,7 +3735,10 @@ async function placeImageBlob(blob, wx, wy) {
   }
 
   snapshot();
-  makeImgCard(id, dataURL, wx, wy, dispW, dispH, nw, nh);
+  const card = makeImgCard(id, dataURL, wx, wy, dispW, dispH, nw, nh);
+  // In browser mock mode, assign a fake source path so file-op UI can be tested
+  if (sourcePath) card.dataset.sourcePath = sourcePath;
+  else if (!IS_TAURI) card.dataset.sourcePath = 'D:\\art\\test\\' + (blob.name || id + '.png');
 }
 
 function makeImgCard(id, url, x, y, w, h, nw, nh) {
@@ -3780,12 +3789,13 @@ function makeImgCard(id, url, x, y, w, h, nw, nh) {
   card.style.opacity = '0'; card.style.transform = 'scale(0.95)';
   card.style.transition = 'opacity 0.18s, transform 0.18s';
   requestAnimationFrame(() => { card.style.opacity = '1'; card.style.transform = 'scale(1)'; });
-  return card;
+  return card; // always return so callers can set dataset attributes
 }
 
 function bindImgCard(card) {
   card.addEventListener('mousedown', e => {
     if (e.target.classList.contains('img-resize') || e.target.closest('.img-toolbar')) return;
+    if (e.button === 2) { startImgRightDrag(e, card); return; }
     onElemMouseDown(e);
   });
 }
@@ -3934,7 +3944,7 @@ if (IS_TAURI) {
                           bmp:'image/bmp', webp:'image/webp', svg:'image/svg+xml', ico:'image/x-icon',
                           tiff:'image/tiff', avif:'image/avif' };
         const blob = new Blob([data], { type: mimeMap[ext] || 'image/png' });
-        await placeImageBlob(blob, dropPos.x + offset, dropPos.y + offset);
+        await placeImageBlob(blob, dropPos.x + offset, dropPos.y + offset, filePath);
         offset += 30;
       } catch (e) { console.error('Failed to load dropped image:', filePath, e); }
     }
@@ -5082,6 +5092,568 @@ if (IS_TAURI) {
     // Expose for manual trigger from UI
     window.checkForAppUpdate = checkForAppUpdate;
   })();
+}
+</script>
+
+<!-- ══════════════════════════════════════════
+     IMG RIGHT-CLICK CONTEXT MENU + FOLDER BROWSER
+══════════════════════════════════════════ -->
+<div id="img-ctx-menu">
+  <div class="ictx-item" data-action="move-copy">
+    <span class="ictx-icon">
+      <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 4h2l1-1.5h4L10 4h2a1 1 0 011 1v5a1 1 0 01-1 1H2a1 1 0 01-1-1V5a1 1 0 011-1z"/>
+      </svg>
+    </span>
+    Move / Copy to folder
+    <span class="ictx-chevron">›</span>
+  </div>
+  <div class="ictx-sep"></div>
+  <div class="ictx-item ictx-disabled" data-action="placeholder1">
+    <span class="ictx-icon">
+      <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="7" cy="7" r="5.5"/>
+        <line x1="7" y1="4" x2="7" y2="7.5"/>
+        <circle cx="7" cy="9.5" r="0.6" fill="currentColor" stroke="none"/>
+      </svg>
+    </span>
+    More options coming soon
+  </div>
+</div>
+
+<div id="folder-browser"></div>
+
+<style>
+/* ── img right-click context menu ── */
+#img-ctx-menu {
+  position: fixed;
+  z-index: 9999;
+  background: rgba(12,12,13,0.97);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 6px;
+  padding: 3px;
+  min-width: 200px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.7);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  display: none;
+  user-select: none;
+}
+#img-ctx-menu.show { display: block; }
+
+.ictx-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  letter-spacing: 0.01em;
+  color: rgba(255,255,255,0.75);
+  cursor: default;
+  transition: background 0.08s, color 0.08s;
+}
+.ictx-item:hover { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.95); }
+.ictx-item.ictx-disabled { color: rgba(255,255,255,0.2); pointer-events: none; }
+.ictx-icon {
+  width: 13px; height: 13px;
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: rgba(255,255,255,0.3);
+}
+.ictx-icon svg { width: 13px; height: 13px; }
+.ictx-chevron {
+  margin-left: auto;
+  color: rgba(255,255,255,0.2);
+  font-size: 13px;
+  line-height: 1;
+}
+.ictx-sep {
+  height: 1px;
+  background: rgba(255,255,255,0.05);
+  margin: 3px 0;
+}
+
+/* ── cascading folder browser ── */
+#folder-browser {
+  position: fixed;
+  z-index: 9998;
+  display: none;
+  pointer-events: none;
+  inset: 0;
+}
+#folder-browser.show {
+  display: block;
+  pointer-events: none; /* container never intercepts — only panels do */
+}
+#folder-browser.show .fb-panel {
+  pointer-events: auto;
+}
+.fb-panel {
+  position: absolute;
+  background: rgba(12,12,13,0.97);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 6px;
+  padding: 3px;
+  min-width: 180px;
+  max-height: 300px;
+  overflow-y: auto;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.7);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  flex-shrink: 0;
+  scrollbar-width: none;
+}
+.fb-panel::-webkit-scrollbar { display: none; }
+
+.fb-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px 6px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.28);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  margin-bottom: 3px;
+}
+.fb-header svg { opacity: 0.5; }
+
+.fb-action-row {
+  display: flex;
+  gap: 4px;
+  padding: 4px 6px 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  margin-bottom: 3px;
+}
+.fb-action-btn {
+  flex: 1;
+  padding: 5px 0;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: transparent;
+  color: rgba(255,255,255,0.5);
+  font-size: 11px;
+  font-family: inherit;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.fb-action-btn:hover {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.15);
+  color: rgba(255,255,255,0.9);
+}
+.fb-action-btn.move:hover { color: #e8876a; border-color: rgba(232,135,106,0.3); }
+.fb-action-btn.copy:hover { color: #6ab4e8; border-color: rgba(106,180,232,0.3); }
+
+.fb-folder-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.65);
+  cursor: default;
+  transition: background 0.08s, color 0.08s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fb-folder-item:hover, .fb-folder-item.active {
+  background: rgba(255,255,255,0.07);
+  color: rgba(255,255,255,0.92);
+}
+.fb-folder-item svg { width: 12px; height: 12px; flex-shrink: 0; color: rgba(255,190,60,0.55); }
+.fb-folder-item .fb-chevron { margin-left: auto; color: rgba(255,255,255,0.18); font-size: 12px; flex-shrink: 0; }
+.fb-empty { padding: 10px; font-size: 11px; color: rgba(255,255,255,0.18); text-align: center; letter-spacing: 0.03em; }
+.fb-no-dir { padding: 12px 10px; font-size: 11px; color: rgba(255,255,255,0.2); text-align: center; line-height: 1.6; letter-spacing: 0.03em; }
+</style>
+
+<script>
+// ══════════════════════════════════════════
+// PROJECT DIRECTORY + FILE OPERATIONS
+// ══════════════════════════════════════════
+
+let _projectDir = null; // absolute path set by user
+
+async function pickProjectDir() {
+  if (IS_TAURI) {
+    try {
+      const { open } = window.__TAURI__.dialog || window.__TAURI__?.plugin?.dialog || {};
+      if (!open) { showToast('Dialog plugin not available'); return; }
+      const dir = await open({ directory: true, multiple: false, title: 'Select project directory' });
+      if (dir) {
+        _projectDir = dir;
+        document.getElementById('proj-dir-btn').textContent = '📁 ' + dir.split(/[\\/]/).pop();
+        showToast('Project dir: ' + dir);
+      }
+    } catch (e) {
+      console.warn('pickProjectDir error:', e);
+      showToast('Could not open folder picker');
+    }
+  } else {
+    // Browser mock: prompt for a fake path so UI can be tested
+    const fake = prompt('Enter a mock project directory path (browser mode):', 'D:\\art\\test');
+    if (fake) {
+      _projectDir = fake;
+      document.getElementById('proj-dir-btn').textContent = '📁 ' + fake.split(/[\\/]/).pop();
+      showToast('Project dir set (mock): ' + fake);
+    }
+  }
+}
+
+// Read subdirectories of a given path
+async function listSubdirs(dirPath) {
+  if (IS_TAURI) {
+    try {
+      const { readDir, stat } = window.__TAURI__.fs;
+      console.log('[listSubdirs] readDir:', dirPath);
+      const entries = await readDir(dirPath);
+      console.log('[listSubdirs] raw entries:', JSON.stringify(entries));
+      const results = [];
+      for (const e of entries) {
+        console.log('[listSubdirs] entry:', JSON.stringify(e));
+        if (!e.name || e.name.startsWith('.')) continue;
+        let isDir = e.isDirectory;
+        if (isDir === undefined) {
+          try {
+            const info = await stat(dirPath + '\\' + e.name);
+            console.log('[listSubdirs] stat result for', e.name, ':', JSON.stringify(info));
+            isDir = info.isDirectory;
+          } catch (se) {
+            console.warn('[listSubdirs] stat failed for', e.name, se);
+            isDir = false;
+          }
+        }
+        if (isDir) results.push({ name: e.name, path: dirPath + '\\' + e.name });
+      }
+      console.log('[listSubdirs] final results:', results);
+      return results.sort((a, b) => a.name.localeCompare(b.name));
+    } catch (e) {
+      console.warn('[listSubdirs] readDir error:', e);
+      return [];
+    }
+  } else {
+    // Mock: return fake subdirs for browser testing
+    const mockTree = {
+      'D:\\art\\test': [
+        { name: 'New folder', path: 'D:\\art\\test\\New folder' },
+        { name: 'New folder (2)', path: 'D:\\art\\test\\New folder (2)' },
+        { name: 'New folder (3)', path: 'D:\\art\\test\\New folder (3)' },
+      ],
+      'D:\\art\\test\\New folder': [
+        { name: 'subfolder A', path: 'D:\\art\\test\\New folder\\subfolder A' },
+      ],
+      'D:\\art\\test\\New folder (2)': [],
+      'D:\\art\\test\\New folder (3)': [
+        { name: 'deep', path: 'D:\\art\\test\\New folder (3)\\deep' },
+      ],
+    };
+    return mockTree[dirPath] || [];
+  }
+}
+
+// Copy or move a file on disk, update the canvas card's sourcePath
+async function execFileOp(op, card, destDir) {
+  const sourcePath = card.dataset.sourcePath;
+  if (!sourcePath) {
+    showToast('No source path — image was not imported from disk');
+    closeAllFolderUI();
+    return;
+  }
+  const fileName = sourcePath.split(/[\\/]/).pop();
+  const sep = destDir.includes('\\') ? '\\' : '/';
+  const destPath = destDir.replace(/[\\/]$/, '') + sep + fileName;
+
+  if (IS_TAURI) {
+    try {
+      const { copyFile, remove } = window.__TAURI__.fs;
+      await copyFile(sourcePath, destPath);
+      if (op === 'move') await remove(sourcePath);
+      card.dataset.sourcePath = destPath;
+      showToast((op === 'move' ? 'Moved' : 'Copied') + ' → ' + destPath.split(/[\\/]/).pop());
+    } catch (e) {
+      console.error('File op failed:', e);
+      showToast('File operation failed: ' + e.message);
+    }
+  } else {
+    // Mock
+    card.dataset.sourcePath = destPath;
+    showToast('[mock] ' + (op === 'move' ? 'Moved' : 'Copied') + ' to ' + destDir.split(/[\\/]/).pop() + '/' + fileName);
+  }
+  closeAllFolderUI();
+}
+
+// ══════════════════════════════════════════
+// RIGHT-CLICK DRAG DETECTION
+// ══════════════════════════════════════════
+
+let _rcDragCard = null;
+let _rcDragStartX = 0, _rcDragStartY = 0;
+let _rcDragMoved = false;
+
+// Temporary drag line SVG overlay
+let _dragLineSvg = null;
+
+function getDragLineSvg() {
+  if (_dragLineSvg) return _dragLineSvg;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.id = 'drag-line-svg';
+  // Inside #cv, z-index 5 = above background (z-index 0) but below img-cards (z-index 10)
+  svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:none;';
+  const cvEl = document.getElementById('cv');
+  const worldEl = document.getElementById('world');
+  cvEl.insertBefore(svg, worldEl); // before #world so it paints behind all canvas items
+  _dragLineSvg = svg;
+  return svg;
+}
+
+function setDragLine(x1, y1, x2, y2) {
+  const svg = getDragLineSvg();
+  // x/y are viewport coords; svg is absolute inside #cv so subtract its bounding rect
+  const cvRect = document.getElementById('cv').getBoundingClientRect();
+  const ox = cvRect.left, oy = cvRect.top;
+  let line = svg.querySelector('line');
+  if (!line) {
+    line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('stroke', 'rgba(255,255,255,0.18)');
+    line.setAttribute('stroke-width', '1');
+    line.setAttribute('stroke-dasharray', '5 5');
+    svg.appendChild(line);
+  }
+  line.setAttribute('x1', x1 - ox); line.setAttribute('y1', y1 - oy);
+  line.setAttribute('x2', x2 - ox); line.setAttribute('y2', y2 - oy);
+  svg.style.display = 'block';
+}
+
+function clearDragLine() {
+  if (_dragLineSvg) _dragLineSvg.style.display = 'none';
+}
+
+function cardCenter(card) {
+  const r = card.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+}
+
+function startImgRightDrag(e, card) {
+  e.preventDefault();
+  e.stopPropagation();
+  _rcDragCard = card;
+  _rcDragStartX = e.clientX;
+  _rcDragStartY = e.clientY;
+  _rcDragMoved = false;
+
+  const origin = cardCenter(card);
+
+  function onMove(ev) {
+    if (Math.abs(ev.clientX - _rcDragStartX) > 4 || Math.abs(ev.clientY - _rcDragStartY) > 4) {
+      _rcDragMoved = true;
+    }
+    if (_rcDragMoved) setDragLine(origin.x, origin.y, ev.clientX, ev.clientY);
+  }
+  function onUp(ev) {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    if (_rcDragCard) {
+      // Line stays at cursor — menu opens near it, no snap
+      setDragLine(origin.x, origin.y, ev.clientX, ev.clientY);
+      openImgCtxMenu(ev.clientX, ev.clientY, _rcDragCard);
+    }
+    _rcDragCard = null;
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
+// ══════════════════════════════════════════
+// CONTEXT MENU
+// ══════════════════════════════════════════
+
+const imgCtxMenu = document.getElementById('img-ctx-menu');
+let _ctxCard = null;
+let _fileOpCard = null; // persists while folder browser is open
+let _menuJustClosed = false; // cooldown flag to prevent hover from immediately reopening
+
+function openImgCtxMenu(x, y, card) {
+  // Store card first, before closeAllFolderUI wipes state
+  _ctxCard = card;
+  _fileOpCard = card;
+
+  // Close any open folder UI (but don't wipe _fileOpCard)
+  imgCtxMenu.classList.remove('show');
+  const fb = document.getElementById('folder-browser');
+  fb.classList.remove('show');
+  fb.innerHTML = '';
+
+  // Position — keep on screen
+  imgCtxMenu.style.left = '0px';
+  imgCtxMenu.style.top = '0px';
+  imgCtxMenu.classList.add('show');
+  const mw = imgCtxMenu.offsetWidth, mh = imgCtxMenu.offsetHeight;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const fx = Math.min(x, vw - mw - 8);
+  const fy = Math.min(y, vh - mh - 8);
+  imgCtxMenu.style.left = fx + 'px';
+  imgCtxMenu.style.top = fy + 'px';
+  // Return final center so callers can draw a line to it
+  return { cx: fx + mw / 2, cy: fy + mh / 2 };
+}
+
+function closeImgCtxMenu() {
+  imgCtxMenu.classList.remove('show');
+  _ctxCard = null;
+}
+
+function closeAllFolderUI() {
+  imgCtxMenu.classList.remove('show');
+  _ctxCard = null;
+  const fb = document.getElementById('folder-browser');
+  fb.classList.remove('show');
+  fb.innerHTML = '';
+  _activeFolderPath = null;
+  _fileOpCard = null;
+  clearDragLine();
+  // Brief cooldown so mouseover can't immediately reopen
+  _menuJustClosed = true;
+  setTimeout(() => { _menuJustClosed = false; }, 150);
+}
+
+// Hover on "Move / Copy to folder" opens the folder browser
+imgCtxMenu.addEventListener('mouseover', e => {
+  if (_menuJustClosed) return;
+  const item = e.target.closest('.ictx-item');
+  if (!item) return;
+  if (item.dataset.action === 'move-copy') {
+    openFolderBrowser(item);
+  } else {
+    // Hovering another item collapses the folder browser
+    folderBrowser.classList.remove('show');
+    folderBrowser.innerHTML = '';
+  }
+});
+
+// Close when clicking toolbar, bar, or anywhere outside cv/menu/folder-browser
+document.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  if (!imgCtxMenu.classList.contains('show')) return;
+  if (e.target.closest('#img-ctx-menu') || e.target.closest('#folder-browser') || e.target.closest('#cv')) return;
+  closeAllFolderUI();
+});
+
+// ══════════════════════════════════════════
+// CASCADING FOLDER BROWSER
+// ══════════════════════════════════════════
+
+let _activeFolderPath = null;
+let _hoverTimer = null;
+const folderBrowser = document.getElementById('folder-browser');
+
+async function openFolderBrowser(anchorItem) {
+  if (!_projectDir) {
+    showToast('Set a project directory first (📁 project dir button)');
+    closeImgCtxMenu();
+    return;
+  }
+
+  folderBrowser.innerHTML = '';
+  folderBrowser.classList.add('show');
+
+  // First panel appears to the right of the context menu, top-aligned with it
+  const menuRect = imgCtxMenu.getBoundingClientRect();
+  const x = menuRect.right + 6;
+  const y = menuRect.top;
+  await buildFolderPanel(_projectDir, 0, x, y);
+}
+
+async function buildFolderPanel(dirPath, depth, x, y) {
+  // Remove all panels at this depth and beyond
+  while (folderBrowser.children.length > depth) {
+    folderBrowser.removeChild(folderBrowser.lastChild);
+  }
+
+  const panel = document.createElement('div');
+  panel.className = 'fb-panel';
+  panel.dataset.depth = depth;
+  panel.dataset.dirPath = dirPath;
+
+  // Folder name header
+  const folderName = dirPath.split(/[\\/]/).pop() || dirPath;
+  const header = document.createElement('div');
+  header.className = 'fb-header';
+  header.innerHTML = `
+    <svg viewBox="0 0 14 14" fill="currentColor" stroke="none" style="width:12px;height:12px;flex-shrink:0;color:rgba(255,200,80,0.75)">
+      <path d="M1 3.5A1.5 1.5 0 012.5 2h3l1 1.5H11.5A1.5 1.5 0 0113 5v5.5A1.5 1.5 0 0111.5 12h-9A1.5 1.5 0 011 10.5v-7z"/>
+    </svg>
+    <span>${folderName}</span>
+  `;
+  panel.appendChild(header);
+
+  // Move / Copy buttons
+  const actionRow = document.createElement('div');
+  actionRow.className = 'fb-action-row';
+  const moveBtn = document.createElement('button');
+  moveBtn.className = 'fb-action-btn move';
+  moveBtn.textContent = 'Move here';
+  moveBtn.addEventListener('click', () => execFileOp('move', _fileOpCard, dirPath));
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'fb-action-btn copy';
+  copyBtn.textContent = 'Copy here';
+  copyBtn.addEventListener('click', () => execFileOp('copy', _fileOpCard, dirPath));
+  actionRow.appendChild(moveBtn);
+  actionRow.appendChild(copyBtn);
+  panel.appendChild(actionRow);
+
+  // Load subdirs
+  const subdirs = await listSubdirs(dirPath);
+
+  if (subdirs.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'fb-empty';
+    empty.textContent = 'No subfolders';
+    panel.appendChild(empty);
+  } else {
+    subdirs.forEach(({ name, path }) => {
+      const item = document.createElement('div');
+      item.className = 'fb-folder-item';
+      item.dataset.path = path;
+      item.innerHTML = `
+        <svg viewBox="0 0 14 14" fill="currentColor" stroke="none">
+          <path d="M1 3.5A1.5 1.5 0 012.5 2h3l1 1.5H11.5A1.5 1.5 0 0113 5v5.5A1.5 1.5 0 0111.5 12h-9A1.5 1.5 0 011 10.5v-7z"/>
+        </svg>
+        <span style="overflow:hidden;text-overflow:ellipsis;">${name}</span>
+        <span class="fb-chevron">›</span>
+      `;
+      item.addEventListener('mouseenter', () => {
+        panel.querySelectorAll('.fb-folder-item').forEach(i => i.classList.remove('active'));
+        item.classList.add('active');
+        clearTimeout(_hoverTimer);
+        _hoverTimer = setTimeout(() => {
+          const rect = item.getBoundingClientRect();
+          const panelRect = panel.getBoundingClientRect();
+          buildFolderPanel(path, depth + 1, panelRect.right + 4, rect.top);
+        }, 80);
+      });
+      panel.appendChild(item);
+    });
+  }
+
+  // Position panel
+  panel.style.left = (x || 0) + 'px';
+  panel.style.top = (y || 0) + 'px';
+  folderBrowser.appendChild(panel);
+
+  // Clamp to viewport
+  requestAnimationFrame(() => {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const pr = panel.getBoundingClientRect();
+    if (pr.right > vw - 8) panel.style.left = Math.max(8, vw - pr.width - 8) + 'px';
+    if (pr.bottom > vh - 8) panel.style.top = Math.max(8, vh - pr.height - 8) + 'px';
+  });
 }
 </script>
 </body>
