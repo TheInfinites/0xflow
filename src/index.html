@@ -416,7 +416,7 @@ body.dash-light #dash-content {
 
 /* context menu */
 #card-ctx-menu {
-  position: fixed; z-index: 4000; background: #111;
+  position: fixed; z-index: 6000; background: #111;
   border: 1px solid rgba(255,255,255,0.1);
   padding: 4px; min-width: 172px;
   box-shadow: 0 20px 60px rgba(0,0,0,0.7); display: none;
@@ -1692,17 +1692,6 @@ html, body, #bar, #toolbar, #status, .note, .img-card, .bar-btn, .t, .sel-btn, #
 
   </div><!-- /dash-body -->
 
-  <!-- card context menu -->
-  <div id="card-ctx-menu">
-    <button class="ctx-item" id="ctx-open"><svg viewBox="0 0 12 12"><path d="M2 6h8M6 3l3 3-3 3"/></svg>open</button>
-    <button class="ctx-item" id="ctx-rename"><svg viewBox="0 0 12 12"><path d="M2 9l1-1 5-5 1 1-5 5-2 1z"/><line x1="7" y1="3" x2="9" y2="5"/></svg>rename</button>
-    <button class="ctx-item" id="ctx-dup"><svg viewBox="0 0 12 12"><rect x="1" y="3" width="7" height="7" rx="1"/><path d="M4 3V2a1 1 0 011-1h5a1 1 0 011 1v5a1 1 0 01-1 1H9"/></svg>duplicate</button>
-    <div class="ctx-divider"></div>
-    <div class="ctx-label">MOVE TO FOLDER</div>
-    <div id="ctx-folders"></div>
-    <div class="ctx-divider"></div>
-    <button class="ctx-item danger" id="ctx-delete"><svg viewBox="0 0 12 12"><polyline points="1,3 11,3"/><path d="M2,3l1,8h6l1-8"/><line x1="4" y1="1" x2="8" y2="1"/></svg>delete</button>
-  </div>
   <div class="modal-overlay" id="modal-overlay" onclick="handleOverlayClick(event)">
     <div class="modal-box">
       <h2 id="modal-title">new canvas</h2>
@@ -1728,6 +1717,18 @@ html, body, #bar, #toolbar, #status, .note, .img-card, .bar-btn, .t, .sel-btn, #
   </div>
 
 </div><!-- /view-dashboard -->
+
+<!-- card context menu (outside dashboard to avoid transform offset) -->
+<div id="card-ctx-menu">
+  <button class="ctx-item" id="ctx-open"><svg viewBox="0 0 12 12"><path d="M2 6h8M6 3l3 3-3 3"/></svg>open</button>
+  <button class="ctx-item" id="ctx-rename"><svg viewBox="0 0 12 12"><path d="M2 9l1-1 5-5 1 1-5 5-2 1z"/><line x1="7" y1="3" x2="9" y2="5"/></svg>rename</button>
+  <button class="ctx-item" id="ctx-dup"><svg viewBox="0 0 12 12"><rect x="1" y="3" width="7" height="7" rx="1"/><path d="M4 3V2a1 1 0 011-1h5a1 1 0 011 1v5a1 1 0 01-1 1H9"/></svg>duplicate</button>
+  <div class="ctx-divider"></div>
+  <div class="ctx-label">MOVE TO FOLDER</div>
+  <div id="ctx-folders"></div>
+  <div class="ctx-divider"></div>
+  <button class="ctx-item danger" id="ctx-delete"><svg viewBox="0 0 12 12"><polyline points="1,3 11,3"/><path d="M2,3l1,8h6l1-8"/><line x1="4" y1="1" x2="8" y2="1"/></svg>delete</button>
+</div>
 
 <!-- ══════════════════════════════════════════
      CANVAS VIEW
@@ -2218,8 +2219,8 @@ function dashRender(){
         <div class="card-bottom-row">
           <div class="card-arrow"><svg viewBox="0 0 14 14"><line x1="2" y1="12" x2="12" y2="2"/><polyline points="6,2 12,2 12,8"/></svg></div>
           <div class="card-actions">
-            <button class="card-action-btn" title="open" onclick="openProject('${p.id}',event)"><svg viewBox="0 0 12 12"><path d="M2 6h8M6 3l3 3-3 3"/></svg></button>
-            <button class="card-action-btn" title="more" onclick="openCtxMenu('${p.id}',event)"><svg viewBox="0 0 12 12"><circle cx="6" cy="2.5" r="1"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="9.5" r="1"/></svg></button>
+            <button class="card-action-btn" title="open" onclick="event.stopPropagation();openProject('${p.id}',event)"><svg viewBox="0 0 12 12"><path d="M2 6h8M6 3l3 3-3 3"/></svg></button>
+            <button class="card-action-btn" title="more" onclick="event.stopPropagation();openCtxMenu('${p.id}',event)"><svg viewBox="0 0 12 12"><circle cx="6" cy="2.5" r="1" fill="currentColor"/><circle cx="6" cy="6" r="1" fill="currentColor"/><circle cx="6" cy="9.5" r="1" fill="currentColor"/></svg></button>
           </div>
         </div>
       </div>`;
@@ -2236,7 +2237,7 @@ function dashRender(){
 
 // ── context menu ────────────────────────────
 function openCtxMenu(id, e){
-  e.stopPropagation();
+  e.stopPropagation(); e.preventDefault();
   ctxProjectId=id;
   const menu=document.getElementById('card-ctx-menu');
   // populate folder list
@@ -2259,8 +2260,10 @@ function openCtxMenu(id, e){
       cf.appendChild(rem);
     }
   }
-  const x=Math.min(e.clientX, window.innerWidth-196);
-  const y=Math.min(e.clientY, window.innerHeight-menu.offsetHeight-16);
+  const btn = e.target.closest('.card-action-btn') || e.target;
+  const rect = btn.getBoundingClientRect();
+  const x = Math.min(rect.right, window.innerWidth - 196);
+  const y = Math.min(rect.bottom + 4, window.innerHeight - menu.offsetHeight - 16);
   menu.style.left=x+'px'; menu.style.top=y+'px';
   menu.classList.add('show');
 }
