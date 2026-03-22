@@ -5715,10 +5715,9 @@ if (IS_TAURI) {
     }
 
     // Set version from Tauri
-    try {
-      const ver = await invoke('plugin:app|version', {});
+    invoke('plugin:app|version', {}).then(ver => {
       if (ver) document.getElementById('app-version').textContent = 'v' + ver;
-    } catch(e) {}
+    }).catch(() => {});
 
     // Check for updates 5 seconds after launch (silent)
     setTimeout(() => checkForAppUpdate(true), 5000);
