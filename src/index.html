@@ -1589,7 +1589,7 @@ html, body, #bar, #toolbar, #status, .note, .img-card, .bar-btn, .t, .sel-btn, #
       <span style="letter-spacing:0.14em;"><em style="font-style:italic;letter-spacing:0.14em;">0</em>*flow</span>
     </div>
     <div id="topbar-right">
-      <span id="app-version" style="font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,0.2);letter-spacing:0.05em;">v0.1.0</span>
+      <span id="app-version" style="font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,0.2);letter-spacing:0.05em;">v0.2.1</span>
       <button id="update-btn" class="pill-btn" onclick="if(window.checkForAppUpdate)checkForAppUpdate(false)" style="display:none;background:rgba(232,68,10,0.15);color:#E8440A;border-color:rgba(232,68,10,0.3);">↑ update</button>
       <span id="topbar-date"></span>
       <button class="pill-btn" id="dash-theme-btn" onclick="toggleDashTheme()" title="toggle theme">
@@ -5713,6 +5713,12 @@ if (IS_TAURI) {
         console.warn('Update check failed:', e);
       }
     }
+
+    // Set version from Tauri
+    try {
+      const ver = await invoke('plugin:app|version', {});
+      if (ver) document.getElementById('app-version').textContent = 'v' + ver;
+    } catch(e) {}
 
     // Check for updates 5 seconds after launch (silent)
     setTimeout(() => checkForAppUpdate(true), 5000);
