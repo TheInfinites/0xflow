@@ -130,10 +130,13 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 | `undoStack` | `object[]` | Serialized canvas states (capped at 30) |
 | `redoStack` | `object[]` | Serialized canvas states |
 | `_clipboard` | `object[]` | Internal copy/paste clipboard `{html, imgId?}[]` |
+| `_viewBookmarks` | `object[]` | Viewport bookmarks `{name, scale, worldCX, worldCY}[]` |
 | `isLight` | `boolean` | Canvas light/dark mode |
+| `minimapVisible` | `boolean` | Whether minimap overlay is shown |
 | `brainstormHistory` | `{role,content}[]` | AI brainstorm conversation |
 | `blobURLCache` | `{[id]: url}` | In-memory cache of blob URLs keyed by imgId |
 | `window._relations` | `Relation[]` | Semantic connection lines between elements |
+| `CULL_BUFFER` | `number` | Off-screen culling margin in screen pixels (300) |
 
 ---
 
@@ -149,6 +152,7 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 | `freeflow_dash_theme` | `'light'` or `'dark'` for dashboard |
 | `freeflow_key_gpt` | OpenAI API key (user-provided) |
 | `freeflow_key_gemini` | Google Gemini API key (user-provided) |
+| `freeflow_bkmarks_{id}` | JSON array of viewport bookmarks for each canvas |
 
 ### Image Storage
 
@@ -173,14 +177,16 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 ### Canvas / View
 | Function | Description |
 |---|---|
-| `applyT()` | Apply current pan/zoom transform to world and dot grid |
+| `applyT()` | Apply current pan/zoom transform to world and dot grid; also calls `updateMinimap()` and `cullElements()` |
 | `c2w(cx, cy)` | Screen → world coordinates |
 | `svgToScreen(wx, wy)` | World → screen coordinates |
 | `doZoom(factor, cx?, cy?)` | Zoom in/out by multiplicative factor (e.g. 1.15), optionally around a point |
 | `zoomToFit()` | Zoom to fit all content in view |
+| `zoomToSelection()` | Zoom to fit only selected elements (falls back to `zoomToFit` if nothing selected) |
 | `resetView()` | Reset to scale=1, pan=0 |
 | `snap(v)` | Snap value to 20px grid if snapEnabled |
 | `tool(t)` | Switch active tool, update toolbar UI |
+| `cullElements()` | Hide elements outside visible viewport + 300px buffer via `visibility:hidden`; called on every `applyT()` |
 
 ### Persistence
 | Function | Description |
@@ -205,6 +211,10 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 | `makeFrame(x, y, w, h, label?)` | Create a frame/group |
 | `makeLabel(x, y)` | Create an inline text label |
 | `makeImgCard(id, url, x, y, w, h, nw, nh)` | Create an image card |
+| `makeResizeHandles(el, minW, minH, onResizeFn?)` | Attach 8 resize handles (4 edges + 4 corners) to any element |
+| `startEdgeResize(e, el, dir, minW, minH, onResizeFn?)` | Handle mousedown for a specific resize direction (`n/ne/e/se/s/sw/w/nw`) |
+| `makeCollapseBtn(el, getLabel)` | Create collapse/expand chevron button for a card |
+| `toggleCollapse(el, getLabel)` | Toggle `.collapsed` class, save/restore dimensions in `dataset.expandedW/H` |
 | `placeImagesGrid(blobs, sourcePaths)` | Resolve all image dimensions, compute √n column grid, centre on viewport, place all in one snapshot |
 | `placeImageBlob(blob, wx?, wy?)` | Full pipeline: save blob → place on canvas. Used by both image and PDF import. |
 | `saveImgBlob(blob)` | Save image (Tauri: filesystem, Browser: IndexedDB) |
@@ -255,15 +265,53 @@ Two separate systems:
 **Relation Lines** (bottom handle → any element):
 - `addRelHandle(el)` — add relation handle to element
 - `startRelDrag(e, sourceEl)` — drag relation line
-- `addRelation(elA, elB)` — create SVG dashed curve
+- `addRelation(elA, elB)` — create SVG bezier curve with arrowhead (`marker-end: url(#rel-ah)`)
 - `removeRelation(id)` — remove by id
-- `updateAllRelations()` — RAF loop keeping lines attached
+- `updateAllRelations()` — RAF loop keeping lines attached; also updates line color from source element's `dataset.color`
+- `relCurve(ax, ay, bx, by)` — generates cubic bezier path with minimum control point distance of 60px for smooth S-curves at any angle
 
 **Right-Click Drag Connections** (any element → any element):
 - `startNoteRightDrag(e, note)` — right-click drag from notes/todos to create relations
 - `startImgRightDrag(e, card)` — right-click drag from images; creates relation if dropped on element, opens folder panel otherwise
 - Uses `window._noteRightDragActive` global flag to suppress context menus on target elements during drag
 - On images: if connection target found, skips the folder browser context menu
+
+### Minimap Navigation
+- Minimap is a `<canvas>` element (`160×100px`) that renders all canvas content at `1/8000` scale
+- Renders: img-cards (blue tint), notes (accent color or white), frames (outlined)
+- Click anywhere on minimap to pan canvas to that world position (centers viewport on click point)
+- Drag on minimap for continuous pan — `minimapPanTo(e)` converts minimap pixel coords to world coords then sets `px/py`
+- `pointer-events: all` only when `.show` class is present
+- Coordinate math: `worldX = (mmX / MM_W) * 8000`, then `px = cvWidth/2 - (worldX-3000)*scale`
+
+### Viewport Bookmarks
+- `_viewBookmarks` — array of `{name, scale, worldCX, worldCY}` stored per canvas in `freeflow_bkmarks_{id}`
+- World center coords stored (not raw `px/py`) so bookmarks are resolution-independent
+- Jump restores: `scale`, then `px = cvWidth/2 - (worldCX-3000)*scale`, `py = cvHeight/2 - (worldCY-3000)*scale`
+- `loadViewBookmarks(id)` / `saveViewBookmarks(id)` — called inside `loadCanvasState` / `saveCanvasState`
+- UI: `#bookmark-panel` (fixed overlay, bottom-right), toggle via bookmark button in top bar
+- Rename by double-clicking the label; delete with ✕ button
+
+### Collapse / Expand Cards
+- `.collapsed` CSS class folds note/todo/AI note to 32px height, img-card hides `<img>`
+- `makeCollapseBtn(el, getLabel)` — creates chevron button, appended inside the card
+- `toggleCollapse(el, getLabel)` — saves expanded size to `dataset.expandedW/H`, restores on expand
+- Serialized automatically via `outerHTML` (`.collapsed` class and dataset attributes are preserved)
+- Resize handles hidden when collapsed (`display:none` via CSS)
+
+### All-Edge Resize
+- 8 `.rh` handles per card: corners (`rh-nw/ne/sw/se`) and edges (`rh-n/e/s/w`)
+- `makeResizeHandles(el, minW, minH, onResizeFn?)` — appends all 8 handles, binds `startEdgeResize`
+- `startEdgeResize(e, el, dir, minW, minH, onResizeFn?)` — adjusts `left/top/width/height` based on direction; north/west moves the origin while shrinking size; `onResizeFn` callback for extra logic (e.g. updating `img.style.width`)
+- Replaces the old single SE `.note-resize` / `.img-resize` handle on all card types
+- On `restoreCanvas`, img-card handles are rebound by querying `.rh` elements and re-calling `startEdgeResize`
+
+### Off-Screen Culling
+- `cullElements()` runs on every `applyT()` call
+- Elements fully outside viewport + `CULL_BUFFER=300px` get `visibility:hidden`; elements inside get `visibility:''`
+- Uses `visibility:hidden` (not `display:none`) so `getBoundingClientRect()` and layout remain intact for relation lines, drag, and marquee selection
+- Pinned notes (in `#cv`, not `#world`) are excluded from culling
+- World-to-screen conversion: `sl = (left-3000)*scale + px`
 
 ### Pin Feature
 - `pinNote(note)` — moves note from `#world` to `#cv`, sets `position: fixed` at top (`56px`)
@@ -620,6 +668,7 @@ gh release create v{version} \
 | `Ctrl+A` | Select all |
 | `Ctrl+C` | Copy selected elements (also writes image to system clipboard if single image selected) |
 | `Ctrl+V` | Paste copied elements (or paste image from system clipboard) |
+| `Ctrl+Shift+F` | Zoom to selection (fit viewport around selected elements only) |
 | `Ctrl+D` | Duplicate selected |
 | `Ctrl+F` | Search |
 | `Ctrl+\` | Toggle dashboard |
