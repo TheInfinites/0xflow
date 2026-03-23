@@ -215,6 +215,7 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
       <button class="bar-btn" onclick="openExportPanel()">↑ export</button>
       <button class="bar-btn" id="save-file-btn" onclick="saveCanvasToFile()" title="Save canvas to a file on disk">↓ save file</button>
       <button class="bar-btn" id="proj-dir-btn" onclick="pickProjectDir()" title="Set project directory for file operations">📁 project dir</button>
+      <button class="bar-btn" id="canvas-update-btn" onclick="if(window.checkForAppUpdate)checkForAppUpdate(false)" style="display:none;background:rgba(232,68,10,0.15);color:#E8440A;border:1px solid rgba(232,68,10,0.3);">↑ update</button>
       <div id="win-controls" style="display:none;margin-left:12px;gap:1px;align-items:center;">
         <button class="win-ctrl" id="win-min" title="Minimize">─</button>
         <button class="win-ctrl" id="win-max" title="Maximize">□</button>

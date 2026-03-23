@@ -1684,15 +1684,17 @@ if (IS_TAURI) {
       try {
         const update = await invoke('plugin:updater|check', {});
         if (update && update.available) {
-          const msg = `Update v${update.version} is available. Install now?`;
+          // Show update button in both dashboard topbar and canvas bar
+          const label = `↑ update to v${update.version}`;
+          const dashBtn = document.getElementById('update-btn');
+          const canvasBtn = document.getElementById('canvas-update-btn');
+          if (dashBtn) { dashBtn.style.display = 'inline-flex'; dashBtn.textContent = label; }
+          if (canvasBtn) { canvasBtn.style.display = 'inline-flex'; canvasBtn.textContent = label; }
           if (silent) {
-            showToast(`Update v${update.version} available — click "update" in dashboard`);
-            // Show update button in topbar
-            const btn = document.getElementById('update-btn');
-            if (btn) { btn.style.display = 'inline-flex'; btn.textContent = `↑ update to v${update.version}`; }
+            showToast(`v${update.version} available — click the update button`);
             return;
           }
-          if (confirm(msg)) {
+          if (confirm(`Update v${update.version} is available. Install now?`)) {
             showToast('Downloading update…');
             await invoke('plugin:updater|download_and_install', {});
             showToast('Update installed — restarting…');
