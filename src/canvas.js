@@ -556,6 +556,94 @@ function duplicateSelected(){
   });
   clearSelection(); newEls.forEach(el=>{if(el instanceof SVGElement)el.classList.add('stroke-selected');else el.classList.add('selected');selected.add(el);}); updateSelBar();
 }
+// ── Copy / Paste ──────────────────────────────────────────
+let _clipboard = [];
+
+async function copySelected() {
+  if (!selected.size) return;
+  _clipboard = [];
+  const imgCards = [];
+  selected.forEach(el => {
+    if (el instanceof SVGElement) return; // skip strokes
+    if (el.classList.contains('img-card')) {
+      const clone = el.cloneNode(true);
+      clone.querySelector('img').src = '';
+      _clipboard.push({ html: clone.outerHTML, imgId: el.dataset.imgId });
+      imgCards.push(el);
+    } else {
+      _clipboard.push({ html: el.outerHTML });
+    }
+  });
+  // Write image to system clipboard if exactly one img-card is selected
+  if (imgCards.length === 1) {
+    try {
+      const imgId = imgCards[0].dataset.imgId;
+      const blob = await loadImgBlob(imgId);
+      if (blob) {
+        const pngBlob = blob.type === 'image/png' ? blob : await convertToPng(blob);
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })]);
+      }
+    } catch(e) { /* clipboard write not supported or denied — canvas clipboard still works */ }
+  }
+  showToast(`Copied ${_clipboard.length} element${_clipboard.length>1?'s':''}`);
+}
+
+async function convertToPng(blob) {
+  return new Promise(res => {
+    const img = new Image();
+    const url = URL.createObjectURL(blob);
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      c.getContext('2d').drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+      c.toBlob(res, 'image/png');
+    };
+    img.src = url;
+  });
+}
+
+async function pasteClipboard() {
+  // prefer internal canvas clipboard
+  if (_clipboard.length) {
+    snapshot();
+    const newEls = [];
+    for (const item of _clipboard) {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = item.html;
+      const el = tmp.firstElementChild;
+      el.style.left = (parseFloat(el.style.left) || 0) + 24 + 'px';
+      el.style.top  = (parseFloat(el.style.top)  || 0) + 24 + 'px';
+      el.classList.remove('selected');
+      if (el.classList.contains('note')) bindNote(el);
+      else if (el.classList.contains('frame')) bindFrame(el);
+      else if (el.classList.contains('img-card')) {
+        el.addEventListener('mousedown', onElemMouseDown);
+        if (item.imgId) el.dataset.imgId = item.imgId;
+      } else el.addEventListener('mousedown', onElemMouseDown);
+      world.appendChild(el);
+      newEls.push(el);
+    }
+    await restoreImgCards();
+    clearSelection();
+    newEls.forEach(el => { el.classList.add('selected'); selected.add(el); });
+    updateSelBar();
+    return;
+  }
+  // fallback: try reading an image from the system clipboard
+  try {
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      if (item.types.includes('image/png') || item.types.includes('image/jpeg')) {
+        const type = item.types.find(t => t.startsWith('image/'));
+        const blob = await item.getType(type);
+        placeImagesGrid([blob], []);
+        return;
+      }
+    }
+  } catch(e) { /* clipboard read not available */ }
+}
+
 function groupSelected(){
   if(selected.size<2) return; snapshot();
   let mnX=Infinity,mnY=Infinity,mxX=-Infinity,mxY=-Infinity;

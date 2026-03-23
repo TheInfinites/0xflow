@@ -1128,13 +1128,17 @@ body.dash-light #toast { background: #1a1a1a; }
   height: 100%; background: #E8440A; border-radius: 2px;
   transition: width 0.2s ease; width: 0%;
 }
-body.on-canvas.light .todo-badge { color: rgba(0,0,0,0.3); }
-body.on-canvas.light .todo-title { color: rgba(255,255,255,0.85); }
-body.on-canvas.light .todo-cb { border-color: rgba(255,255,255,0.25); }
-body.on-canvas.light .todo-item-text { color: rgba(255,255,255,0.7); }
-body.on-canvas.light .todo-item.checked .todo-item-text { color: rgba(255,255,255,0.2); }
-body.on-canvas.light .todo-add { color: rgba(255,255,255,0.2); }
-body.on-canvas.light .todo-progress { background: rgba(255,255,255,0.08); }
+body.on-canvas.light .todo-badge { color: rgba(0,0,0,0.35); }
+body.on-canvas.light .todo-title { color: rgba(0,0,0,0.8); }
+body.on-canvas.light .todo-title::placeholder { color: rgba(0,0,0,0.2); }
+body.on-canvas.light .todo-cb { border-color: rgba(0,0,0,0.25); }
+body.on-canvas.light .todo-item-text { color: rgba(0,0,0,0.7); }
+body.on-canvas.light .todo-item-text::placeholder { color: rgba(0,0,0,0.2); }
+body.on-canvas.light .todo-item.checked .todo-item-text { color: rgba(0,0,0,0.25); }
+body.on-canvas.light .todo-item-del { color: rgba(0,0,0,0.2); }
+body.on-canvas.light .todo-add { color: rgba(0,0,0,0.25); }
+body.on-canvas.light .todo-add:hover { color: rgba(0,0,0,0.5); }
+body.on-canvas.light .todo-progress { background: rgba(0,0,0,0.08); }
 
 /* ── Pinned notes ────────────────────────────────────────── */
 .note.pinned {

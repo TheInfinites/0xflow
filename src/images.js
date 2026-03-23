@@ -559,6 +559,8 @@ document.addEventListener('keydown',e=>{
   if((e.metaKey||e.ctrlKey)&&e.key==='z'){e.shiftKey?redo():undo();e.preventDefault();return;}
   if((e.metaKey||e.ctrlKey)&&e.key==='y'){redo();e.preventDefault();return;}
   if((e.metaKey||e.ctrlKey)&&e.key==='a'){e.preventDefault();document.querySelectorAll('.note,.img-card,.lbl,.frame').forEach(el=>{el.classList.add('selected');selected.add(el);});document.querySelectorAll('#strokes .stroke-wrap,#arrows .stroke-wrap').forEach(g=>{g.classList.add('stroke-selected');selected.add(g);});updateSelBar();return;}
+  if((e.metaKey||e.ctrlKey)&&e.key==='c'){if(selected.size>0){copySelected();e.preventDefault();}return;}
+  if((e.metaKey||e.ctrlKey)&&e.key==='v'){pasteClipboard();e.preventDefault();return;}
   if((e.metaKey||e.ctrlKey)&&e.key==='d'){if(selected.size>0){duplicateSelected();e.preventDefault();}return;}
   if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();toggleCmdPalette();return;}
   if((e.metaKey||e.ctrlKey)&&e.key==='f'){toggleSearch();e.preventDefault();return;}
