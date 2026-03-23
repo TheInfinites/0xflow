@@ -282,20 +282,78 @@ async function restoreImgCards() {
 
 // ── file upload ──
 function triggerImg() { document.getElementById('img-file').click(); }
+// Layout a batch of image blobs in a grid centred on the canvas viewport.
+// sourcePaths is optional parallel array of file paths for Tauri mode.
+async function placeImagesGrid(blobs, sourcePaths) {
+  if (!blobs.length) return;
+  const GAP = 24;
+
+  // Resolve display dimensions for every image first
+  const infos = await Promise.all(blobs.map(async (blob, i) => {
+    const dataURL = await new Promise((res, rej) => {
+      const r = new FileReader(); r.onload = e => res(e.target.result); r.onerror = rej;
+      r.readAsDataURL(blob);
+    });
+    const { nw, nh } = await new Promise(res => {
+      const tmp = new Image();
+      tmp.onload = () => res({ nw: tmp.naturalWidth || 400, nh: tmp.naturalHeight || 300 });
+      tmp.onerror = () => res({ nw: 400, nh: 300 });
+      tmp.src = dataURL;
+    });
+    const dispW = Math.min(nw, 600);
+    const dispH = Math.round(nh * (dispW / nw));
+    return { blob, dataURL, nw, nh, dispW, dispH, sourcePath: sourcePaths?.[i] };
+  }));
+
+  const n = infos.length;
+  // Choose grid columns: √n rounded, clamped 1–6
+  const cols = Math.min(6, Math.max(1, Math.round(Math.sqrt(n))));
+  const rows = Math.ceil(n / cols);
+
+  // Column widths and row heights (max of each cell)
+  const colW = Array.from({length: cols}, (_, c) =>
+    Math.max(...infos.filter((_, i) => i % cols === c).map(inf => inf.dispW)));
+  const rowH = Array.from({length: rows}, (_, r) =>
+    Math.max(...infos.slice(r * cols, r * cols + cols).map(inf => inf.dispH)));
+
+  const totalW = colW.reduce((a, b) => a + b, 0) + GAP * (cols - 1);
+  const totalH = rowH.reduce((a, b) => a + b, 0) + GAP * (rows - 1);
+
+  // Centre grid on viewport
+  const rv = cv.getBoundingClientRect();
+  const centre = c2w(rv.left + rv.width / 2, rv.top + rv.height / 2);
+  const originX = centre.x - totalW / 2;
+  const originY = centre.y - totalH / 2;
+
+  snapshot();
+  // Compute cumulative column/row offsets
+  const colX = colW.reduce((acc, w, i) => { acc.push(i === 0 ? originX : acc[i-1] + colW[i-1] + GAP); return acc; }, []);
+  const rowY = rowH.reduce((acc, h, i) => { acc.push(i === 0 ? originY : acc[i-1] + rowH[i-1] + GAP); return acc; }, []);
+
+  for (let i = 0; i < infos.length; i++) {
+    const { blob, dataURL, nw, nh, dispW, dispH, sourcePath } = infos[i];
+    const col = i % cols, row = Math.floor(i / cols);
+    // Centre each image within its cell
+    const x = colX[col] + (colW[col] - dispW) / 2;
+    const y = rowY[row] + (rowH[row] - dispH) / 2;
+    const id = await saveImgBlob(blob);
+    blobURLCache[id] = dataURL;
+    const card = makeImgCard(id, dataURL, x, y, dispW, dispH, nw, nh);
+    if (sourcePath) card.dataset.sourcePath = sourcePath;
+    else if (!IS_TAURI) card.dataset.sourcePath = 'D:\\art\\test\\' + (blob.name || id + '.png');
+  }
+}
+
 async function onImgFiles(e) {
   const files = [...e.target.files]; e.target.value = '';
-  let offsetX = 0;
-  for (const f of files) {
-    if (f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')) {
-      await placePdf(f);
-    } else {
-      if (!f.type.startsWith('image/')) continue;
-      const r = cv.getBoundingClientRect();
-      const base = c2w(r.left + r.width / 2, r.top + r.height / 2);
-      await placeImageBlob(f, base.x + offsetX, base.y);
-      offsetX += 40;
-    }
-  }
+  const imgFiles = files.filter(f =>
+    f.type.startsWith('image/') && !(f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'))
+  );
+  const pdfFiles = files.filter(f =>
+    f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')
+  );
+  if (imgFiles.length) await placeImagesGrid(imgFiles);
+  for (const f of pdfFiles) await placePdf(f);
 }
 
 // ── PDF import ──
@@ -407,7 +465,10 @@ if (IS_TAURI) {
     const dropPos = c2w(clientX, clientY);
 
     const { readFile } = window.__TAURI__.fs;
-    let offset = 0;
+    const mimeMap = { png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif',
+                      bmp:'image/bmp', webp:'image/webp', svg:'image/svg+xml', ico:'image/x-icon',
+                      tiff:'image/tiff', avif:'image/avif' };
+    const imgBlobs = [], imgPaths = [];
     for (const filePath of allPaths) {
       try {
         const data = await readFile(filePath);
@@ -417,15 +478,12 @@ if (IS_TAURI) {
           blob.name = filePath.split(/[\\/]/).pop();
           await placePdf(blob, filePath);
         } else if (isImagePath(filePath)) {
-          const mimeMap = { png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif',
-                            bmp:'image/bmp', webp:'image/webp', svg:'image/svg+xml', ico:'image/x-icon',
-                            tiff:'image/tiff', avif:'image/avif' };
           const blob = new Blob([data], { type: mimeMap[ext] || 'image/png' });
-          await placeImageBlob(blob, dropPos.x + offset, dropPos.y + offset, filePath);
-          offset += 30;
+          imgBlobs.push(blob); imgPaths.push(filePath);
         }
       } catch (e) { console.error('Failed to load dropped file:', filePath, e); }
     }
+    if (imgBlobs.length) await placeImagesGrid(imgBlobs, imgPaths);
   });
 } else {
   // Browser drag-and-drop (original)
@@ -444,15 +502,11 @@ if (IS_TAURI) {
     if (!document.body.classList.contains('on-canvas')) return;
     e.preventDefault();
     const dropPos = c2w(e.clientX, e.clientY);
-    let offset = 0;
-    for (const f of [...e.dataTransfer.files]) {
-      if (f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')) {
-        await placePdf(f);
-      } else if (f.type.startsWith('image/')) {
-        await placeImageBlob(f, dropPos.x + offset, dropPos.y + offset);
-        offset += 30;
-      }
-    }
+    const dropped = [...e.dataTransfer.files];
+    const imgFiles = dropped.filter(f => f.type.startsWith('image/') && !f.name.toLowerCase().endsWith('.pdf'));
+    const pdfFiles = dropped.filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+    if (imgFiles.length) await placeImagesGrid(imgFiles);
+    for (const f of pdfFiles) await placePdf(f);
   });
 }
 
@@ -516,8 +570,8 @@ document.addEventListener('keydown',e=>{
   if(e.key==='i')addAiNote();
   if(e.key==='o')addTodo();
   if(e.key==='b')toggleBrainstorm();
-  if(e.key==='+'||e.key==='=')doZoom(0.1);
-  if(e.key==='-')doZoom(-0.1);
+  if(e.key==='+'||e.key==='=')doZoom(1.15);
+  if(e.key==='-')doZoom(1/1.15);
   if(e.key==='0')zoomToFit();
   if(e.key==='Escape'){clearSelection();tool('select');closeMenu();closeClearConfirm();closeCmdPalette();}
   if((e.key==='Delete'||e.key==='Backspace')&&selected.size>0){deleteSelected();e.preventDefault();}
@@ -867,9 +921,9 @@ function executeBsActions(actions) {
         snapshot();
         document.querySelectorAll('.frame').forEach(f => f.remove());
       } else if (a.type === 'zoomIn') {
-        doZoom(0.3);
+        doZoom(1.3);
       } else if (a.type === 'zoomOut') {
-        doZoom(-0.3);
+        doZoom(1/1.3);
       } else if (a.type === 'zoomFit') {
         zoomToFit();
       } else if (a.type === 'switchTool') {

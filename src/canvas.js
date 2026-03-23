@@ -122,7 +122,16 @@ function snapshot(){
 }
 function serializeCanvas(){
   const items=[]; document.querySelectorAll('.note,.frame,.img-card,.lbl').forEach(el=>{
-    const item = {html:el.outerHTML};
+    let htmlStr;
+    if(el.classList.contains('img-card')){
+      const clone=el.cloneNode(true);
+      const img=clone.querySelector('img');
+      if(img) img.src=''; // stripped — restored from data-img-id via restoreImgCards()
+      htmlStr=clone.outerHTML;
+    } else {
+      htmlStr=el.outerHTML;
+    }
+    const item = {html:htmlStr};
     // persist AI note conversation history
     if(el.classList.contains('ai-note') && el._aiHistory) {
       item.aiHistory = el._aiHistory;
@@ -240,9 +249,10 @@ function applyT(){
 function c2w(cx,cy){ const r=cv.getBoundingClientRect(); return{x:(cx-r.left-px)/scale+3000,y:(cy-r.top-py)/scale+3000}; }
 function svgToScreen(wx,wy){ const r=cv.getBoundingClientRect(); return{x:(wx-3000)*scale+px+r.left,y:(wy-3000)*scale+py+r.top}; }
 let _zoomTarget=null,_zoomRaf=null;
-function doZoom(d,cx,cy){
+function doZoom(factor,cx,cy){
+  // factor is a multiplier (e.g. 0.92 or 1.08), not an additive delta
   if(!_zoomTarget) _zoomTarget={scale,px,py};
-  const ns=Math.min(5,Math.max(0.1,_zoomTarget.scale+d));
+  const ns=Math.min(5,Math.max(0.05,_zoomTarget.scale*factor));
   if(cx!==undefined){
     const r=cv.getBoundingClientRect();
     _zoomTarget.px=(cx-r.left)-((cx-r.left)-_zoomTarget.px)*(ns/_zoomTarget.scale);
@@ -253,11 +263,11 @@ function doZoom(d,cx,cy){
 }
 function _animateZoom(){
   if(!_zoomTarget){_zoomRaf=null;return;}
-  const EASE=0.18;
+  const EASE=0.28;
   const ds=(_zoomTarget.scale-scale);
   const dpx=(_zoomTarget.px-px);
   const dpy=(_zoomTarget.py-py);
-  if(Math.abs(ds)<0.0005&&Math.abs(dpx)<0.15&&Math.abs(dpy)<0.15){
+  if(Math.abs(ds)<0.0003&&Math.abs(dpx)<0.1&&Math.abs(dpy)<0.1){
     scale=_zoomTarget.scale; px=_zoomTarget.px; py=_zoomTarget.py;
     _zoomTarget=null; _zoomRaf=null;
   } else {
@@ -554,7 +564,7 @@ function groupSelected(){
   clearSelection(); updateSelBar();
 }
 
-cv.addEventListener('wheel',e=>{ e.preventDefault(); if(e.ctrlKey||e.metaKey)doZoom(-e.deltaY*0.006,e.clientX,e.clientY); else{px-=e.deltaX*0.7;py-=e.deltaY*0.7;if(_zoomTarget){_zoomTarget.px=px;_zoomTarget.py=py;}applyT();positionSelBar();} },{passive:false});
+cv.addEventListener('wheel',e=>{ e.preventDefault(); if(e.ctrlKey||e.metaKey){ const factor=Math.pow(0.998,e.deltaY); doZoom(factor,e.clientX,e.clientY); } else{px-=e.deltaX*0.7;py-=e.deltaY*0.7;if(_zoomTarget){_zoomTarget.px=px;_zoomTarget.py=py;}applyT();positionSelBar();} },{passive:false});
 cv.addEventListener('mousedown',e=>{ if(e.button===1||(e.button===0&&e.altKey)){panning=true;panOrig={x:e.clientX-px,y:e.clientY-py};cv.style.cursor='grabbing';e.preventDefault();} });
 document.addEventListener('mousemove',e=>{ if(panning){px=e.clientX-panOrig.x;py=e.clientY-panOrig.y;if(_zoomTarget){_zoomTarget.px=px;_zoomTarget.py=py;}applyT();positionSelBar();} });
 document.addEventListener('mouseup',()=>{ if(panning){panning=false;cv.style.cursor=curTool==='text'?'text':'';} });
