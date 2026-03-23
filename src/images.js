@@ -1736,21 +1736,24 @@ if (IS_TAURI) {
     // ── Auto-updater ──
     async function checkForAppUpdate(silent) {
       try {
-        const update = await invoke('plugin:updater|check', {});
-        if (update && update.available) {
+        const { Channel } = window.__TAURI__.core;
+        // check() returns metadata with rid, or null if no update
+        const meta = await invoke('plugin:updater|check', {});
+        if (meta && meta.version) {
           // Show update button in both dashboard topbar and canvas bar
-          const label = `↑ update to v${update.version}`;
+          const label = `↑ update to v${meta.version}`;
           const dashBtn = document.getElementById('update-btn');
           const canvasBtn = document.getElementById('canvas-update-btn');
           if (dashBtn) { dashBtn.style.display = 'inline-flex'; dashBtn.textContent = label; }
           if (canvasBtn) { canvasBtn.style.display = 'inline-flex'; canvasBtn.textContent = label; }
           if (silent) {
-            showToast(`v${update.version} available — click the update button`);
+            showToast(`v${meta.version} available — click the update button`);
             return;
           }
-          if (confirm(`Update v${update.version} is available. Install now?`)) {
+          if (confirm(`Update v${meta.version} is available. Install now?`)) {
             showToast('Downloading update…');
-            await invoke('plugin:updater|download_and_install', {});
+            const ch = new Channel();
+            await invoke('plugin:updater|download_and_install', { onEvent: ch, rid: meta.rid });
             showToast('Update installed — restarting…');
             setTimeout(() => invoke('plugin:process|restart', {}), 1000);
           }
