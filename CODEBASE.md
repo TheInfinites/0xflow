@@ -92,8 +92,9 @@ Plugins registered: `fs`, `dialog`, `store`, `http`, `shell`, `updater`, `proces
 | **Image storage** | `window.__TAURI__.fs.writeFile` / `readFile` to AppData dir (browser: IndexedDB) |
 | **Image drag-drop** | Listens to `tauri://drag-drop` events (browser: standard drag/drop) |
 | **Window controls** | Custom chrome (`decorations: false`), direct `invoke('plugin:window\|...')` calls |
-| **Auto-updater** | Checks GitHub releases endpoint, UI button in dashboard topbar |
+| **Auto-updater** | Checks GitHub releases endpoint via `invoke('plugin:updater\|check', {})` + `Channel`; shows update button in both dashboard and canvas bar |
 | **File save/open** | Tauri dialog + fs plugins (browser: download/upload) |
+| **Canvas file save** | User-chosen path via `saveCanvasToFile()`; stored in `freeflow_filepath_{id}`; also saves to localStorage as backup |
 
 ### Permissions (`capabilities/default.json`)
 
@@ -107,8 +108,10 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 
 - Signing key pair at `~/.tauri/0xflow.key` / `.key.pub`
 - `tauri.conf.json` has updater config with pubkey and GitHub releases endpoint
-- `checkForAppUpdate(silent)` — checks for updates, shows orange button if available
-- Auto-checks 5 seconds after app launch (silent mode)
+- `checkForAppUpdate(silent)` — calls `invoke('plugin:updater|check', {})`, shows orange `↑ update` button in both `#update-btn` (dashboard) and `#canvas-update-btn` (canvas bar) if available
+- Downloading uses `invoke('plugin:updater|download_and_install', { onEvent: Channel, rid })` — requires both `Channel` and `rid` from the check response
+- Auto-checks 5 seconds after app launch (silent mode); manual check via update button
+- `@tauri-apps/plugin-updater` JS package installed for type reference; actual calls use raw `invoke` via `window.__TAURI__.core.invoke`
 
 ---
 
@@ -124,10 +127,12 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 | `selected` | `Set<Element>` | Currently selected DOM elements |
 | `curTool` | `string` | Active tool: select/pen/eraser/arrow/text/frame |
 | `snapEnabled` | `boolean` | Snap to 20px grid |
-| `undoStack` | `object[]` | Serialized canvas states |
+| `undoStack` | `object[]` | Serialized canvas states (capped at 30) |
 | `redoStack` | `object[]` | Serialized canvas states |
+| `_clipboard` | `object[]` | Internal copy/paste clipboard `{html, imgId?}[]` |
 | `isLight` | `boolean` | Canvas light/dark mode |
 | `brainstormHistory` | `{role,content}[]` | AI brainstorm conversation |
+| `blobURLCache` | `{[id]: url}` | In-memory cache of blob URLs keyed by imgId |
 | `window._relations` | `Relation[]` | Semantic connection lines between elements |
 
 ---
@@ -171,7 +176,7 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 | `applyT()` | Apply current pan/zoom transform to world and dot grid |
 | `c2w(cx, cy)` | Screen → world coordinates |
 | `svgToScreen(wx, wy)` | World → screen coordinates |
-| `doZoom(delta, cx?, cy?)` | Zoom in/out, optionally around a point |
+| `doZoom(factor, cx?, cy?)` | Zoom in/out by multiplicative factor (e.g. 1.15), optionally around a point |
 | `zoomToFit()` | Zoom to fit all content in view |
 | `resetView()` | Reset to scale=1, pan=0 |
 | `snap(v)` | Snap value to 20px grid if snapEnabled |
@@ -182,10 +187,14 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 |---|---|
 | `serializeCanvas()` | Returns `{items[], strokes, arrows}` — full canvas state |
 | `restoreCanvas(state)` | Restores DOM from serialized state |
-| `saveCanvasState(id)` | Saves current canvas to localStorage |
-| `loadCanvasState(id)` | Loads canvas from localStorage |
-| `snapshot()` | Push current state to undoStack |
+| `saveCanvasState(id)` | Saves canvas to localStorage + user file (if path set) |
+| `loadCanvasState(id)` | Loads canvas from user file (if set) or localStorage; restores viewport |
+| `saveCanvasToFile()` | Opens save dialog, stores path, saves immediately |
+| `snapshot()` | Push current state to undoStack (capped at 30) |
 | `undo()` / `redo()` | Standard undo/redo |
+| `copySelected()` | Copy selected elements to internal clipboard; writes image to system clipboard if single image |
+| `pasteClipboard()` | Paste from internal clipboard (offset 24px), or paste image from system clipboard |
+| `convertToPng(blob)` | Convert any image blob to PNG for system clipboard write |
 
 ### Element Creation
 | Function | Description |
@@ -196,6 +205,7 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 | `makeFrame(x, y, w, h, label?)` | Create a frame/group |
 | `makeLabel(x, y)` | Create an inline text label |
 | `makeImgCard(id, url, x, y, w, h, nw, nh)` | Create an image card |
+| `placeImagesGrid(blobs, sourcePaths)` | Resolve all image dimensions, compute √n column grid, centre on viewport, place all in one snapshot |
 | `placeImageBlob(blob, wx?, wy?)` | Full pipeline: save blob → place on canvas. Used by both image and PDF import. |
 | `saveImgBlob(blob)` | Save image (Tauri: filesystem, Browser: IndexedDB) |
 | `loadImgBlob(id)` | Load image by ID from storage |
@@ -332,9 +342,11 @@ el.querySelector('img').src  — data URL or object URL (cached)
 {
   "items": [{"html": "<div class=\"note\"..."}],
   "strokes": "<g class=\"stroke-wrap\">...",
-  "arrows": "<g class=\"stroke-wrap\">..."
+  "arrows": "<g class=\"stroke-wrap\">...",
+  "viewport": {"scale": 1, "px": 0, "py": 0}
 }
 ```
+> ⚠️ For `.img-card` elements, the `<img src>` attribute is **stripped before serializing** (set to `""`). The src is restored after load via `restoreImgCards()` which reads from `blobURLCache` or storage using `data-img-id`. This prevents base64 data URLs from bloating undo snapshots and the saved file.
 
 `serializeCanvas()` (brainstorm AI context — different function):
 ```json
@@ -606,6 +618,8 @@ gh release create v{version} \
 | `Ctrl+K` | Open command palette |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo/redo |
 | `Ctrl+A` | Select all |
+| `Ctrl+C` | Copy selected elements (also writes image to system clipboard if single image selected) |
+| `Ctrl+V` | Paste copied elements (or paste image from system clipboard) |
 | `Ctrl+D` | Duplicate selected |
 | `Ctrl+F` | Search |
 | `Ctrl+\` | Toggle dashboard |
