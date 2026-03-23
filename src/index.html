@@ -6,6 +6,17 @@
 <title>freeflow</title>
 <!-- Mock Tauri APIs for browser dev mode (no-op inside real Tauri) -->
 <script src="./tauri-mock.js"></script>
+<!-- PDF.js for PDF rendering -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs" type="module" id="pdfjs-script"></script>
+<script>
+// Load PDF.js dynamically so it works in both browser and Tauri
+window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs').then(mod => {
+  const pdfjsLib = mod;
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
+  window.pdfjsLib = pdfjsLib;
+  return pdfjsLib;
+});
+</script>
 <!-- Fonts bundled locally -->
 <style>
 @font-face { font-family: 'Geist Mono'; font-weight: 300; src: url('./fonts/GeistMono-Light.ttf'); }
@@ -82,42 +93,11 @@ body.on-canvas.light #dot-grid {
     linear-gradient(rgba(0,0,0,0.03) 1px, transparent 1px),
     linear-gradient(90deg, rgba(0,0,0,0.03) 1px, transparent 1px) !important;
 }
-body.on-canvas.light #img-ctx-menu {
-  background: rgba(255,255,255,0.92);
-  border-color: rgba(0,0,0,0.12);
-}
-body.on-canvas.light .ictx-item {
-  color: rgba(0,0,0,0.7);
-}
-body.on-canvas.light .ictx-item:hover {
-  background: rgba(0,0,0,0.06);
-  color: rgba(0,0,0,0.9);
-}
-body.on-canvas.light .ictx-item svg { color: rgba(0,0,0,0.4); }
+body.on-canvas.light #img-ctx-menu,
 body.on-canvas.light .fb-panel {
-  background: rgba(255,255,255,0.92);
-  border-color: rgba(0,0,0,0.12);
+  background: rgba(13,13,14,0.97);
+  border-color: rgba(255,255,255,0.08);
 }
-body.on-canvas.light .fb-header { color: rgba(0,0,0,0.7); }
-body.on-canvas.light .fb-folder-item {
-  color: rgba(0,0,0,0.65);
-}
-body.on-canvas.light .fb-folder-item:hover,
-body.on-canvas.light .fb-folder-item.active {
-  background: rgba(0,0,0,0.06);
-  color: rgba(0,0,0,0.9);
-}
-body.on-canvas.light .fb-folder-item .fb-chevron { color: rgba(0,0,0,0.2); }
-body.on-canvas.light .fb-action-btn {
-  color: rgba(0,0,0,0.5);
-  border-color: rgba(0,0,0,0.1);
-}
-body.on-canvas.light .fb-action-btn:hover {
-  background: rgba(0,0,0,0.06);
-  border-color: rgba(0,0,0,0.18);
-  color: rgba(0,0,0,0.85);
-}
-body.on-canvas.light .fb-empty { color: rgba(0,0,0,0.3); }
 
 html, body {
   width: 100%; height: 100%;
@@ -1941,7 +1921,8 @@ html, body, #bar, #toolbar, #status, .note, .img-card, .bar-btn, .t, .sel-btn, #
     <div class="st st-hint" id="canvas-hint">dbl-click to add · right-click note for options</div>
   </div>
 
-  <input type="file" id="img-file" accept="image/*" multiple style="display:none" onchange="onImgFiles(event)">
+  <input type="file" id="img-file" accept="image/*,application/pdf" multiple style="display:none" onchange="onImgFiles(event)">
+  <input type="file" id="pdf-file" accept="application/pdf" multiple style="display:none" onchange="onPdfFiles(event)">
 
   <!-- AI Brainstorm panel -->
   <div id="brainstorm-panel">
@@ -4387,11 +4368,81 @@ async function onImgFiles(e) {
   const files = [...e.target.files]; e.target.value = '';
   let offsetX = 0;
   for (const f of files) {
-    if (!f.type.startsWith('image/')) continue;
+    if (f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')) {
+      await placePdf(f);
+    } else {
+      if (!f.type.startsWith('image/')) continue;
+      const r = cv.getBoundingClientRect();
+      const base = c2w(r.left + r.width / 2, r.top + r.height / 2);
+      await placeImageBlob(f, base.x + offsetX, base.y);
+      offsetX += 40;
+    }
+  }
+}
+
+// ── PDF import ──
+async function onPdfFiles(e) {
+  const files = [...e.target.files]; e.target.value = '';
+  for (const f of files) await placePdf(f);
+}
+
+async function placePdf(file, sourcePath) {
+  try {
+    const lib = await window._pdfJsReady;
+    showToast('reading pdf…');
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await lib.getDocument({ data: arrayBuffer }).promise;
+    const numPages = pdf.numPages;
+
     const r = cv.getBoundingClientRect();
-    const base = c2w(r.left + r.width / 2, r.top + r.height / 2);
-    await placeImageBlob(f, base.x + offsetX, base.y);
-    offsetX += 40;
+    const center = c2w(r.left + r.width / 2, r.top + r.height / 2);
+    // Place pages in a vertical column, centered
+    const PAGE_SCALE = 2; // render at 2x for sharpness
+    const DISP_MAX_W = 700;
+    const GAP = 24;
+
+    let colY = center.y;
+    let colX = null; // set after first page renders
+
+    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+      const page = await pdf.getPage(pageNum);
+      const viewport = page.getViewport({ scale: PAGE_SCALE });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d');
+      await page.render({ canvasContext: ctx, viewport }).promise;
+
+      const dispW = Math.min(viewport.width / PAGE_SCALE, DISP_MAX_W);
+      const dispH = Math.round(viewport.height / PAGE_SCALE * (dispW / (viewport.width / PAGE_SCALE)));
+
+      if (colX === null) colX = center.x - dispW / 2;
+
+      const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+      blob.name = (file.name || 'page') + `_p${pageNum}.png`;
+
+      // place without taking a snapshot per page — snapshot once after all pages
+      const dataURL = await new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = ev => res(ev.target.result);
+        reader.onerror = rej;
+        reader.readAsDataURL(blob);
+      });
+      const id = await saveImgBlob(blob);
+      blobURLCache[id] = dataURL;
+      const card = makeImgCard(id, dataURL, colX, colY, dispW, dispH, viewport.width, viewport.height);
+      if (sourcePath) card.dataset.sourcePath = sourcePath;
+      card.dataset.pdfPage = pageNum;
+      card.dataset.pdfName = file.name || 'document.pdf';
+
+      colY += dispH + GAP;
+    }
+    snapshot();
+    showToast(`placed ${numPages} page${numPages > 1 ? 's' : ''} from "${file.name}"`);
+  } catch (err) {
+    console.error('PDF render failed:', err);
+    showToast('could not read pdf: ' + (err.message || err));
   }
 }
 
@@ -4412,13 +4463,15 @@ document.addEventListener('paste', async e => {
 if (IS_TAURI) {
   // Tauri intercepts file drops — listen for Tauri drag-drop events instead
   const IMG_EXTS = ['.png','.jpg','.jpeg','.gif','.bmp','.webp','.svg','.ico','.tiff','.avif'];
+  const PDF_EXT = '.pdf';
   function isImagePath(p) { const l = p.toLowerCase(); return IMG_EXTS.some(ext => l.endsWith(ext)); }
+  function isPdfPath(p) { return p.toLowerCase().endsWith(PDF_EXT); }
 
   const listen = window.__TAURI__.event.listen;
   listen('tauri://drag-enter', (event) => {
     if (!document.body.classList.contains('on-canvas')) return;
     const paths = event.payload.paths || [];
-    if (paths.some(isImagePath)) document.getElementById('paste-hint').classList.add('show');
+    if (paths.some(p => isImagePath(p) || isPdfPath(p))) document.getElementById('paste-hint').classList.add('show');
   });
   listen('tauri://drag-over', () => {});
   listen('tauri://drag-leave', () => {
@@ -4427,11 +4480,8 @@ if (IS_TAURI) {
   listen('tauri://drag-drop', async (event) => {
     document.getElementById('paste-hint').classList.remove('show');
     if (!document.body.classList.contains('on-canvas')) return;
-    const paths = (event.payload.paths || []).filter(isImagePath);
-    if (!paths.length) return;
+    const allPaths = event.payload.paths || [];
 
-    // Convert drop position (physical pixels) to world coords
-    // Tauri gives physical position; we need to account for scale factor
     const pos = event.payload.position;
     const scaleFactor = window.devicePixelRatio || 1;
     const clientX = pos.x / scaleFactor;
@@ -4440,17 +4490,23 @@ if (IS_TAURI) {
 
     const { readFile } = window.__TAURI__.fs;
     let offset = 0;
-    for (const filePath of paths) {
+    for (const filePath of allPaths) {
       try {
         const data = await readFile(filePath);
         const ext = filePath.split('.').pop().toLowerCase();
-        const mimeMap = { png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif',
-                          bmp:'image/bmp', webp:'image/webp', svg:'image/svg+xml', ico:'image/x-icon',
-                          tiff:'image/tiff', avif:'image/avif' };
-        const blob = new Blob([data], { type: mimeMap[ext] || 'image/png' });
-        await placeImageBlob(blob, dropPos.x + offset, dropPos.y + offset, filePath);
-        offset += 30;
-      } catch (e) { console.error('Failed to load dropped image:', filePath, e); }
+        if (ext === 'pdf') {
+          const blob = new Blob([data], { type: 'application/pdf' });
+          blob.name = filePath.split(/[\\/]/).pop();
+          await placePdf(blob, filePath);
+        } else if (isImagePath(filePath)) {
+          const mimeMap = { png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif',
+                            bmp:'image/bmp', webp:'image/webp', svg:'image/svg+xml', ico:'image/x-icon',
+                            tiff:'image/tiff', avif:'image/avif' };
+          const blob = new Blob([data], { type: mimeMap[ext] || 'image/png' });
+          await placeImageBlob(blob, dropPos.x + offset, dropPos.y + offset, filePath);
+          offset += 30;
+        }
+      } catch (e) { console.error('Failed to load dropped file:', filePath, e); }
     }
   });
 } else {
@@ -4469,12 +4525,15 @@ if (IS_TAURI) {
     document.getElementById('paste-hint').classList.remove('show');
     if (!document.body.classList.contains('on-canvas')) return;
     e.preventDefault();
-    const files = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
     const dropPos = c2w(e.clientX, e.clientY);
     let offset = 0;
-    for (const f of files) {
-      await placeImageBlob(f, dropPos.x + offset, dropPos.y + offset);
-      offset += 30;
+    for (const f of [...e.dataTransfer.files]) {
+      if (f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')) {
+        await placePdf(f);
+      } else if (f.type.startsWith('image/')) {
+        await placeImageBlob(f, dropPos.x + offset, dropPos.y + offset);
+        offset += 30;
+      }
     }
   });
 }
@@ -5119,8 +5178,24 @@ document.addEventListener('mouseup', e => {
   }
 });
 
+let _cvRightDragMoved = false;
+let _cvRightDownX = 0, _cvRightDownY = 0;
+
+cv.addEventListener('mousedown', e => {
+  if (e.button !== 2) return;
+  _cvRightDragMoved = false;
+  _cvRightDownX = e.clientX;
+  _cvRightDownY = e.clientY;
+});
+document.addEventListener('mousemove', e => {
+  if (!(e.buttons & 2)) return;
+  const dx = e.clientX - _cvRightDownX, dy = e.clientY - _cvRightDownY;
+  if (Math.sqrt(dx*dx + dy*dy) > 4) _cvRightDragMoved = true;
+});
+
 cv.addEventListener('contextmenu', e => {
   e.preventDefault();
+  if (_cvRightDragMoved) { _cvRightDragMoved = false; return; }
   if (!e.target.closest('.note, .img-card, .frame, .lbl, .todo-card, .stroke-wrap') && !window._noteRightDragActive) {
     openCmdPalette();
   }
@@ -5735,7 +5810,7 @@ if (IS_TAURI) {
   <div class="ictx-item" data-action="move-copy">
     <span class="ictx-icon">
       <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M2 4h2l1-1.5h4L10 4h2a1 1 0 011 1v5a1 1 0 01-1 1H2a1 1 0 01-1-1V5a1 1 0 011-1z"/>
+        <path d="M3 7h8M7 3l4 4-4 4"/>
       </svg>
     </span>
     Move / Copy to folder
@@ -5761,14 +5836,14 @@ if (IS_TAURI) {
 #img-ctx-menu {
   position: fixed;
   z-index: 9999;
-  background: rgba(12,12,13,0.97);
-  border: 1px solid rgba(255,255,255,0.07);
-  border-radius: 6px;
-  padding: 3px;
+  background: rgba(13,13,14,0.97);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  padding: 5px;
   min-width: 200px;
   box-shadow: none;
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
   display: none;
   user-select: none;
 }
@@ -5778,33 +5853,38 @@ if (IS_TAURI) {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 10px;
-  border-radius: 4px;
+  padding: 7px 10px;
+  border-radius: 6px;
   font-size: 12px;
   letter-spacing: 0.01em;
-  color: rgba(255,255,255,0.75);
+  color: rgba(255,255,255,0.78);
   cursor: default;
-  transition: background 0.08s, color 0.08s;
+  transition: background 0.1s, color 0.1s;
 }
-.ictx-item:hover { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.95); }
-.ictx-item.ictx-disabled { color: rgba(255,255,255,0.2); pointer-events: none; }
+.ictx-item:hover { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.95); }
+.ictx-item.ictx-active { background: rgba(232,68,10,0.1); color: rgba(255,255,255,0.9); }
+.ictx-item.ictx-disabled { color: rgba(255,255,255,0.15); pointer-events: none; }
 .ictx-icon {
-  width: 13px; height: 13px;
+  width: 14px; height: 14px;
   flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  color: rgba(255,255,255,0.3);
+  color: rgba(255,255,255,0.22);
+  transition: color 0.1s;
 }
-.ictx-icon svg { width: 13px; height: 13px; }
+.ictx-icon svg { width: 14px; height: 14px; }
+.ictx-item:hover .ictx-icon { color: #E8440A; }
 .ictx-chevron {
   margin-left: auto;
-  color: rgba(255,255,255,0.2);
-  font-size: 13px;
+  color: rgba(255,255,255,0.15);
+  font-size: 14px;
   line-height: 1;
+  transition: color 0.1s, transform 0.12s;
 }
+.ictx-item:hover .ictx-chevron { color: rgba(255,255,255,0.4); transform: translateX(2px); }
 .ictx-sep {
   height: 1px;
   background: rgba(255,255,255,0.05);
-  margin: 3px 0;
+  margin: 4px 6px;
 }
 
 /* ── cascading folder browser ── */
@@ -5817,23 +5897,23 @@ if (IS_TAURI) {
 }
 #folder-browser.show {
   display: block;
-  pointer-events: none; /* container never intercepts — only panels do */
+  pointer-events: none;
 }
 #folder-browser.show .fb-panel {
   pointer-events: auto;
 }
 .fb-panel {
   position: absolute;
-  background: rgba(12,12,13,0.97);
-  border: 1px solid rgba(255,255,255,0.07);
-  border-radius: 6px;
-  padding: 3px;
-  min-width: 180px;
-  max-height: 300px;
+  background: rgba(13,13,14,0.97);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  padding: 5px;
+  min-width: 210px;
+  max-height: 340px;
   overflow-y: auto;
   box-shadow: none;
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
   flex-shrink: 0;
   scrollbar-width: none;
 }
@@ -5842,69 +5922,165 @@ if (IS_TAURI) {
 .fb-header {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 10px 6px;
-  font-size: 10px;
+  gap: 8px;
+  padding: 8px 11px 9px;
+  font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: rgba(255,255,255,0.28);
-  border-bottom: 1px solid rgba(255,255,255,0.05);
-  margin-bottom: 3px;
+  letter-spacing: 0.01em;
+  color: rgba(255,255,255,0.75);
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  margin-bottom: 4px;
 }
-.fb-header svg { opacity: 0.5; }
+.fb-header svg { color: rgba(255,185,55,0.9); flex-shrink: 0; width: 14px; height: 14px; }
 
 .fb-action-row {
   display: flex;
-  gap: 4px;
-  padding: 4px 6px 6px;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
-  margin-bottom: 3px;
+  gap: 5px;
+  padding: 2px 4px 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  margin-bottom: 4px;
 }
 .fb-action-btn {
   flex: 1;
-  padding: 5px 0;
-  border-radius: 4px;
-  border: 1px solid rgba(255,255,255,0.08);
-  background: transparent;
-  color: rgba(255,255,255,0.5);
-  font-size: 11px;
+  padding: 7px 0;
+  border-radius: 6px;
+  border: none;
+  font-size: 10px;
   font-family: inherit;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 500;
   cursor: pointer;
   text-align: center;
-  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  transition: background 0.12s, color 0.12s;
 }
-.fb-action-btn:hover {
+.fb-action-btn.move {
   background: rgba(255,255,255,0.06);
-  border-color: rgba(255,255,255,0.15);
+  color: rgba(255,255,255,0.55);
+}
+.fb-action-btn.move:hover {
+  background: rgba(255,255,255,0.1);
   color: rgba(255,255,255,0.9);
 }
-.fb-action-btn.move:hover { color: #e8876a; border-color: rgba(232,135,106,0.3); }
-.fb-action-btn.copy:hover { color: #6ab4e8; border-color: rgba(106,180,232,0.3); }
+.fb-action-btn.copy {
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.55);
+}
+.fb-action-btn.copy:hover {
+  background: rgba(255,255,255,0.1);
+  color: rgba(255,255,255,0.9);
+}
 
 .fb-folder-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 10px;
-  border-radius: 4px;
+  gap: 9px;
+  padding: 7px 11px;
+  border-radius: 6px;
   font-size: 12px;
   color: rgba(255,255,255,0.65);
   cursor: default;
-  transition: background 0.08s, color 0.08s;
+  transition: background 0.1s, color 0.1s;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  position: relative;
 }
 .fb-folder-item:hover, .fb-folder-item.active {
   background: rgba(255,255,255,0.07);
-  color: rgba(255,255,255,0.92);
+  color: rgba(255,255,255,0.95);
 }
-.fb-folder-item svg { width: 12px; height: 12px; flex-shrink: 0; color: rgba(255,190,60,0.55); }
-.fb-folder-item .fb-chevron { margin-left: auto; color: rgba(255,255,255,0.18); font-size: 12px; flex-shrink: 0; }
-.fb-empty { padding: 10px; font-size: 11px; color: rgba(255,255,255,0.18); text-align: center; letter-spacing: 0.03em; }
-.fb-no-dir { padding: 12px 10px; font-size: 11px; color: rgba(255,255,255,0.2); text-align: center; line-height: 1.6; letter-spacing: 0.03em; }
+.fb-folder-item.active {
+  background: rgba(255,185,55,0.08);
+}
+.fb-folder-item svg { width: 13px; height: 13px; flex-shrink: 0; color: rgba(255,185,55,0.65); transition: color 0.1s; }
+.fb-folder-item:hover svg, .fb-folder-item.active svg { color: rgba(255,185,55,1); }
+.fb-folder-item .fb-chevron { margin-left: auto; color: rgba(255,255,255,0.2); flex-shrink: 0; transition: color 0.1s, transform 0.12s; }
+.fb-folder-item:hover .fb-chevron, .fb-folder-item.active .fb-chevron { color: rgba(255,255,255,0.55); transform: translateX(2px); }
+
+.fb-empty {
+  padding: 16px 10px;
+  font-size: 11px;
+  color: rgba(255,255,255,0.22);
+  text-align: center;
+  letter-spacing: 0.04em;
+}
+.fb-no-dir { padding: 16px 10px; font-size: 11px; color: rgba(255,255,255,0.22); text-align: center; line-height: 1.7; letter-spacing: 0.03em; }
+
+.fb-new-folder-row {
+  padding: 4px 4px 2px;
+  border-top: 1px solid rgba(255,255,255,0.07);
+  margin-top: 3px;
+}
+.fb-new-folder-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 11px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: rgba(255,255,255,0.3);
+  font-size: 10px;
+  font-family: inherit;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
+  box-sizing: border-box;
+}
+.fb-new-folder-btn:hover {
+  background: rgba(255,255,255,0.05);
+  color: rgba(255,255,255,0.7);
+}
+.fb-new-folder-btn:hover svg { color: rgba(255,255,255,0.55); }
+.fb-new-folder-btn svg { width: 12px; height: 12px; flex-shrink: 0; color: rgba(255,255,255,0.25); transition: color 0.12s; }
+
+.fb-new-folder-input-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 4px 2px;
+  border-top: 1px solid rgba(255,255,255,0.05);
+  margin-top: 3px;
+}
+.fb-new-folder-input {
+  flex: 1;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.09);
+  border-radius: 6px;
+  color: rgba(255,255,255,0.85);
+  font-size: 11px;
+  font-family: inherit;
+  padding: 5px 9px;
+  outline: none;
+  min-width: 0;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.fb-new-folder-input::placeholder { color: rgba(255,255,255,0.18); }
+.fb-new-folder-input:focus {
+  border-color: rgba(232,68,10,0.45);
+  box-shadow: 0 0 0 3px rgba(232,68,10,0.08);
+}
+.fb-new-folder-confirm {
+  padding: 5px 11px;
+  border-radius: 6px;
+  border: none;
+  background: rgba(232,68,10,0.9);
+  color: rgba(255,255,255,0.95);
+  font-size: 9px;
+  font-family: inherit;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s;
+  flex-shrink: 0;
+}
+.fb-new-folder-confirm:hover { background: #E8440A; }
 </style>
 
 <script>
@@ -6003,12 +6179,17 @@ async function execFileOp(op, card, destDir) {
   const sep = destDir.includes('\\') ? '\\' : '/';
   const destPath = destDir.replace(/[\\/]$/, '') + sep + fileName;
 
+  // For copy: if the source is already inside the project root, keep the original path.
+  // For move: always point to the new location.
+  const sourceInProject = _projectDir && sourcePath.toLowerCase().startsWith(_projectDir.toLowerCase());
+  const newSourcePath = (op === 'copy' && sourceInProject) ? sourcePath : destPath;
+
   if (IS_TAURI) {
     try {
       const { copyFile, remove } = window.__TAURI__.fs;
       await copyFile(sourcePath, destPath);
       if (op === 'move') await remove(sourcePath);
-      card.dataset.sourcePath = destPath;
+      card.dataset.sourcePath = newSourcePath;
       showToast((op === 'move' ? 'Moved' : 'Copied') + ' → ' + destPath.split(/[\\/]/).pop());
     } catch (e) {
       console.error('File op failed:', e);
@@ -6016,7 +6197,7 @@ async function execFileOp(op, card, destDir) {
     }
   } else {
     // Mock
-    card.dataset.sourcePath = destPath;
+    card.dataset.sourcePath = newSourcePath;
     showToast('[mock] ' + (op === 'move' ? 'Moved' : 'Copied') + ' to ' + destDir.split(/[\\/]/).pop() + '/' + fileName);
   }
   closeAllFolderUI();
@@ -6221,6 +6402,86 @@ async function openFolderBrowser(anchorItem) {
   await buildFolderPanel(_projectDir, 0, x, y);
 }
 
+async function createFolderInDir(dirPath, panel, depth) {
+  // Replace the new-folder-row with an inline input row
+  const existingRow = panel.querySelector('.fb-new-folder-row, .fb-new-folder-input-row');
+  if (existingRow) existingRow.remove();
+
+  const inputRow = document.createElement('div');
+  inputRow.className = 'fb-new-folder-input-row';
+
+  const input = document.createElement('input');
+  input.className = 'fb-new-folder-input';
+  input.placeholder = 'folder name';
+  input.maxLength = 128;
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className = 'fb-new-folder-confirm';
+  confirmBtn.textContent = 'create';
+
+  inputRow.appendChild(input);
+  inputRow.appendChild(confirmBtn);
+  panel.appendChild(inputRow);
+
+  // Stop hover from triggering subfolder panels while typing
+  inputRow.addEventListener('mouseenter', () => clearTimeout(_hoverTimer));
+
+  setTimeout(() => input.focus(), 30);
+
+  const doCreate = async () => {
+    const name = input.value.trim();
+    if (!name) { input.focus(); return; }
+    const sep = dirPath.includes('\\') ? '\\' : '/';
+    const newPath = dirPath.replace(/[\\/]$/, '') + sep + name;
+
+    if (IS_TAURI) {
+      try {
+        const { mkdir } = window.__TAURI__.fs;
+        await mkdir(newPath);
+      } catch (e) {
+        showToast('Could not create folder: ' + (e.message || e));
+        input.select();
+        return;
+      }
+    }
+    // Refresh the panel in-place
+    showToast(`folder "${name}" created`);
+    buildFolderPanel(dirPath, depth, parseFloat(panel.style.left), parseFloat(panel.style.top));
+  };
+
+  confirmBtn.addEventListener('click', doCreate);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); doCreate(); }
+    if (e.key === 'Escape') {
+      inputRow.remove();
+      // Restore the new-folder button
+      const newRow = buildNewFolderRow(dirPath, panel, depth);
+      panel.appendChild(newRow);
+    }
+  });
+}
+
+function buildNewFolderRow(dirPath, panel, depth) {
+  const row = document.createElement('div');
+  row.className = 'fb-new-folder-row';
+  const btn = document.createElement('button');
+  btn.className = 'fb-new-folder-btn';
+  btn.innerHTML = `
+    <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M7 2v10M2 7h10"/>
+    </svg>
+    new folder
+  `;
+  btn.addEventListener('mouseenter', () => clearTimeout(_hoverTimer));
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    row.remove();
+    createFolderInDir(dirPath, panel, depth);
+  });
+  row.appendChild(btn);
+  return row;
+}
+
 async function buildFolderPanel(dirPath, depth, x, y) {
   // Remove all panels at this depth and beyond
   while (folderBrowser.children.length > depth) {
@@ -6237,8 +6498,9 @@ async function buildFolderPanel(dirPath, depth, x, y) {
   const header = document.createElement('div');
   header.className = 'fb-header';
   header.innerHTML = `
-    <svg viewBox="0 0 14 14" fill="currentColor" stroke="none" style="width:12px;height:12px;flex-shrink:0;color:rgba(255,200,80,0.75)">
-      <path d="M1 3.5A1.5 1.5 0 012.5 2h3l1 1.5H11.5A1.5 1.5 0 0113 5v5.5A1.5 1.5 0 0111.5 12h-9A1.5 1.5 0 011 10.5v-7z"/>
+    <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex-shrink:0;">
+      <path d="M1 4.5A1 1 0 012 3.5h3.5l1 1.5H12a1 1 0 011 1v4.5a1 1 0 01-1 1H2a1 1 0 01-1-1v-5z"/>
+      <path d="M1 7h12"/>
     </svg>
     <span>${folderName}</span>
   `;
@@ -6273,11 +6535,13 @@ async function buildFolderPanel(dirPath, depth, x, y) {
       item.className = 'fb-folder-item';
       item.dataset.path = path;
       item.innerHTML = `
-        <svg viewBox="0 0 14 14" fill="currentColor" stroke="none">
-          <path d="M1 3.5A1.5 1.5 0 012.5 2h3l1 1.5H11.5A1.5 1.5 0 0113 5v5.5A1.5 1.5 0 0111.5 12h-9A1.5 1.5 0 011 10.5v-7z"/>
+        <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1.5 4A1 1 0 012.5 3h3l1 1.5H11.5A1 1 0 0112.5 5.5v4.5a1 1 0 01-1 1h-9a1 1 0 01-1-1V4z"/>
         </svg>
         <span style="overflow:hidden;text-overflow:ellipsis;">${name}</span>
-        <span class="fb-chevron">›</span>
+        <svg class="fb-chevron" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;margin-left:auto;flex-shrink:0;">
+          <path d="M5 3l4 4-4 4"/>
+        </svg>
       `;
       item.addEventListener('mouseenter', () => {
         panel.querySelectorAll('.fb-folder-item').forEach(i => i.classList.remove('active'));
@@ -6293,6 +6557,9 @@ async function buildFolderPanel(dirPath, depth, x, y) {
       panel.appendChild(item);
     });
   }
+
+  // New folder button at the bottom of the panel
+  panel.appendChild(buildNewFolderRow(dirPath, panel, depth));
 
   // Position panel — place offscreen first to measure
   panel.style.left = '-9999px';
