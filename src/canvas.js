@@ -4,13 +4,47 @@
 function saveCanvasState(id){
   if(!id) return;
   const state=serializeCanvas();
-  store.set('freeflow_canvas_'+id, JSON.stringify(state));
+  state.viewport={scale,px,py};
+  const json=JSON.stringify(state);
+  // always save to localStorage as backup
+  store.set('freeflow_canvas_'+id, json);
+  // also write to user-chosen file if one is set
+  const filePath=store.get('freeflow_filepath_'+id);
+  if(filePath && IS_TAURI){
+    window.__TAURI__.fs.writeTextFile(filePath, json).catch(err=>{
+      console.warn('File save failed, data still in localStorage:', err);
+    });
+  }
   // update note count in project
   const p=projects.find(x=>x.id===id);
   if(p){ p.noteCount=document.querySelectorAll('.note').length; p.updatedAt=Date.now(); saveProjects(projects); }
 }
 
-function loadCanvasState(id){
+async function saveCanvasToFile(){
+  if(!activeProjectId) return;
+  if(!IS_TAURI){ showToast('File saving requires the desktop app'); return; }
+  try{
+    const { save } = window.__TAURI__.dialog;
+    const p=projects.find(x=>x.id===activeProjectId);
+    const defaultName=(p?p.name.replace(/[^a-z0-9_\-]/gi,'_'):'canvas')+'.json';
+    const filePath=await save({ filters:[{name:'Canvas',extensions:['json']}], defaultPath:defaultName });
+    if(!filePath) return;
+    store.set('freeflow_filepath_'+activeProjectId, filePath);
+    // trigger a save immediately
+    saveCanvasState(activeProjectId);
+    // update button to show the filename
+    const btn=document.getElementById('save-file-btn');
+    if(btn) btn.title='Saving to: '+filePath;
+    showToast('Saving to '+filePath.split(/[\\/]/).pop());
+  }catch(e){
+    console.error('saveCanvasToFile error:', e);
+    showToast('Could not open save dialog');
+  }
+}
+
+async function loadCanvasState(id){
+  // cancel any in-flight zoom animation
+  _zoomTarget=null; if(_zoomRaf){cancelAnimationFrame(_zoomRaf);_zoomRaf=null;}
   // clear canvas first
   document.querySelectorAll('.note,.img-card,.lbl,.frame').forEach(e=>e.remove());
   strokes.innerHTML=''; arrowsG.innerHTML='';
@@ -18,11 +52,34 @@ function loadCanvasState(id){
   undoStack=[]; redoStack=[]; syncUndoButtons();
   scale=1; px=0; py=0;
 
-  const raw=store.get('freeflow_canvas_'+id);
+  // update save-file button title if a path is already set
+  const filePath=store.get('freeflow_filepath_'+id);
+  const btn=document.getElementById('save-file-btn');
+  if(btn) btn.title=filePath?'Saving to: '+filePath:'Save canvas to a file on disk';
+
+  // try reading from user file first, fall back to localStorage
+  let raw=null;
+  if(filePath && IS_TAURI){
+    try{
+      raw=await window.__TAURI__.fs.readTextFile(filePath);
+    }catch{
+      // file may not exist yet or was moved — fall back silently
+      raw=null;
+    }
+  }
+  if(!raw) raw=store.get('freeflow_canvas_'+id);
   if(!raw) return;
   try{
     const parsed = JSON.parse(raw);
-    if(parsed && typeof parsed === 'object') restoreCanvas(parsed);
+    if(parsed && typeof parsed === 'object'){
+      restoreCanvas(parsed);
+      // restore viewport so returning from dashboard doesn't snap
+      if(parsed.viewport){
+        scale=parsed.viewport.scale||1;
+        px=parsed.viewport.px||0;
+        py=parsed.viewport.py||0;
+      }
+    }
   }catch(e){
     console.warn('canvas load error, resetting',e);
     store.remove('freeflow_canvas_'+id);
@@ -497,9 +554,9 @@ function groupSelected(){
   clearSelection(); updateSelBar();
 }
 
-cv.addEventListener('wheel',e=>{ e.preventDefault(); if(e.ctrlKey||e.metaKey)doZoom(-e.deltaY*0.006,e.clientX,e.clientY); else{px-=e.deltaX*0.7;py-=e.deltaY*0.7;applyT();positionSelBar();} },{passive:false});
+cv.addEventListener('wheel',e=>{ e.preventDefault(); if(e.ctrlKey||e.metaKey)doZoom(-e.deltaY*0.006,e.clientX,e.clientY); else{px-=e.deltaX*0.7;py-=e.deltaY*0.7;if(_zoomTarget){_zoomTarget.px=px;_zoomTarget.py=py;}applyT();positionSelBar();} },{passive:false});
 cv.addEventListener('mousedown',e=>{ if(e.button===1||(e.button===0&&e.altKey)){panning=true;panOrig={x:e.clientX-px,y:e.clientY-py};cv.style.cursor='grabbing';e.preventDefault();} });
-document.addEventListener('mousemove',e=>{ if(panning){px=e.clientX-panOrig.x;py=e.clientY-panOrig.y;applyT();positionSelBar();} });
+document.addEventListener('mousemove',e=>{ if(panning){px=e.clientX-panOrig.x;py=e.clientY-panOrig.y;if(_zoomTarget){_zoomTarget.px=px;_zoomTarget.py=py;}applyT();positionSelBar();} });
 document.addEventListener('mouseup',()=>{ if(panning){panning=false;cv.style.cursor=curTool==='text'?'text':'';} });
 
 function onStrokeMouseDown(e){

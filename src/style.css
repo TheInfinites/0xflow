@@ -1367,7 +1367,7 @@ body.has-sel-bar .img-toolbar { display: none !important; }
 
 /* frame */
 .frame { position: absolute; border: 1px solid var(--frame-border); border-radius: 8px; background: transparent; z-index: 2; cursor: move; }
-.frame-label { position: absolute; top: -20px; left: 0; font-family: 'Geist Mono', monospace; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--frame-label); cursor: text; background: none; border: none; outline: none; padding: 2px 4px; min-width: 40px; }
+.frame-label { position: absolute; top: -24px; left: 0; font-family: 'Geist', sans-serif; font-size: 13px; font-weight: 500; letter-spacing: 0.01em; text-transform: none; color: var(--frame-label); cursor: text; background: none; border: none; outline: none; padding: 2px 4px; min-width: 40px; }
 .frame-label::placeholder { color: var(--text-faint); }
 .frame.selected { outline: 1px solid rgba(232,68,10,0.6) !important; outline-offset: 2px; }
 

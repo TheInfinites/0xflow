@@ -302,15 +302,15 @@ function startInlineRename(id){
   });
 }
 
-function openProject(id,e){
+async function openProject(id,e){
   if(e) e.stopPropagation();
   const p=projects.find(x=>x.id===id); if(!p) return;
   p.updatedAt=Date.now(); saveProjects(projects);
   activeProjectId=id;
   document.getElementById('project-title').textContent=p.name;
-  loadCanvasState(id);
   document.body.classList.add('on-canvas');
-  resetView(); applyT(); syncInkPointerEvents(); syncUndoButtons();
+  await loadCanvasState(id);
+  applyT(); syncInkPointerEvents(); syncUndoButtons();
   const bd = document.getElementById('dash-backdrop');
   if(bd){ bd.style.opacity='0'; bd.style.pointerEvents='none'; }
 }
