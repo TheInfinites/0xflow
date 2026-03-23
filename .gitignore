@@ -8,3 +8,4 @@ dist/
 app-icon.png
 *.exe
 *.sig
+release.sh
