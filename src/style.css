@@ -973,7 +973,7 @@ body.dash-light #toast { background: #1a1a1a; }
 
 /* AI note */
 .ai-note { width: 280px; min-height: 220px; display: flex; flex-direction: column; padding-bottom: 0 !important; overflow: hidden; box-sizing: border-box; }
-.ai-note .ai-input-port, .ai-note .rel-handle, .ai-note .note-resize, .ai-note .lock-icon, .ai-note .note-idx, .ai-note .ai-note-badge { overflow: visible; }
+.ai-note .ai-input-port, .ai-note .rel-handle, .ai-note .rh, .ai-note .lock-icon, .ai-note .note-idx, .ai-note .ai-note-badge { overflow: visible; }
 .ai-note-badge {
   position: absolute; top: 10px; left: 10px;
   font-family: 'Geist Mono', monospace; font-size: 8px; letter-spacing: 0.1em;
@@ -1065,7 +1065,7 @@ body.dash-light #toast { background: #1a1a1a; }
 
 /* ── To-do card ─────────────────────────────────────────── */
 .todo-card { width: 220px; min-height: 140px; display: flex; flex-direction: column; padding-bottom: 8px !important; overflow: hidden; box-sizing: border-box; }
-.todo-card .todo-badge, .todo-card .rel-handle, .todo-card .note-resize, .todo-card .lock-icon, .todo-card .note-idx { overflow: visible; }
+.todo-card .todo-badge, .todo-card .rel-handle, .todo-card .rh, .todo-card .lock-icon, .todo-card .note-idx { overflow: visible; }
 .todo-badge {
   position: absolute; top: 10px; left: 10px;
   font-family: 'Geist Mono', monospace; font-size: 8px; letter-spacing: 0.1em;
@@ -1188,15 +1188,16 @@ body.on-canvas.light .todo-progress { background: rgba(0,0,0,0.08); }
 /* SVG relation lines */
 .rel-line {
   fill: none;
-  stroke: rgba(232,68,10,0.22);
-  stroke-width: 1.5;
-  stroke-dasharray: 6,4;
+  color: rgba(232,68,10,0.35);
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
   pointer-events: stroke;
   cursor: pointer;
-  transition: stroke 0.15s;
+  transition: filter 0.15s, stroke-width 0.15s;
 }
-.rel-line:hover { stroke: rgba(232,68,10,0.55); }
-.rel-line.selected-rel { stroke: rgba(232,68,10,0.7); }
+.rel-line:hover { stroke-width: 2.4; filter: drop-shadow(0 0 3px rgba(232,68,10,0.4)); }
+.rel-line.selected-rel { stroke-width: 2.4; filter: drop-shadow(0 0 5px rgba(232,68,10,0.5)); }
 
 /* Live drag preview wire */
 #rel-drag-svg {
@@ -1483,12 +1484,98 @@ body.on-canvas.light .cmd-item.active .cmd-label { color: rgba(0,0,0,0.9); }
 body.on-canvas.light .cmd-shortcut { color: rgba(0,0,0,0.2); background: rgba(0,0,0,0.03); border-color: rgba(0,0,0,0.06); }
 body.on-canvas.light .cmd-footer { border-top-color: rgba(0,0,0,0.05); color: rgba(0,0,0,0.2); }
 body.on-canvas.light .cmd-footer kbd { background: rgba(0,0,0,0.03); border-color: rgba(0,0,0,0.08); }
+/* light mode: bookmark panel */
+body.on-canvas.light #bookmark-panel { background: #f5f3ef; border-color: rgba(0,0,0,0.08); }
+body.on-canvas.light .bkm-header { color: rgba(0,0,0,0.25); }
+body.on-canvas.light .bkm-label { color: rgba(0,0,0,0.65); }
+body.on-canvas.light .bkm-btn { background: rgba(0,0,0,0.04); border-color: rgba(0,0,0,0.08); color: rgba(0,0,0,0.45); }
+body.on-canvas.light .bkm-add-btn { background: rgba(0,0,0,0.03); border-color: rgba(0,0,0,0.08); color: rgba(0,0,0,0.4); }
+body.on-canvas.light .bkm-empty { color: rgba(0,0,0,0.2); }
+/* light mode: resize handles */
+body.on-canvas.light .rh-nw::after, body.on-canvas.light .rh-ne::after,
+body.on-canvas.light .rh-sw::after, body.on-canvas.light .rh-se::after { background: rgba(0,0,0,0.35); }
+/* light mode: collapse button */
+body.on-canvas.light .collapse-btn svg { stroke: rgba(0,0,0,0.5); }
 
 /* minimap */
-#minimap { position: fixed; bottom: 56px; right: 14px; z-index: 800; width: 160px; height: 100px; background: rgba(10,10,10,0.95); border: 1px solid rgba(255,255,255,0.08); border-radius: 0; overflow: hidden; pointer-events: none; opacity: 0; transition: opacity 0.2s; }
-#minimap.show { opacity: 1; }
+#minimap { position: fixed; bottom: 56px; right: 14px; z-index: 800; width: 160px; height: 100px; background: rgba(10,10,10,0.95); border: 1px solid rgba(255,255,255,0.08); border-radius: 0; overflow: hidden; pointer-events: none; opacity: 0; transition: opacity 0.2s; cursor: crosshair; }
+#minimap.show { opacity: 1; pointer-events: all; }
 #minimap-viewport { position: absolute; border: 1px solid rgba(232,68,10,0.6); border-radius: 0; background: rgba(232,68,10,0.04); pointer-events: none; }
 #minimap canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+/* ── All-edge resize handles ──────────────────────────────── */
+.rh { position: absolute; z-index: 25; opacity: 0; transition: opacity 0.15s; }
+.note:hover .rh, .note.selected .rh,
+.img-card:hover .rh, .img-card.selected .rh,
+.frame:hover .rh, .frame.selected .rh { opacity: 1; }
+.note.collapsed .rh, .img-card.collapsed .rh { display: none; }
+/* corner handles */
+.rh-nw { top:-5px; left:-5px; width:10px; height:10px; cursor:nwse-resize; }
+.rh-ne { top:-5px; right:-5px; width:10px; height:10px; cursor:nesw-resize; }
+.rh-sw { bottom:-5px; left:-5px; width:10px; height:10px; cursor:nesw-resize; }
+.rh-se { bottom:-5px; right:-5px; width:10px; height:10px; cursor:nwse-resize; }
+/* edge handles */
+.rh-n { top:-4px; left:20%; width:60%; height:8px; cursor:ns-resize; }
+.rh-s { bottom:-4px; left:20%; width:60%; height:8px; cursor:ns-resize; }
+.rh-w { left:-4px; top:20%; width:8px; height:60%; cursor:ew-resize; }
+.rh-e { right:-4px; top:20%; width:8px; height:60%; cursor:ew-resize; }
+/* corner visual dots */
+.rh-nw::after,.rh-ne::after,.rh-sw::after,.rh-se::after { content:''; display:block; width:5px; height:5px; border-radius:50%; background:rgba(255,255,255,0.5); margin:auto; margin-top:2px; }
+.rh-nw::after { margin-top:2px; margin-left:2px; }
+.rh-ne::after { margin-top:2px; margin-left:3px; }
+.rh-sw::after { margin-top:3px; margin-left:2px; }
+.rh-se::after { margin-top:3px; margin-left:3px; }
+
+/* ── Collapse button ──────────────────────────────────────── */
+.collapse-btn {
+  position: absolute; top: 6px; right: 22px; z-index: 22;
+  width: 14px; height: 14px; padding: 0; border: none; background: none;
+  cursor: pointer; opacity: 0; transition: opacity 0.15s;
+  display: flex; align-items: center; justify-content: center;
+}
+.note:hover .collapse-btn, .note.selected .collapse-btn,
+.img-card:hover .collapse-btn, .img-card.selected .collapse-btn { opacity: 0.5; }
+.collapse-btn:hover { opacity: 1 !important; }
+.collapse-btn svg { width: 8px; height: 8px; stroke: rgba(255,255,255,0.7); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ── Collapsed state ──────────────────────────────────────── */
+.note.collapsed { height: 32px !important; min-height: 32px !important; overflow: hidden; }
+.note.collapsed textarea,
+.note.collapsed .note-bottom,
+.note.collapsed .note-reactions,
+.note.collapsed .note-fit-btn,
+.note.collapsed .ai-thread,
+.note.collapsed .ai-input-row,
+.note.collapsed .ai-sources,
+.note.collapsed .ai-model-row,
+.note.collapsed .ai-key-prompt,
+.note.collapsed .todo-items,
+.note.collapsed .todo-add,
+.note.collapsed .todo-progress { display: none !important; }
+.img-card.collapsed img { display: none; }
+.img-card.collapsed { height: 32px !important; overflow: hidden; }
+.img-card.collapsed .img-toolbar { display: none; }
+
+/* ── Viewport bookmark panel ──────────────────────────────── */
+#bookmark-panel {
+  position: fixed; bottom: 56px; right: 184px; z-index: 820;
+  background: rgba(10,10,10,0.97); border: 1px solid rgba(255,255,255,0.08);
+  padding: 8px; min-width: 180px; display: none; flex-direction: column; gap: 4px;
+}
+#bookmark-panel.show { display: flex; }
+.bkm-header { font-family:'Geist Mono',monospace; font-size:8px; letter-spacing:0.1em; color:rgba(255,255,255,0.25); padding: 0 2px 4px; }
+.bkm-empty { font-family:'DM Mono',monospace; font-size:10px; color:rgba(255,255,255,0.2); padding:4px 2px; }
+.bkm-item { display:flex; align-items:center; gap:4px; }
+.bkm-label { flex:1; font-family:'DM Mono',monospace; font-size:10px; color:rgba(255,255,255,0.65); cursor:pointer; padding:2px 4px; border-radius:3px; outline:none; border:none; background:none; }
+.bkm-label:focus { background:rgba(255,255,255,0.05); }
+.bkm-btn { font-family:'Geist Mono',monospace; font-size:9px; padding:2px 6px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.08); border-radius:3px; color:rgba(255,255,255,0.5); cursor:pointer; }
+.bkm-btn:hover { background:rgba(255,255,255,0.1); color:rgba(255,255,255,0.85); }
+.bkm-del { color:rgba(232,68,10,0.5) !important; }
+.bkm-del:hover { background:rgba(232,68,10,0.1) !important; color:#E8440A !important; }
+.bkm-add-btn { font-family:'Geist Mono',monospace; font-size:9px; padding:4px 6px; margin-top:4px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:3px; color:rgba(255,255,255,0.4); cursor:pointer; text-align:left; }
+.bkm-add-btn:hover { background:rgba(255,255,255,0.08); color:rgba(255,255,255,0.7); }
+
+/* ── Relation line visuals ────────────────────────────────── */
 
 /* timer */
 #timer-box {

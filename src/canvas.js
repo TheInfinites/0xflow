@@ -15,6 +15,7 @@ function saveCanvasState(id){
       console.warn('File save failed, data still in localStorage:', err);
     });
   }
+  saveViewBookmarks(id);
   // update note count in project
   const p=projects.find(x=>x.id===id);
   if(p){ p.noteCount=document.querySelectorAll('.note').length; p.updatedAt=Date.now(); saveProjects(projects); }
@@ -68,6 +69,7 @@ async function loadCanvasState(id){
     }
   }
   if(!raw) raw=store.get('freeflow_canvas_'+id);
+  loadViewBookmarks(id);
   if(!raw) return;
   try{
     const parsed = JSON.parse(raw);
@@ -208,7 +210,7 @@ function restoreCanvas(state){
       }
     }
     else if(el.classList.contains('frame')) { bindFrame(el); addRelHandle(el); }
-    else if(el.classList.contains('img-card')){ bindImgCard(el); const rh=el.querySelector('.img-resize'); if(rh) rh.addEventListener('mousedown',e=>startImgResize(e,el)); addRelHandle(el); const cp=el.querySelector('.conn-port'); if(cp) cp.addEventListener('mousedown',e=>{e.stopPropagation();startConnDrag(e,el);}); }
+    else if(el.classList.contains('img-card')){ bindImgCard(el); el.querySelectorAll('.rh').forEach(rh=>{ const dir=rh.className.replace('rh rh-',''); rh.addEventListener('mousedown',e=>startEdgeResize(e,el,dir,60,60,(card,nw)=>{ const imgEl=card.querySelector('img'); const nwMax=parseInt(card.dataset.nw)||99999; if(imgEl) imgEl.style.width=Math.min(nw-12,nwMax)+'px'; })); }); addRelHandle(el); const cp=el.querySelector('.conn-port'); if(cp) cp.addEventListener('mousedown',e=>{e.stopPropagation();startConnDrag(e,el);}); }
     else if(el.classList.contains('lbl')) { bindLabel(el); addRelHandle(el); }
     restoredEls.push(el);
   });
@@ -245,7 +247,83 @@ function applyT(){
   dotGrid.style.backgroundPosition=`${ox}px ${oy}px`;
   dotGrid.style.backgroundImage=`linear-gradient(${isLight?'rgba(0,0,0,0.05)':'rgba(255,255,255,0.04)'} 1px,transparent 1px),linear-gradient(90deg,${isLight?'rgba(0,0,0,0.05)':'rgba(255,255,255,0.04)'} 1px,transparent 1px)`;
   updateMinimap();
+  cullElements();
 }
+
+// ── Off-screen culling ──────────────────────────────────────────
+const CULL_BUFFER = 300;
+function cullElements() {
+  const r = cv.getBoundingClientRect();
+  const vr = r.width + CULL_BUFFER, vb = r.height + CULL_BUFFER;
+  document.querySelectorAll('.note,.img-card,.lbl,.frame').forEach(el => {
+    if (el.classList.contains('pinned')) return;
+    const l = parseFloat(el.style.left)||0, t = parseFloat(el.style.top)||0;
+    const w = el.offsetWidth||200, h = el.offsetHeight||128;
+    const sl = (l-3000)*scale+px, st = (t-3000)*scale+py;
+    const hidden = (sl+w*scale)<-CULL_BUFFER || sl>vr || (st+h*scale)<-CULL_BUFFER || st>vb;
+    if(hidden !== (el.style.visibility==='hidden')) el.style.visibility = hidden?'hidden':'';
+  });
+}
+
+// ── Viewport Bookmarks ──────────────────────────────────────────
+let _viewBookmarks = [];
+function loadViewBookmarks(id) {
+  try { _viewBookmarks = JSON.parse(store.get('freeflow_bkmarks_'+id)||'[]'); } catch { _viewBookmarks=[]; }
+  renderBookmarkList();
+}
+function saveViewBookmarks(id) {
+  if(!id) return;
+  store.set('freeflow_bkmarks_'+id, JSON.stringify(_viewBookmarks));
+}
+function addViewBookmark() {
+  const r = cv.getBoundingClientRect();
+  const worldCX = (-px+r.width/2)/scale+3000;
+  const worldCY = (-py+r.height/2)/scale+3000;
+  const name = 'View '+ (_viewBookmarks.length+1);
+  _viewBookmarks.push({name, scale, worldCX, worldCY});
+  saveViewBookmarks(activeProjectId);
+  renderBookmarkList();
+  showToast('Bookmark saved: '+name);
+}
+function jumpToBookmark(idx) {
+  const bk = _viewBookmarks[idx]; if(!bk) return;
+  const r = cv.getBoundingClientRect();
+  scale = bk.scale;
+  px = r.width/2-(bk.worldCX-3000)*scale;
+  py = r.height/2-(bk.worldCY-3000)*scale;
+  applyT(); positionSelBar();
+}
+function deleteBookmark(idx) {
+  _viewBookmarks.splice(idx,1);
+  saveViewBookmarks(activeProjectId);
+  renderBookmarkList();
+}
+function renderBookmarkList() {
+  const list = document.getElementById('bookmark-list'); if(!list) return;
+  list.innerHTML='';
+  if(!_viewBookmarks.length){ list.innerHTML='<div class="bkm-empty">No bookmarks yet</div>'; return; }
+  _viewBookmarks.forEach((bk,i)=>{
+    const row=document.createElement('div'); row.className='bkm-item';
+    const lbl=document.createElement('span'); lbl.className='bkm-label'; lbl.textContent=bk.name;
+    lbl.addEventListener('dblclick',()=>{
+      lbl.contentEditable='true'; lbl.focus();
+      lbl.addEventListener('blur',()=>{ bk.name=lbl.textContent.trim()||bk.name; lbl.contentEditable='false'; saveViewBookmarks(activeProjectId); },{once:true});
+      lbl.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();lbl.blur();} },{once:true});
+    });
+    const jumpBtn=document.createElement('button'); jumpBtn.className='bkm-btn'; jumpBtn.textContent='go';
+    jumpBtn.addEventListener('click',()=>jumpToBookmark(i));
+    const delBtn=document.createElement('button'); delBtn.className='bkm-btn bkm-del'; delBtn.textContent='✕';
+    delBtn.addEventListener('click',()=>deleteBookmark(i));
+    row.appendChild(lbl); row.appendChild(jumpBtn); row.appendChild(delBtn);
+    list.appendChild(row);
+  });
+}
+function toggleBookmarkPanel() {
+  const p=document.getElementById('bookmark-panel'); if(!p) return;
+  p.classList.toggle('show');
+  if(p.classList.contains('show')) renderBookmarkList();
+}
+document.addEventListener('click',e=>{ if(!e.target.closest('#bookmark-panel')&&!e.target.closest('.bar-btn[onclick*="toggleBookmarkPanel"]')) document.getElementById('bookmark-panel')?.classList.remove('show'); });
 function c2w(cx,cy){ const r=cv.getBoundingClientRect(); return{x:(cx-r.left-px)/scale+3000,y:(cy-r.top-py)/scale+3000}; }
 function svgToScreen(wx,wy){ const r=cv.getBoundingClientRect(); return{x:(wx-3000)*scale+px+r.left,y:(wy-3000)*scale+py+r.top}; }
 let _zoomTarget=null,_zoomRaf=null;
@@ -277,6 +355,16 @@ function _animateZoom(){
   applyT(); positionSelBar();
 }
 function resetView(){ scale=1;px=0;py=0;applyT();positionSelBar(); }
+function zoomToSelection(){
+  const els=[...selected].filter(e=>!(e instanceof SVGElement));
+  if(!els.length){ zoomToFit(); return; }
+  let mnX=Infinity,mnY=Infinity,mxX=-Infinity,mxY=-Infinity;
+  els.forEach(el=>{const l=parseFloat(el.style.left)||0,t=parseFloat(el.style.top)||0,w=el.offsetWidth||200,h=el.offsetHeight||128;mnX=Math.min(mnX,l);mnY=Math.min(mnY,t);mxX=Math.max(mxX,l+w);mxY=Math.max(mxY,t+h);});
+  const pad=80,cw=cv.offsetWidth,ch=cv.offsetHeight,ww=mxX-mnX+pad*2,wh=mxY-mnY+pad*2;
+  const ns=Math.min(Math.min(cw/ww,ch/wh),3);
+  px=cw/2-((mnX+mxX)/2-3000)*ns; py=ch/2-((mnY+mxY)/2-3000)*ns; scale=ns;
+  applyT();positionSelBar();
+}
 function zoomToFit(){
   const els=[...document.querySelectorAll('.note,.img-card,.lbl,.frame')];
   if(!els.length){resetView();return;}
@@ -871,11 +959,7 @@ function makeAiNote(x,y){
   inputRow.appendChild(sendBtn);
   d.appendChild(inputRow);
 
-  // resize handle
-  const resizeHandle=document.createElement('div');resizeHandle.className='note-resize';
-  resizeHandle.innerHTML='<svg viewBox="0 0 8 8"><line x1="2" y1="8" x2="8" y2="2"/><line x1="5" y1="8" x2="8" y2="5"/></svg>';
-  resizeHandle.addEventListener('mousedown',e=>startAiNoteResize(e,d));
-  d.appendChild(resizeHandle);
+  makeResizeHandles(d, 240, 200);
 
   // input port (left — receives connections)
   const aiInputPort=document.createElement('div');aiInputPort.className='ai-input-port';
@@ -921,11 +1005,9 @@ function elToWorld(el) {
 }
 
 function relCurve(ax, ay, bx, by) {
-  const dx = Math.abs(bx - ax) * 0.45;
-  const dy = Math.abs(by - ay) * 0.2;
-  const cx1 = ax + dx, cy1 = ay + dy;
-  const cx2 = bx - dx, cy2 = by - dy;
-  return `M ${ax} ${ay} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${bx} ${by}`;
+  const dist = Math.sqrt((bx-ax)**2+(by-ay)**2);
+  const cpStr = Math.max(dist*0.45, 60);
+  return `M ${ax} ${ay} C ${ax+cpStr} ${ay}, ${bx-cpStr} ${by}, ${bx} ${by}`;
 }
 
 function updateRelLine(rel) {
@@ -936,6 +1018,9 @@ function updateRelLine(rel) {
   const a = elToWorld(rel.elA);
   const b = elToWorld(rel.elB);
   rel.pathEl.setAttribute('d', relCurve(a.x, a.y, b.x, b.y));
+  // color from source element accent color
+  const srcColor = rel.elA.dataset && rel.elA.dataset.color;
+  rel.pathEl.style.color = srcColor || '';
 }
 
 function updateAllRelations() {
@@ -952,6 +1037,7 @@ function addRelation(elA, elB) {
   const id = ++relIdCounter;
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   path.setAttribute('class', 'rel-line');
+  path.setAttribute('marker-end', 'url(#rel-ah)');
   path.dataset.relId = id;
   path.addEventListener('mousedown', e => e.stopPropagation());
   path.addEventListener('dblclick', e => { e.stopPropagation(); removeRelation(id); });
@@ -1343,10 +1429,11 @@ function makeNote(x,y,color=null){
   fitBtn.addEventListener('mousedown',e=>e.stopPropagation());
   fitBtn.addEventListener('click',e=>{e.stopPropagation();fitNoteToContent(d);});
   bottom.appendChild(reactions);bottom.appendChild(linkBadge);bottom.appendChild(fitBtn);bottom.appendChild(votes);
-  const resizeHandle=document.createElement('div');resizeHandle.className='note-resize';resizeHandle.innerHTML='<svg viewBox="0 0 8 8"><line x1="2" y1="8" x2="8" y2="2"/><line x1="5" y1="8" x2="8" y2="5"/></svg>';resizeHandle.addEventListener('mousedown',e=>startNoteResize(e,d));
+  const collapseBtn=makeCollapseBtn(d,()=>ta.value.slice(0,40));
   const connPort=document.createElement('div');connPort.className='conn-port';
   connPort.addEventListener('mousedown',e=>{e.stopPropagation();startConnDrag(e,d);});
-  d.appendChild(strip);d.appendChild(idx);d.appendChild(ta);d.appendChild(bottom);d.appendChild(resizeHandle);d.appendChild(connPort);
+  d.appendChild(strip);d.appendChild(idx);d.appendChild(collapseBtn);d.appendChild(ta);d.appendChild(bottom);d.appendChild(connPort);
+  makeResizeHandles(d,160,80,(el,nw,nh)=>{ const ta=el.querySelector('textarea'); if(ta) ta.style.height=Math.max(40,nh-90)+'px'; });
   addRelHandle(d);
   bindNote(d); world.appendChild(d);
   d.style.opacity='0';d.style.transform='scale(0.95) translateY(4px)';
@@ -1391,16 +1478,15 @@ function makeTodo(x, y, title='') {
   const progressBar = document.createElement('div'); progressBar.className = 'todo-progress-bar';
   progress.appendChild(progressBar);
 
-  const resizeHandle = document.createElement('div'); resizeHandle.className = 'note-resize';
-  resizeHandle.innerHTML = '<svg viewBox="0 0 8 8"><line x1="2" y1="8" x2="8" y2="2"/><line x1="5" y1="8" x2="8" y2="5"/></svg>';
-  resizeHandle.addEventListener('mousedown', e => startNoteResize(e, d));
+  const collapseBtn = makeCollapseBtn(d, () => titleInput.value.slice(0,40));
 
   const connPort = document.createElement('div'); connPort.className = 'conn-port';
   connPort.addEventListener('mousedown', e => { e.stopPropagation(); startConnDrag(e, d); });
 
   d.appendChild(strip); d.appendChild(lockIcon); d.appendChild(badge); d.appendChild(idx);
-  d.appendChild(titleInput); d.appendChild(items); d.appendChild(addBtn);
-  d.appendChild(progress); d.appendChild(resizeHandle); d.appendChild(connPort);
+  d.appendChild(collapseBtn); d.appendChild(titleInput); d.appendChild(items); d.appendChild(addBtn);
+  d.appendChild(progress); d.appendChild(connPort);
+  makeResizeHandles(d, 160, 80);
 
   addRelHandle(d);
   bindNote(d); world.appendChild(d);
@@ -1495,6 +1581,37 @@ function bindTodoCard(card) {
   updateTodoProgress(card);
 }
 
+// ── All-edge resize ─────────────────────────────────────────────
+function makeResizeHandles(el, minW, minH, onResizeFn) {
+  const dirs = ['n','ne','e','se','s','sw','w','nw'];
+  dirs.forEach(dir => {
+    const h = document.createElement('div');
+    h.className = 'rh rh-'+dir;
+    h.addEventListener('mousedown', e => startEdgeResize(e, el, dir, minW, minH, onResizeFn));
+    el.appendChild(h);
+  });
+}
+function startEdgeResize(e, el, dir, minW, minH, onResizeFn) {
+  e.stopPropagation(); e.preventDefault();
+  const sx=e.clientX, sy=e.clientY;
+  const sw=el.offsetWidth, sh=el.offsetHeight;
+  const sl=parseFloat(el.style.left)||0, st=parseFloat(el.style.top)||0;
+  function onMove(ev) {
+    const dx=(ev.clientX-sx)/scale, dy=(ev.clientY-sy)/scale;
+    let nl=sl,nt=st,nw=sw,nh=sh;
+    if(dir.includes('e')) nw=Math.max(minW,sw+dx);
+    if(dir.includes('s')) nh=Math.max(minH,sh+dy);
+    if(dir.includes('w')){ const cw=Math.max(minW,sw-dx); nl=sl+(sw-cw); nw=cw; }
+    if(dir.includes('n')){ const ch=Math.max(minH,sh-dy); nt=st+(sh-ch); nh=ch; }
+    el.style.left=nl+'px'; el.style.top=nt+'px';
+    el.style.width=nw+'px'; el.style.height=nh+'px';
+    if(onResizeFn) onResizeFn(el, nw, nh);
+  }
+  function onUp(){ document.removeEventListener('mousemove',onMove); document.removeEventListener('mouseup',onUp); snapshot(); }
+  document.addEventListener('mousemove',onMove);
+  document.addEventListener('mouseup',onUp);
+}
+
 function startNoteResize(e, note){
   e.stopPropagation(); e.preventDefault();
   const startX=e.clientX, startY=e.clientY;
@@ -1509,6 +1626,35 @@ function startNoteResize(e, note){
   function onUp(){ document.removeEventListener('mousemove',onMove); document.removeEventListener('mouseup',onUp); snapshot(); }
   document.addEventListener('mousemove',onMove);
   document.addEventListener('mouseup',onUp);
+}
+
+// ── Collapse / expand cards ─────────────────────────────────────
+function makeCollapseBtn(el, getLabel) {
+  const btn = document.createElement('button');
+  btn.className = 'collapse-btn';
+  btn.title = 'Collapse';
+  btn.innerHTML = '<svg viewBox="0 0 8 8"><polyline points="1,2 4,5 7,2"/></svg>';
+  btn.addEventListener('mousedown', e => e.stopPropagation());
+  btn.addEventListener('click', e => { e.stopPropagation(); toggleCollapse(el, getLabel); });
+  return btn;
+}
+function toggleCollapse(el, getLabel) {
+  const isCollapsed = el.classList.toggle('collapsed');
+  if(isCollapsed) {
+    el.dataset.expandedW = el.style.width;
+    el.dataset.expandedH = el.style.height;
+    const lbl = getLabel ? getLabel() : '';
+    el.dataset.collapsedLabel = lbl;
+    // update collapse btn arrow direction
+    const btn = el.querySelector('.collapse-btn svg polyline');
+    if(btn) btn.setAttribute('points','1,5 4,2 7,5');
+  } else {
+    if(el.dataset.expandedW) el.style.width = el.dataset.expandedW;
+    if(el.dataset.expandedH) el.style.height = el.dataset.expandedH;
+    const btn = el.querySelector('.collapse-btn svg polyline');
+    if(btn) btn.setAttribute('points','1,2 4,5 7,2');
+  }
+  snapshot();
 }
 
 function fitNoteToContent(note) {
@@ -1724,7 +1870,9 @@ function makeFrame(x,y,w,h,labelText='frame'){
   frame.style.cssText=`left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
   const lbl=document.createElement('input');lbl.className='frame-label';lbl.type='text';lbl.value=labelText;lbl.placeholder='frame';
   lbl.addEventListener('mousedown',e=>e.stopPropagation());lbl.addEventListener('blur',()=>snapshot());
-  frame.appendChild(lbl);addRelHandle(frame);bindFrame(frame);world.appendChild(frame);return frame;
+  frame.appendChild(lbl);addRelHandle(frame);
+  makeResizeHandles(frame, 80, 60);
+  bindFrame(frame);world.appendChild(frame);return frame;
 }
 function bindFrame(frame){ frame.addEventListener('mousedown',e=>{ if(e.target.tagName==='INPUT')return; onElemMouseDown(e); }); }
 

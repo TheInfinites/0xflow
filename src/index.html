@@ -204,8 +204,10 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
       </button>
       <div class="sep" style="height:16px;margin:0 2px;"></div>
       <button class="bar-btn" onclick="toggleSearch()"><svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="3.5"/><line x1="7.5" y1="7.5" x2="11" y2="11"/></svg></button>
-      <button class="bar-btn" onclick="zoomToFit()"><svg viewBox="0 0 12 12"><polyline points="1,4 1,1 4,1"/><polyline points="8,1 11,1 11,4"/><polyline points="11,8 11,11 8,11"/><polyline points="4,11 1,11 1,8"/></svg></button>
-      <button class="bar-btn" onclick="toggleMinimap()"><svg viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" rx="1.5"/><rect x="3" y="3" width="3" height="2"/><rect x="7" y="4" width="2" height="4"/><rect x="3" y="7" width="4" height="2"/></svg></button>
+      <button class="bar-btn" onclick="zoomToFit()" title="Zoom to fit  0"><svg viewBox="0 0 12 12"><polyline points="1,4 1,1 4,1"/><polyline points="8,1 11,1 11,4"/><polyline points="11,8 11,11 8,11"/><polyline points="4,11 1,11 1,8"/></svg></button>
+      <button class="bar-btn" onclick="zoomToSelection()" title="Zoom to selection  Ctrl+Shift+F"><svg viewBox="0 0 12 12"><polyline points="1,4 1,1 4,1"/><polyline points="8,1 11,1 11,4"/><polyline points="11,8 11,11 8,11"/><polyline points="4,11 1,11 1,8"/><rect x="3.5" y="3.5" width="5" height="5" rx="0.5" stroke-dasharray="1.5,1"/></svg></button>
+      <button class="bar-btn" onclick="toggleMinimap()" title="Minimap"><svg viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" rx="1.5"/><rect x="3" y="3" width="3" height="2"/><rect x="7" y="4" width="2" height="4"/><rect x="3" y="7" width="4" height="2"/></svg></button>
+      <button class="bar-btn" onclick="toggleBookmarkPanel()" title="Viewport bookmarks"><svg viewBox="0 0 12 12"><path d="M2 1h8v10L6 8.5 2 11z"/></svg></button>
       <button class="bar-btn" onclick="toggleTimer()"><svg viewBox="0 0 12 12"><circle cx="6" cy="7" r="4"/><line x1="6" y1="1" x2="6" y2="3"/><line x1="4" y1="1" x2="8" y2="1"/><line x1="6" y1="7" x2="8.5" y2="5"/></svg></button>
     </div>
     <div id="bar-right">
@@ -280,8 +282,8 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
     <button class="t" id="tb-ai" data-tip="AI note  i" onclick="addAiNote()" style="color:#E8440A;"><svg viewBox="0 0 15 15"><circle cx="7.5" cy="7.5" r="5.5" stroke-width="1.2"/><path d="M5 7.5h5M7.5 5v5" stroke-width="1.2"/><circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/></svg></button>
     <button class="t" id="tb-cluster" data-tip="AI cluster  c" onclick="clusterCanvas()"><svg viewBox="0 0 15 15"><circle cx="4" cy="4" r="2"/><circle cx="11" cy="4" r="2"/><circle cx="7.5" cy="11" r="2"/><line x1="5.5" y1="5" x2="6.5" y2="9.5"/><line x1="9.5" y1="5" x2="8.5" y2="9.5"/><line x1="6" y1="4" x2="9" y2="4"/></svg></button>
     <div class="sep"></div>
-    <button class="t" data-tip="zoom in  +" onclick="doZoom(0.15)"><svg viewBox="0 0 15 15"><circle cx="6.5" cy="6.5" r="4"/><line x1="9.8" y1="9.8" x2="13" y2="13"/><line x1="6.5" y1="4.5" x2="6.5" y2="8.5"/><line x1="4.5" y1="6.5" x2="8.5" y2="6.5"/></svg></button>
-    <button class="t" data-tip="zoom out  -" onclick="doZoom(-0.15)"><svg viewBox="0 0 15 15"><circle cx="6.5" cy="6.5" r="4"/><line x1="9.8" y1="9.8" x2="13" y2="13"/><line x1="4.5" y1="6.5" x2="8.5" y2="6.5"/></svg></button>
+    <button class="t" data-tip="zoom in  +" onclick="doZoom(1.15)"><svg viewBox="0 0 15 15"><circle cx="6.5" cy="6.5" r="4"/><line x1="9.8" y1="9.8" x2="13" y2="13"/><line x1="6.5" y1="4.5" x2="6.5" y2="8.5"/><line x1="4.5" y1="6.5" x2="8.5" y2="6.5"/></svg></button>
+    <button class="t" data-tip="zoom out  -" onclick="doZoom(1/1.15)"><svg viewBox="0 0 15 15"><circle cx="6.5" cy="6.5" r="4"/><line x1="9.8" y1="9.8" x2="13" y2="13"/><line x1="4.5" y1="6.5" x2="8.5" y2="6.5"/></svg></button>
     <button class="t" data-tip="fit  0" onclick="zoomToFit()"><svg viewBox="0 0 15 15"><polyline points="2,5 2,2 5,2"/><polyline points="10,2 13,2 13,5"/><polyline points="13,10 13,13 10,13"/><polyline points="5,13 2,13 2,10"/></svg></button>
     <div class="sep"></div>
     <button class="t" id="tb-snap" data-tip="snap to grid  g" onclick="toggleSnap()" title="snap to grid"><svg viewBox="0 0 15 15"><circle cx="3" cy="3" r="1" fill="currentColor" stroke="none"/><circle cx="7.5" cy="3" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="3" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="7.5" r="1" fill="currentColor" stroke="none"/><circle cx="7.5" cy="7.5" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="7.5" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="7.5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/></svg></button>
@@ -354,6 +356,13 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
   <!-- minimap -->
   <div id="minimap"><canvas id="minimap-canvas"></canvas><div id="minimap-viewport"></div></div>
 
+  <!-- viewport bookmarks -->
+  <div id="bookmark-panel">
+    <div class="bkm-header">BOOKMARKS</div>
+    <div id="bookmark-list"></div>
+    <button class="bkm-add-btn" onclick="addViewBookmark()">+ add current view</button>
+  </div>
+
   <!-- clear confirm -->
   <div id="clear-confirm">
     <p>Clear everything on the canvas?</p>
@@ -370,6 +379,9 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
         <defs>
           <marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
             <path d="M1,1.5 L7,4 L1,6.5" stroke="rgba(255,255,255,0.35)" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+          </marker>
+          <marker id="rel-ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M1,1.5 L7,4 L1,6.5" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/>
           </marker>
         </defs>
         <g id="relations"></g>
