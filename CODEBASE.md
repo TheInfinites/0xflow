@@ -136,6 +136,7 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 | `brainstormHistory` | `{role,content}[]` | AI brainstorm conversation |
 | `blobURLCache` | `{[id]: url}` | In-memory cache of blob URLs keyed by imgId |
 | `window._relations` | `Relation[]` | Semantic connection lines between elements |
+| `selectedRelId` | `number\|null` | Currently selected relation line (click to select, Delete to remove) |
 | `CULL_BUFFER` | `number` | Off-screen culling margin in screen pixels (300) |
 
 ---
@@ -231,7 +232,9 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 | `startSingleDrag(e, el)` | Non-select-tool single element drag |
 | `alignSelected(dir)` | Align: left/right/centerH/top/bottom/centerV |
 | `distributeSelected(axis)` | Distribute evenly: H or V (needs 3+) |
-| `getElementsInsideFrame(frame)` | Returns elements whose center is inside frame bounds |
+| `alignSelFrame(dir)` | Align children inside the selected frame (shown in sel-bar when frame selected) |
+| `distributeSelFrame(axis)` | Distribute children inside the selected frame evenly |
+| `getElementsInsideFrame(frame, skipSelected?)` | Returns elements whose center is inside frame bounds; `skipSelected=false` includes selected elements |
 
 ### AI
 | Function | Description |
@@ -267,14 +270,16 @@ Two separate systems:
 - `startRelDrag(e, sourceEl)` — drag relation line
 - `addRelation(elA, elB)` — create SVG bezier curve with arrowhead (`marker-end: url(#rel-ah)`)
 - `removeRelation(id)` — remove by id
+- `selectRelation(id)` / `deselectRelation()` — click a relation line to select it (`.selected-rel` glow), then Delete/Backspace removes it; double-click also removes instantly
 - `updateAllRelations()` — RAF loop keeping lines attached; also updates line color from source element's `dataset.color`
 - `relCurve(ax, ay, bx, by)` — generates cubic bezier path with minimum control point distance of 60px for smooth S-curves at any angle
 
 **Right-Click Drag Connections** (any element → any element):
 - `startNoteRightDrag(e, note)` — right-click drag from notes/todos to create relations
 - `startImgRightDrag(e, card)` — right-click drag from images; creates relation if dropped on element, opens folder panel otherwise
+- `startFrameRightDrag(e, frame)` — right-click drag from frames; creates relation if dropped on element, opens move/copy menu with all contained img-cards auto-selected otherwise
 - Uses `window._noteRightDragActive` global flag to suppress context menus on target elements during drag
-- On images: if connection target found, skips the folder browser context menu
+- On images/frames: if connection target found, skips the folder browser context menu
 
 ### Minimap Navigation
 - Minimap is a `<canvas>` element (`160×100px`) that renders all canvas content at `1/8000` scale
@@ -359,6 +364,7 @@ el.querySelector('.todo-title').value  — card title
 el.querySelector('.todo-progress-fill')  — progress bar (width = % done)
 ```
 Extends `.note` — inherits color, reactions, pin, lock, and relation capabilities. Items are editable inline spans with checkboxes. Progress bar auto-updates via `updateTodoProgress(card)`.
+Light mode: text stays white (matching the dark `--note-bg` background), not overridden to dark colors.
 
 ### AI Note (`.note.ai-note`)
 ```
@@ -371,7 +377,11 @@ el._connections — [{sourceEl, wireG, chip, _raf}]
 ```
 el.style.left/top/width/height
 el.querySelector('.frame-label').value  — label text
+el.dataset.frameColor                  — color index (0–8, maps to FRAME_COLORS/FRAME_BORDER_COLORS arrays)
+el.style.background                    — semi-transparent tint (from --frame-bg or chosen color)
+el.style.borderColor                   — border color (from --frame-border or chosen color)
 ```
+Right-click opens frame context menu (`#frame-menu`) with color picker and delete. Selection bar shows frame alignment buttons (`#sel-frame-align`) when a frame is selected.
 
 ### Image Card (`.img-card`)
 ```
