@@ -33,7 +33,7 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
       <span style="letter-spacing:0.14em;"><em style="font-style:italic;letter-spacing:0.14em;">0</em>*flow</span>
     </div>
     <div id="topbar-right">
-      <span id="app-version" style="font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,0.2);letter-spacing:0.05em;">v0.2.1</span>
+      <span id="app-version" style="font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,0.2);letter-spacing:0.05em;">v0.5.0</span>
       <button id="update-btn" class="pill-btn" onclick="if(window.checkForAppUpdate)checkForAppUpdate(false)" style="display:none;background:rgba(232,68,10,0.15);color:#E8440A;border-color:rgba(232,68,10,0.3);">↑ update</button>
       <span id="topbar-date"></span>
       <button class="pill-btn" id="dash-theme-btn" onclick="toggleDashTheme()" title="toggle theme">
@@ -212,7 +212,7 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
     </div>
     <div id="bar-right">
       <button class="bar-btn" onclick="clearAll()">clear</button>
-      <button class="bar-btn" onclick="triggerImg()">image</button>
+      <button class="bar-btn" id="import-btn" onclick="toggleImportPanel(event)">↑ import</button>
       <button class="bar-btn" onclick="summariseCanvas()">✦ summarise</button>
       <button class="bar-btn" onclick="openExportPanel()">↑ export</button>
       <button class="bar-btn" id="save-file-btn" onclick="saveCanvasToFile()" title="Save canvas to a file on disk">↓ save file</button>
@@ -431,6 +431,37 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
 
   <input type="file" id="img-file" accept="image/*,application/pdf" multiple style="display:none" onchange="onImgFiles(event)">
   <input type="file" id="pdf-file" accept="application/pdf" multiple style="display:none" onchange="onPdfFiles(event)">
+  <input type="file" id="import-file" multiple style="display:none" onchange="onImportFiles(event)">
+
+  <!-- Import panel -->
+  <div id="import-panel" style="display:none">
+    <div class="imp-row" onclick="triggerImport('image/*')">
+      <svg viewBox="0 0 16 16"><rect x="1" y="3" width="14" height="10" rx="2" stroke-width="1.2" fill="none"/><circle cx="5.5" cy="6.5" r="1.2" fill="currentColor"/><path d="M1 11l4-3.5 3 2.5 2.5-2 4.5 4" stroke-width="1.1" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Image</span>
+      <em>.jpg .png .gif .webp …</em>
+    </div>
+    <div class="imp-row" onclick="triggerImport('application/pdf')">
+      <svg viewBox="0 0 16 16"><rect x="2" y="1" width="10" height="14" rx="1.5" stroke-width="1.2" fill="none"/><path d="M5 5h6M5 8h6M5 11h3" stroke-width="1.2" stroke-linecap="round"/><path d="M10 1v4h4" stroke-width="1.2" fill="none"/></svg>
+      <span>PDF</span>
+      <em>.pdf</em>
+    </div>
+    <div class="imp-row" onclick="triggerImport('video/*')">
+      <svg viewBox="0 0 16 16"><rect x="1" y="3" width="10" height="10" rx="1.5" stroke-width="1.2" fill="none"/><path d="M11 6l4-2v8l-4-2V6z" stroke-width="1.2" fill="none" stroke-linejoin="round"/></svg>
+      <span>Video</span>
+      <em>.mp4 .mov .webm …</em>
+    </div>
+    <div class="imp-row" onclick="triggerImport('audio/*')">
+      <svg viewBox="0 0 16 16"><path d="M6 3v10M10 5v6M2 6v4M14 5v6" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg>
+      <span>Audio</span>
+      <em>.mp3 .wav .flac …</em>
+    </div>
+    <div class="imp-divider"></div>
+    <div class="imp-row" onclick="triggerImport('*/*')">
+      <svg viewBox="0 0 16 16"><path d="M8 1v10M4 7l4 4 4-4" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M2 13h12" stroke-width="1.3" stroke-linecap="round"/></svg>
+      <span>Any file</span>
+      <em>all types</em>
+    </div>
+  </div>
 
   <!-- AI Brainstorm panel -->
   <div id="brainstorm-panel">

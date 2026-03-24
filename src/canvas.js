@@ -244,7 +244,7 @@ function restoreCanvas(state){
       }
     }
     else if(el.classList.contains('frame')) { bindFrame(el); addRelHandle(el); }
-    else if(el.classList.contains('img-card')){ bindImgCard(el); el.querySelectorAll('.rh').forEach(rh=>{ const dir=rh.className.replace('rh rh-',''); rh.addEventListener('mousedown',e=>startEdgeResize(e,el,dir,60,60,(card,nw)=>{ const imgEl=card.querySelector('img'); const nwMax=parseInt(card.dataset.nw)||99999; if(imgEl) imgEl.style.width=Math.min(nw-12,nwMax)+'px'; })); }); addRelHandle(el); const cp=el.querySelector('.conn-port'); if(cp) cp.addEventListener('mousedown',e=>{e.stopPropagation();startConnDrag(e,el);}); }
+    else if(el.classList.contains('img-card')){ bindImgCard(el); el.querySelectorAll('.rh').forEach(rh=>{ const dir=rh.className.replace('rh rh-',''); rh.addEventListener('mousedown',e=>startEdgeResize(e,el,dir,60,60,(card,nw)=>{ const imgEl=card.querySelector('img'); const nwMax=parseInt(card.dataset.nw)||99999; if(imgEl) imgEl.style.width=Math.min(nw-12,nwMax)+'px'; })); }); addRelHandle(el); const cp=el.querySelector('.conn-port'); if(cp) cp.addEventListener('mousedown',e=>{e.stopPropagation();startConnDrag(e,el);}); if(el.dataset.mediaType==='audio') bindAudioCard(el); }
     else if(el.classList.contains('lbl')) { bindLabel(el); addRelHandle(el); }
     restoredEls.push(el);
   });

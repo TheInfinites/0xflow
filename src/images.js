@@ -296,22 +296,47 @@ function makeVideoCard(id, url, x, y, w) {
 }
 
 // ── audio card ──
-function makeAudioCard(id, url, x, y) {
+function makeAudioCard(id, url, x, y, filename) {
   const card = document.createElement('div');
   card.className = 'img-card audio-card';
-  card.style.cssText = `left:${x}px;top:${y}px;width:${300+12}px`;
+  card.style.cssText = `left:${x}px;top:${y}px;width:320px`;
   card.dataset.imgId = id;
   card.dataset.mediaType = 'audio';
 
-  const label = document.createElement('div'); label.className = 'audio-card-label';
-  const name = id.replace(/^(audio|media)_\d+_[a-z0-9]+_?/, '').replace(/_/g,' ') || 'audio';
-  label.textContent = name;
-  card.appendChild(label);
+  const fname = filename || '';
+  const ext = (fname.match(/\.([^.]+)$/) || ['',''])[1].toUpperCase() || 'AUDIO';
+  const rawName = fname
+    ? fname.replace(/\.[^.]+$/, '').replace(/[_-]/g, ' ').trim()
+    : id.replace(/^(audio|media)_\d+_[a-z0-9]+_?/, '').replace(/\.[^.]+$/, '').replace(/[_-]/g, ' ').trim() || 'Untitled';
 
+  // hidden native audio element
   const audio = document.createElement('audio');
-  audio.src = url; audio.controls = true; audio.style.width = '280px'; audio.style.display = 'block';
+  audio.src = url;
+  audio.preload = 'metadata';
+  audio.style.display = 'none';
   audio.addEventListener('mousedown', e => e.stopPropagation());
   card.appendChild(audio);
+
+  card.insertAdjacentHTML('beforeend', `
+    <div class="ac-body">
+      <div class="ac-top">
+        <div class="ac-art">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+        </div>
+        <div class="ac-info">
+          <div class="ac-title">${rawName}</div>
+          <div class="ac-artist">${ext}</div>
+        </div>
+        <button class="ac-play">
+          <svg class="ac-icon-play" viewBox="0 0 24 24"><polygon points="6,3 20,12 6,21" fill="currentColor"/></svg>
+          <svg class="ac-icon-pause" viewBox="0 0 24 24" style="display:none"><rect x="5" y="3" width="4" height="18" rx="1.5" fill="currentColor"/><rect x="15" y="3" width="4" height="18" rx="1.5" fill="currentColor"/></svg>
+        </button>
+      </div>
+      <div class="ac-progress-bar"><div class="ac-progress-fill"><div class="ac-thumb"></div></div></div>
+      <div class="ac-timebar"><span class="ac-cur">0:00</span><span class="ac-dur">—</span></div>
+    </div>`);
+
+  bindAudioCard(card);
 
   const tb = document.createElement('div'); tb.className = 'img-toolbar';
   tb.innerHTML = `<button class="img-tb-btn danger" title="delete" onclick="imgDelete(this.closest('.img-card'))">delete</button>`;
@@ -330,6 +355,62 @@ function makeAudioCard(id, url, x, y) {
   card.style.transition='opacity 0.18s, transform 0.18s';
   requestAnimationFrame(()=>{ card.style.opacity='1'; card.style.transform='scale(1)'; });
   return card;
+}
+
+function bindAudioCard(card) {
+  const aud = card.querySelector('audio');
+  if (!aud) return;
+  const playBtn = card.querySelector('.ac-play');
+  const iconPlay = card.querySelector('.ac-icon-play');
+  const iconPause = card.querySelector('.ac-icon-pause');
+  const fill = card.querySelector('.ac-progress-fill');
+  const cur = card.querySelector('.ac-cur');
+  const durEl = card.querySelector('.ac-dur');
+  const bar = card.querySelector('.ac-progress-bar');
+  if (!playBtn || !bar) return;
+
+  function fmt(s) {
+    if (!isFinite(s)) return '—';
+    const m = Math.floor(s / 60), ss = Math.floor(s % 60);
+    return `${m}:${ss.toString().padStart(2,'0')}`;
+  }
+
+  aud.addEventListener('loadedmetadata', () => { if(durEl) durEl.textContent = fmt(aud.duration); });
+  aud.addEventListener('timeupdate', () => {
+    if(cur) cur.textContent = fmt(aud.currentTime);
+    const pct = aud.duration ? (aud.currentTime / aud.duration) * 100 : 0;
+    if(fill) fill.style.width = pct + '%';
+  });
+  aud.addEventListener('ended', () => {
+    if(iconPlay) iconPlay.style.display = '';
+    if(iconPause) iconPause.style.display = 'none';
+  });
+
+  playBtn.addEventListener('mousedown', e => e.stopPropagation());
+  playBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (aud.paused) { aud.play(); if(iconPlay) iconPlay.style.display = 'none'; if(iconPause) iconPause.style.display = ''; }
+    else { aud.pause(); if(iconPlay) iconPlay.style.display = ''; if(iconPause) iconPause.style.display = 'none'; }
+  });
+
+  const prevBtn = card.querySelector('.ac-btn-prev');
+  const nextBtn = card.querySelector('.ac-btn-next');
+  if (prevBtn) { prevBtn.addEventListener('mousedown', e => e.stopPropagation()); prevBtn.addEventListener('click', e => { e.stopPropagation(); if(aud.duration) aud.currentTime = Math.max(0, aud.currentTime - 10); }); }
+  if (nextBtn) { nextBtn.addEventListener('mousedown', e => e.stopPropagation()); nextBtn.addEventListener('click', e => { e.stopPropagation(); if(aud.duration) aud.currentTime = Math.min(aud.duration, aud.currentTime + 10); }); }
+
+  bar.addEventListener('mousedown', e => {
+    e.stopPropagation();
+    const seek = (ev) => {
+      const r = bar.getBoundingClientRect();
+      const pct = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width));
+      if (aud.duration) aud.currentTime = pct * aud.duration;
+    };
+    seek(e);
+    const onMove = ev => seek(ev);
+    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
 }
 
 async function placeMediaBlob(blob, wx, wy, sourcePath, mediaType) {
@@ -371,7 +452,7 @@ async function placeMediaBlob(blob, wx, wy, sourcePath, mediaType) {
   if (mediaType === 'video') {
     card = makeVideoCard(id, dataURL, wx, wy, 300);
   } else {
-    card = makeAudioCard(id, dataURL, wx, wy);
+    card = makeAudioCard(id, dataURL, wx, wy, blob.name || '');
   }
   if (sourcePath) card.dataset.sourcePath = sourcePath;
   else if (!IS_TAURI) card.dataset.sourcePath = 'D:\\art\\test\\' + (blob.name || id);
@@ -412,6 +493,74 @@ async function restoreImgCards() {
     if (rh) rh.addEventListener('mousedown', e => startImgResize(e, card));
   }
 }
+
+// ── Import panel ──
+function toggleImportPanel(e) {
+  e.stopPropagation();
+  const panel = document.getElementById('import-panel');
+  const btn = document.getElementById('import-btn');
+  if (panel.style.display !== 'none') { closeImportPanel(); return; }
+  const r = btn.getBoundingClientRect();
+  panel.style.display = 'block';
+  panel.style.top = (r.bottom + 6) + 'px';
+  // align right edge with button right edge
+  panel.style.left = '';
+  panel.style.right = '';
+  requestAnimationFrame(() => {
+    const pw = panel.offsetWidth;
+    let left = r.right - pw;
+    if (left < 6) left = 6;
+    panel.style.left = left + 'px';
+  });
+  btn.classList.add('active');
+}
+
+function closeImportPanel() {
+  document.getElementById('import-panel').style.display = 'none';
+  document.getElementById('import-btn').classList.remove('active');
+}
+
+function triggerImport(accept) {
+  closeImportPanel();
+  const input = document.getElementById('import-file');
+  input.accept = accept;
+  input.value = '';
+  input.click();
+}
+
+async function onImportFiles(e) {
+  const files = [...e.target.files];
+  e.target.value = '';
+  if (!files.length) return;
+
+  const imgFiles = files.filter(f => f.type.startsWith('image/') && !f.name.toLowerCase().endsWith('.pdf'));
+  const pdfFiles = files.filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+  const videoFiles = files.filter(f => f.type.startsWith('video/'));
+  const audioFiles = files.filter(f => f.type.startsWith('audio/'));
+  // anything else: attempt to treat as image, skip silently if it fails
+  const otherFiles = files.filter(f =>
+    !f.type.startsWith('image/') && !f.type.startsWith('video/') && !f.type.startsWith('audio/') &&
+    f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')
+  );
+
+  if (imgFiles.length) await placeImagesGrid(imgFiles);
+  for (const f of pdfFiles) await placePdf(f);
+  for (const f of videoFiles) await placeMediaBlob(f, undefined, undefined, undefined, 'video');
+  for (const f of audioFiles) await placeMediaBlob(f, undefined, undefined, undefined, 'audio');
+  for (const f of otherFiles) {
+    // try as image, silently skip if not renderable
+    try { await placeImagesGrid([f]); } catch {}
+  }
+}
+
+// close import panel on outside click
+document.addEventListener('mousedown', e => {
+  const panel = document.getElementById('import-panel');
+  const btn = document.getElementById('import-btn');
+  if (panel && panel.style.display !== 'none' && !panel.contains(e.target) && e.target !== btn) {
+    closeImportPanel();
+  }
+});
 
 // ── file upload ──
 function triggerImg() { document.getElementById('img-file').click(); }
