@@ -181,9 +181,36 @@ function cardCenter(card) {
   return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
 }
 
+async function renameImgFile(card) {
+  closeAllFolderUI();
+  const sourcePath = card.dataset.sourcePath;
+  if (!sourcePath) { showToast('No source path — file was not imported from disk'); return; }
+  const oldName = sourcePath.split(/[\\/]/).pop();
+  const newName = window.prompt('Rename file:', oldName);
+  if (!newName || newName.trim() === '' || newName.trim() === oldName) return;
+  const trimmed = newName.trim();
+  const dir = sourcePath.replace(/[\\/][^\\/]+$/, '');
+  const sep = sourcePath.includes('\\') ? '\\' : '/';
+  const newPath = dir + sep + trimmed;
+  if (IS_TAURI) {
+    try {
+      const { rename } = window.__TAURI__.fs;
+      await rename(sourcePath, newPath);
+      card.dataset.sourcePath = newPath;
+      showToast('renamed to ' + trimmed);
+    } catch(e) {
+      showToast('rename failed: ' + (e.message || String(e)));
+    }
+  } else {
+    card.dataset.sourcePath = newPath;
+    showToast('renamed (preview): ' + trimmed);
+  }
+}
+
 function startImgRightDrag(e, card) {
   e.preventDefault();
   e.stopPropagation();
+  dragSel=false; dragSelStartW=null;
   _rcDragCard = card;
   _rcDragStartX = e.clientX;
   _rcDragStartY = e.clientY;
@@ -293,6 +320,10 @@ imgCtxMenu.addEventListener('mouseover', e => {
     folderBrowser.classList.remove('show');
     folderBrowser.innerHTML = '';
   }
+});
+
+document.getElementById('ictx-rename-file')?.addEventListener('click', () => {
+  if (_ctxCard) renameImgFile(_ctxCard);
 });
 
 // Close when clicking toolbar, bar, or anywhere outside cv/menu/folder-browser

@@ -129,11 +129,30 @@ function serializeCanvas(){
       const clone=el.cloneNode(true);
       const img=clone.querySelector('img');
       if(img) img.src=''; // stripped — restored from data-img-id via restoreImgCards()
+      const vid=clone.querySelector('video');
+      if(vid) vid.src='';
+      const aud=clone.querySelector('audio');
+      if(aud) aud.src='';
       htmlStr=clone.outerHTML;
     } else {
-      htmlStr=el.outerHTML;
+      const clone=el.cloneNode(true);
+      // preserve textarea values: outerHTML does NOT capture .value (DOM property)
+      el.querySelectorAll('textarea').forEach((ta,i)=>{
+        const ct=clone.querySelectorAll('textarea')[i];
+        if(ct) ct.innerHTML=ta.value;
+      });
+      // preserve input values (e.g. todo-title)
+      el.querySelectorAll('input').forEach((inp,i)=>{
+        const ci=clone.querySelectorAll('input')[i];
+        if(ci) ci.setAttribute('value',inp.value);
+      });
+      htmlStr=clone.outerHTML;
     }
     const item = {html:htmlStr};
+    // persist block editor content
+    if(el.classList.contains('note') && !el.classList.contains('ai-note') && !el.classList.contains('todo-card')) {
+      item.blocks = getEditorBlocks(el);
+    }
     // persist AI note conversation history
     if(el.classList.contains('ai-note') && el._aiHistory) {
       item.aiHistory = el._aiHistory;
@@ -175,6 +194,21 @@ function restoreCanvas(state){
     world.appendChild(el);
     if(el.classList.contains('note')) {
       bindNote(el);
+      // migrate old textarea-based notes or init block editor
+      if(!el.classList.contains('ai-note') && !el.classList.contains('todo-card')) {
+        const oldTa = el.querySelector('textarea');
+        if(oldTa) {
+          const txt = oldTa.value || oldTa.textContent || oldTa.innerHTML || '';
+          oldTa.remove();
+          createBlockEditor(el);
+          if(txt.trim()) initEditorWithText(el.querySelector('.block-editor'), txt);
+        } else if(!el.querySelector('.block-editor')) {
+          createBlockEditor(el);
+        }
+        if(items[i] && items[i].blocks && items[i].blocks.length) {
+          setEditorBlocks(el, items[i].blocks);
+        }
+      }
       // restore AI note state
       if(el.classList.contains('ai-note') && items[i]) {
         el._aiHistory = items[i].aiHistory || [];
@@ -450,8 +484,9 @@ function updateSelBar(){
     if(fontRow){
       fontRow.style.display=noteEls.length>0?'flex':'none';
       if(noteEls.length>0){
-        const ta=noteEls[0].querySelector('textarea');
-        const sz=ta?parseInt(ta.style.fontSize)||13:13;
+        const be=noteEls[0].querySelector('.block-editor');
+        const titleInput=noteEls[0].querySelector('.todo-title');
+        const sz=be?parseInt(be.style.fontSize)||13:titleInput?parseInt(titleInput.style.fontSize)||13:(parseInt(noteEls[0].dataset.fontSize)||13);
         const fontSizeEl=document.getElementById('sel-font-size');
         if(fontSizeEl) fontSizeEl.textContent=sz;
       }
@@ -464,16 +499,19 @@ function changeSelectedFontSize(delta){
   if(!noteEls.length) return;
   snapshot();
   noteEls.forEach(el=>{
-    const ta=el.querySelector('textarea');
-    if(!ta) return;
-    const cur=parseInt(ta.style.fontSize)||13;
+    const be=el.querySelector('.block-editor');
+    const titleInput=el.querySelector('.todo-title');
+    const cur=be?parseInt(be.style.fontSize)||13:titleInput?parseInt(titleInput.style.fontSize)||13:13;
     const next=Math.min(48,Math.max(8,cur+delta));
-    ta.style.fontSize=next+'px';
+    if(be) be.style.fontSize=next+'px';
+    if(titleInput) titleInput.style.fontSize=next+'px';
+    el.querySelectorAll('.todo-item-text').forEach(s=>s.style.fontSize=next+'px');
     el.dataset.fontSize=next;
   });
-  // update display
-  const firstTa=noteEls[0].querySelector('textarea');
-  const sz=firstTa?parseInt(firstTa.style.fontSize)||13:13;
+  const firstEl=noteEls[0];
+  const firstBe=firstEl.querySelector('.block-editor');
+  const firstTitle=firstEl.querySelector('.todo-title');
+  const sz=firstBe?parseInt(firstBe.style.fontSize)||13:firstTitle?parseInt(firstTitle.style.fontSize)||13:(parseInt(firstEl.dataset.fontSize)||13);
   const fontSizeEl=document.getElementById('sel-font-size');
   if(fontSizeEl) fontSizeEl.textContent=sz;
 }
@@ -555,23 +593,23 @@ function togglePinSelected(){
   snapshot(); clearSelection(); updateSelBar();
 }
 
+function setElLocked(el, lock){
+  if(lock){ el.classList.add('locked'); el.dataset.locked='1'; }
+  else { el.classList.remove('locked'); el.dataset.locked=''; }
+  if(!el.querySelector('.lock-icon')){
+    const li=document.createElement('div');li.className='lock-icon';
+    li.innerHTML='<svg viewBox="0 0 12 12"><rect x="2" y="5" width="8" height="6" rx="1"/><path d="M4 5V3.5a2 2 0 014 0V5"/></svg>';
+    el.appendChild(li);
+  }
+  // propagate to children if this is a frame
+  if(el.classList.contains('frame')) getElementsInsideFrame(el,false).forEach(c=>setElLocked(c,lock));
+}
+
 function toggleLockSelected(){
   const els=[...selected].filter(e=>e.classList);
   if(!els.length) return;
   const allLocked=els.every(e=>e.classList.contains('locked'));
-  els.forEach(el=>{
-    if(allLocked){
-      el.classList.remove('locked'); el.dataset.locked='';
-    } else {
-      el.classList.add('locked'); el.dataset.locked='1';
-    }
-    // add lock icon if not present (for lbl/frame elements)
-    if(!el.querySelector('.lock-icon')){
-      const li=document.createElement('div');li.className='lock-icon';
-      li.innerHTML='<svg viewBox="0 0 12 12"><rect x="2" y="5" width="8" height="6" rx="1"/><path d="M4 5V3.5a2 2 0 014 0V5"/></svg>';
-      el.appendChild(li);
-    }
-  });
+  els.forEach(el=>setElLocked(el,!allLocked));
   snapshot(); updateSelBar();
 }
 function positionSelBar(){
@@ -674,7 +712,16 @@ async function copySelected() {
       _clipboard.push({ html: clone.outerHTML, imgId: el.dataset.imgId });
       imgCards.push(el);
     } else {
-      _clipboard.push({ html: el.outerHTML });
+      const cloneEl=el.cloneNode(true);
+      el.querySelectorAll('textarea').forEach((ta,i)=>{
+        const ct=cloneEl.querySelectorAll('textarea')[i];
+        if(ct) ct.innerHTML=ta.value;
+      });
+      el.querySelectorAll('input').forEach((inp,i)=>{
+        const ci=cloneEl.querySelectorAll('input')[i];
+        if(ci) ci.setAttribute('value',inp.value);
+      });
+      _clipboard.push({ html: cloneEl.outerHTML });
     }
   });
   // Write image to system clipboard if exactly one img-card is selected
@@ -1241,7 +1288,7 @@ function addConnection(sourceEl, aiNote) {
   sourcesArea.style.display = 'flex';
   const chip = document.createElement('div');
   chip.className = 'ai-source-chip';
-  const label = sourceEl.querySelector('textarea')?.value?.trim()?.slice(0,20) ||
+  const label = getNoteText(sourceEl)?.trim()?.slice(0,20) ||
                 (sourceEl.classList.contains('img-card') ? '🖼 image' : 'note');
   chip.innerHTML = `<span>⬡ ${label || 'note'}</span><span class="chip-remove" title="Remove">×</span>`;
 
@@ -1409,7 +1456,7 @@ async function runAiNote(noteEl){
     connections.forEach(conn => {
       const src = conn.sourceEl;
       if (src.classList.contains('note')) {
-        const text = src.querySelector('textarea')?.value?.trim();
+        const text = getNoteText(src)?.trim();
         if (text) contextParts.push('Note: ' + text);
       } else if (src.classList.contains('img-card')) {
         contextParts.push('Image: [connected image]');
@@ -1449,7 +1496,6 @@ function makeNote(x,y,color=null){
   const strip=document.createElement('div');strip.className='note-color-strip';if(color)strip.style.background=color;
   const lockIcon=document.createElement('div');lockIcon.className='lock-icon';lockIcon.innerHTML='<svg viewBox="0 0 12 12"><rect x="2" y="5" width="8" height="6" rx="1"/><path d="M4 5V3.5a2 2 0 014 0V5"/></svg>';d.appendChild(lockIcon);
   const idx=document.createElement('div');idx.className='note-idx';idx.textContent=String(noteN).padStart(2,'0');
-  const ta=document.createElement('textarea');ta.placeholder='idea...';ta.rows=5;ta.addEventListener('mousedown',e=>e.stopPropagation());ta.addEventListener('blur',()=>snapshot());
   const bottom=document.createElement('div');bottom.className='note-bottom';
   const reactions=document.createElement('div');reactions.className='note-reactions';
   const votes=document.createElement('div');votes.className='note-votes';votes.innerHTML='<svg viewBox="0 0 10 10"><polyline points="5,1 9,9 1,9"/></svg><span>0</span>';
@@ -1461,17 +1507,18 @@ function makeNote(x,y,color=null){
   fitBtn.addEventListener('mousedown',e=>e.stopPropagation());
   fitBtn.addEventListener('click',e=>{e.stopPropagation();fitNoteToContent(d);});
   bottom.appendChild(reactions);bottom.appendChild(linkBadge);bottom.appendChild(fitBtn);bottom.appendChild(votes);
-  const collapseBtn=makeCollapseBtn(d,()=>ta.value.slice(0,40));
+  const collapseBtn=makeCollapseBtn(d,()=>getNoteText(d).slice(0,40));
   const connPort=document.createElement('div');connPort.className='conn-port';
   connPort.addEventListener('mousedown',e=>{e.stopPropagation();startConnDrag(e,d);});
-  d.appendChild(strip);d.appendChild(idx);d.appendChild(collapseBtn);d.appendChild(ta);d.appendChild(bottom);d.appendChild(connPort);
-  makeResizeHandles(d,160,80,(el,nw,nh)=>{ const ta=el.querySelector('textarea'); if(ta) ta.style.height=Math.max(40,nh-90)+'px'; });
+  d.appendChild(strip);d.appendChild(idx);d.appendChild(collapseBtn);d.appendChild(bottom);d.appendChild(connPort);
+  makeResizeHandles(d,160,80,(el,nw,nh)=>{ const be=el.querySelector('.block-editor'); if(be) be.style.height=Math.max(40,nh-90)+'px'; });
   addRelHandle(d);
   bindNote(d); world.appendChild(d);
+  createBlockEditor(d);
   d.style.opacity='0';d.style.transform='scale(0.95) translateY(4px)';
   d.style.transition='opacity 0.18s,transform 0.18s,border-color 0.15s,box-shadow 0.15s';
   requestAnimationFrame(()=>{d.style.opacity='1';d.style.transform='scale(1) translateY(0)';});
-  setTimeout(()=>ta.focus(),60);
+  setTimeout(()=>{ const be=d.querySelector('.be-block'); if(be) be.focus(); },60);
   return d;
 }
 
@@ -1690,11 +1737,10 @@ function toggleCollapse(el, getLabel) {
 }
 
 function fitNoteToContent(note) {
-  const ta = note.querySelector('textarea');
-  if (!ta) return;
+  const be = note.querySelector('.block-editor');
+  if (!be) return;
   snapshot();
-  // reset any fixed height so scrollHeight is accurate
-  ta.style.height = 'auto';
+  be.style.height = 'auto';
   note.style.height = 'auto';
   note.style.width = 'auto';
   // measure the natural text width by creating a hidden mirror
@@ -1702,18 +1748,18 @@ function fitNoteToContent(note) {
   mirror.style.cssText = `position:absolute;visibility:hidden;white-space:pre-wrap;word-break:break-word;
     font-family:Geist,sans-serif;font-size:13px;font-weight:300;line-height:1.65;
     padding:0;min-width:120px;max-width:400px;width:max-content;`;
-  mirror.textContent = ta.value || ' ';
+  mirror.textContent = getNoteText(note) || ' ';
   document.body.appendChild(mirror);
   const textW = Math.min(Math.max(mirror.scrollWidth + 48, 160), 420);
   document.body.removeChild(mirror);
   // set width first, then measure text height
   note.style.width = textW + 'px';
-  ta.style.width = '100%';
-  ta.style.height = 'auto';
-  const textH = ta.scrollHeight;
+  be.style.width = '100%';
+  be.style.height = 'auto';
+  const textH = be.scrollHeight;
   const totalH = Math.max(textH + 60, 100); // 60px for padding + bottom bar
   note.style.height = totalH + 'px';
-  ta.style.height = textH + 'px';
+  be.style.height = textH + 'px';
   // animate
   note.style.transition = 'width 0.2s cubic-bezier(0.32,0,0.18,1), height 0.2s cubic-bezier(0.32,0,0.18,1), border-color 0.12s';
   setTimeout(() => { note.style.transition = 'border-color 0.12s'; }, 220);
@@ -1735,6 +1781,7 @@ function startAiNoteResize(e, note){
 
 function startNoteRightDrag(e, note) {
   e.preventDefault(); e.stopPropagation();
+  dragSel=false; dragSelStartW=null;
   const startX = e.clientX, startY = e.clientY;
   note._rcDragMoved = false;
   window._noteRightDragActive = true;
@@ -1774,8 +1821,7 @@ function bindNote(d){
   d.addEventListener('contextmenu',e=>{ e.preventDefault(); if(!d._rcDragMoved && !window._noteRightDragActive) openMenu(d,e.clientX,e.clientY); d._rcDragMoved=false; });
   const votes=d.querySelector('.note-votes');
   if(votes){votes.addEventListener('mousedown',e=>e.stopPropagation());votes.addEventListener('click',e=>{e.stopPropagation();toggleVote(d,votes);});}
-  const ta=d.querySelector('textarea');
-  if(ta){ta.addEventListener('mousedown',e=>e.stopPropagation());ta.addEventListener('blur',()=>snapshot());}
+  // block editor handles its own events
   const lb=d.querySelector('.note-link-badge');
   if(lb){lb.addEventListener('mousedown',e=>e.stopPropagation());lb.addEventListener('click',e=>e.stopPropagation());}
 }
@@ -1956,8 +2002,8 @@ function saveLink(){
 }
 function toggleLockNote(){
   if(!menuNote) return;
-  const isLocked = menuNote.classList.toggle('locked');
-  menuNote.dataset.locked = isLocked ? '1' : '';
+  const isLocked = !menuNote.classList.contains('locked');
+  setElLocked(menuNote, isLocked);
   document.getElementById('nm-lock-label').textContent = isLocked ? 'unlock' : 'lock';
   snapshot(); closeMenu();
 }

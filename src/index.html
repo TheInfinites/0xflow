@@ -530,6 +530,7 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
 <div id="toast"></div>
 
 <script src="./storage.js"></script>
+<script src="./editor.js"></script>
 <script src="./canvas.js"></script>
 <script src="./images.js"></script>
 
@@ -537,6 +538,11 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
      IMG RIGHT-CLICK CONTEXT MENU + FOLDER BROWSER
 ══════════════════════════════════════════ -->
 <div id="img-ctx-menu">
+  <div class="ictx-item" id="ictx-rename-file">
+    <svg viewBox="0 0 12 12" style="width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:1.4;stroke-linecap:round;"><path d="M2 9l1-1 5-5 1 1-5 5-2 1z"/><line x1="7" y1="3" x2="9" y2="5"/></svg>
+    rename file
+  </div>
+  <div class="ictx-sep"></div>
   <div class="ictx-item" data-action="move-copy">
     <span class="ictx-icon">
       <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">

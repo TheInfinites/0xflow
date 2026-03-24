@@ -167,7 +167,7 @@ function makeImgCard(id, url, x, y, w, h, nw, nh) {
   card.appendChild(tb);
 
   // collapse button
-  const collapseBtn = makeCollapseBtn(card, () => card.dataset.imgId || '');
+  const collapseBtn = makeCollapseBtn(card, () => { const sp=card.dataset.sourcePath||card.dataset.imgId||''; return sp.split(/[\\/]/).pop(); });
   card.appendChild(collapseBtn);
 
   // all-edge resize handles
@@ -254,6 +254,129 @@ function imgDelete(card) {
   card.remove(); snapshot();
 }
 
+// ── video card ──
+function makeVideoCard(id, url, x, y, w) {
+  const card = document.createElement('div');
+  card.className = 'img-card video-card';
+  card.style.cssText = `left:${x}px;top:${y}px;width:${w+12}px`;
+  card.dataset.imgId = id;
+  card.dataset.mediaType = 'video';
+
+  const video = document.createElement('video');
+  video.src = url; video.controls = true; video.style.width = w+'px';
+  video.style.display = 'block'; video.draggable = false;
+  video.addEventListener('mousedown', e => e.stopPropagation());
+  card.appendChild(video);
+
+  const tb = document.createElement('div'); tb.className = 'img-toolbar';
+  tb.innerHTML = `<button class="img-tb-btn danger" title="delete" onclick="imgDelete(this.closest('.img-card'))">delete</button>`;
+  tb.addEventListener('mousedown', e => e.stopPropagation());
+  card.appendChild(tb);
+
+  const collapseBtn = makeCollapseBtn(card, () => { const sp=card.dataset.sourcePath||card.dataset.imgId||''; return sp.split(/[\\/]/).pop(); });
+  card.appendChild(collapseBtn);
+
+  makeResizeHandles(card, 120, 80, (el, nw) => {
+    const vid = el.querySelector('video');
+    if(vid) vid.style.width = (nw-12)+'px';
+  });
+
+  const connPort = document.createElement('div'); connPort.className = 'conn-port';
+  connPort.addEventListener('mousedown', e => { e.stopPropagation(); startConnDrag(e, card); });
+  card.appendChild(connPort);
+
+  addRelHandle(card);
+  bindImgCard(card);
+  world.appendChild(card);
+
+  card.style.opacity='0'; card.style.transform='scale(0.95)';
+  card.style.transition='opacity 0.18s, transform 0.18s';
+  requestAnimationFrame(()=>{ card.style.opacity='1'; card.style.transform='scale(1)'; });
+  return card;
+}
+
+// ── audio card ──
+function makeAudioCard(id, url, x, y) {
+  const card = document.createElement('div');
+  card.className = 'img-card audio-card';
+  card.style.cssText = `left:${x}px;top:${y}px;width:${300+12}px`;
+  card.dataset.imgId = id;
+  card.dataset.mediaType = 'audio';
+
+  const label = document.createElement('div'); label.className = 'audio-card-label';
+  const name = id.replace(/^(audio|media)_\d+_[a-z0-9]+_?/, '').replace(/_/g,' ') || 'audio';
+  label.textContent = name;
+  card.appendChild(label);
+
+  const audio = document.createElement('audio');
+  audio.src = url; audio.controls = true; audio.style.width = '280px'; audio.style.display = 'block';
+  audio.addEventListener('mousedown', e => e.stopPropagation());
+  card.appendChild(audio);
+
+  const tb = document.createElement('div'); tb.className = 'img-toolbar';
+  tb.innerHTML = `<button class="img-tb-btn danger" title="delete" onclick="imgDelete(this.closest('.img-card'))">delete</button>`;
+  tb.addEventListener('mousedown', e => e.stopPropagation());
+  card.appendChild(tb);
+
+  const connPort = document.createElement('div'); connPort.className = 'conn-port';
+  connPort.addEventListener('mousedown', e => { e.stopPropagation(); startConnDrag(e, card); });
+  card.appendChild(connPort);
+
+  addRelHandle(card);
+  bindImgCard(card);
+  world.appendChild(card);
+
+  card.style.opacity='0'; card.style.transform='scale(0.95)';
+  card.style.transition='opacity 0.18s, transform 0.18s';
+  requestAnimationFrame(()=>{ card.style.opacity='1'; card.style.transform='scale(1)'; });
+  return card;
+}
+
+async function placeMediaBlob(blob, wx, wy, sourcePath, mediaType) {
+  const dataURL = await new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = e => res(e.target.result);
+    reader.onerror = rej;
+    reader.readAsDataURL(blob);
+  });
+  const id = 'media_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
+  // store blob in same IDB store (key doesn't need .png extension in IDB)
+  if (!IS_TAURI) {
+    const db = await openImgDB();
+    await new Promise((res, rej) => {
+      const tx = db.transaction(IMG_STORE, 'readwrite');
+      tx.objectStore(IMG_STORE).put({ id, blob });
+      tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error);
+    });
+  } else {
+    // In Tauri, save to images dir with correct extension
+    const ext = mediaType === 'video' ? '.mp4' : '.mp3';
+    const { writeFile } = window.__TAURI__.fs;
+    const { join } = window.__TAURI__.path;
+    const dir = await getTauriImagesDir();
+    const path = await join(dir, id + ext);
+    const arrayBuffer = await blob.arrayBuffer();
+    await writeFile(path, new Uint8Array(arrayBuffer));
+  }
+  blobURLCache[id] = dataURL;
+
+  if (wx === undefined) {
+    const r = cv.getBoundingClientRect();
+    const p = c2w(r.left + r.width/2, r.top + r.height/2);
+    wx = p.x - 150; wy = p.y - 80;
+  }
+
+  snapshot();
+  let card;
+  if (mediaType === 'video') {
+    card = makeVideoCard(id, dataURL, wx, wy, 300);
+  } else {
+    card = makeAudioCard(id, dataURL, wx, wy);
+  }
+  if (sourcePath) card.dataset.sourcePath = sourcePath;
+  else if (!IS_TAURI) card.dataset.sourcePath = 'D:\\art\\test\\' + (blob.name || id);
+}
+
 // ── restore img cards after undo/redo/load ──
 async function restoreImgCards() {
   const cards = document.querySelectorAll('.img-card[data-img-id]');
@@ -261,8 +384,11 @@ async function restoreImgCards() {
     const id = card.dataset.imgId;
     if (!id) continue;
     // try cache first
+    const mediaType = card.dataset.mediaType;
+    const mediaEl = mediaType === 'video' ? card.querySelector('video') : mediaType === 'audio' ? card.querySelector('audio') : card.querySelector('img');
+    if (!mediaEl) continue;
     if (blobURLCache[id]) {
-      card.querySelector('img').src = blobURLCache[id];
+      mediaEl.src = blobURLCache[id];
     } else {
       const blob = await loadImgBlob(id);
       if (blob) {
@@ -273,10 +399,12 @@ async function restoreImgCards() {
           reader.readAsDataURL(blob);
         });
         blobURLCache[id] = dataURL;
-        card.querySelector('img').src = dataURL;
+        mediaEl.src = dataURL;
       } else {
-        card.querySelector('img').style.opacity = '0.3';
-        card.querySelector('img').alt = 'image not found';
+        if (mediaType !== 'video' && mediaType !== 'audio') {
+          mediaEl.style.opacity = '0.3';
+          mediaEl.alt = 'image not found';
+        }
       }
     }
     bindImgCard(card);
@@ -473,6 +601,12 @@ if (IS_TAURI) {
     const mimeMap = { png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif',
                       bmp:'image/bmp', webp:'image/webp', svg:'image/svg+xml', ico:'image/x-icon',
                       tiff:'image/tiff', avif:'image/avif' };
+    const videoExts = ['.mp4','.webm','.mov','.avi','.mkv','.ogv'];
+    const audioExts = ['.mp3','.wav','.ogg','.flac','.aac','.m4a','.opus'];
+    const videoMime = { mp4:'video/mp4', webm:'video/webm', mov:'video/quicktime', avi:'video/x-msvideo', mkv:'video/x-matroska', ogv:'video/ogg' };
+    const audioMime = { mp3:'audio/mpeg', wav:'audio/wav', ogg:'audio/ogg', flac:'audio/flac', aac:'audio/aac', m4a:'audio/mp4', opus:'audio/opus' };
+    function isVideoPath(p) { const l = p.toLowerCase(); return videoExts.some(ext => l.endsWith(ext)); }
+    function isAudioPath(p) { const l = p.toLowerCase(); return audioExts.some(ext => l.endsWith(ext)); }
     const imgBlobs = [], imgPaths = [];
     for (const filePath of allPaths) {
       try {
@@ -485,6 +619,12 @@ if (IS_TAURI) {
         } else if (isImagePath(filePath)) {
           const blob = new Blob([data], { type: mimeMap[ext] || 'image/png' });
           imgBlobs.push(blob); imgPaths.push(filePath);
+        } else if (isVideoPath(filePath)) {
+          const blob = new Blob([data], { type: videoMime[ext] || 'video/mp4' });
+          await placeMediaBlob(blob, dropPos.x, dropPos.y, filePath, 'video');
+        } else if (isAudioPath(filePath)) {
+          const blob = new Blob([data], { type: audioMime[ext] || 'audio/mpeg' });
+          await placeMediaBlob(blob, dropPos.x, dropPos.y, filePath, 'audio');
         }
       } catch (e) { console.error('Failed to load dropped file:', filePath, e); }
     }
@@ -510,8 +650,12 @@ if (IS_TAURI) {
     const dropped = [...e.dataTransfer.files];
     const imgFiles = dropped.filter(f => f.type.startsWith('image/') && !f.name.toLowerCase().endsWith('.pdf'));
     const pdfFiles = dropped.filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+    const videoFiles = dropped.filter(f => f.type.startsWith('video/'));
+    const audioFiles = dropped.filter(f => f.type.startsWith('audio/'));
     if (imgFiles.length) await placeImagesGrid(imgFiles);
     for (const f of pdfFiles) await placePdf(f);
+    for (const f of videoFiles) await placeMediaBlob(f, undefined, undefined, undefined, 'video');
+    for (const f of audioFiles) await placeMediaBlob(f, undefined, undefined, undefined, 'audio');
   });
 }
 
@@ -521,7 +665,7 @@ function confirmClear(){ closeClearConfirm();snapshot(); document.querySelectorA
 
 let searchResults=[], searchIdx=0;
 function toggleSearch(){ const box=document.getElementById('search-box');box.classList.toggle('show');if(box.classList.contains('show'))document.getElementById('search-input').focus();else{clearSearchHL();searchResults=[];} }
-function doSearch(){ clearSearchHL();searchResults=[];searchIdx=0; const q=document.getElementById('search-input').value.trim().toLowerCase(); if(!q){document.getElementById('search-count').textContent='';return;} document.querySelectorAll('.note').forEach(n=>{const ta=n.querySelector('textarea');if(ta&&ta.value.toLowerCase().includes(q))searchResults.push(n);}); document.getElementById('search-count').textContent=searchResults.length?`${searchIdx+1}/${searchResults.length}`:'0'; if(searchResults.length){searchResults.forEach(n=>n.classList.add('search-highlight'));panToNote(searchResults[0]);} }
+function doSearch(){ clearSearchHL();searchResults=[];searchIdx=0; const q=document.getElementById('search-input').value.trim().toLowerCase(); if(!q){document.getElementById('search-count').textContent='';return;} document.querySelectorAll('.note').forEach(n=>{ if(getNoteText(n).toLowerCase().includes(q)) searchResults.push(n); }); document.getElementById('search-count').textContent=searchResults.length?`${searchIdx+1}/${searchResults.length}`:'0'; if(searchResults.length){searchResults.forEach(n=>n.classList.add('search-highlight'));panToNote(searchResults[0]);} }
 function searchNav(dir){ if(!searchResults.length)return; searchIdx=(searchIdx+dir+searchResults.length)%searchResults.length; document.getElementById('search-count').textContent=`${searchIdx+1}/${searchResults.length}`;panToNote(searchResults[searchIdx]); }
 function clearSearchHL(){ document.querySelectorAll('.search-highlight').forEach(n=>n.classList.remove('search-highlight')); }
 function panToNote(note){ const x=parseFloat(note.style.left)+100,y=parseFloat(note.style.top)+64,r=cv.getBoundingClientRect(); px=r.width/2-(x-3000)*scale;py=r.height/2-(y-3000)*scale;applyT(); }

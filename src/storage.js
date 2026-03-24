@@ -53,6 +53,8 @@ if(projects.length===0){
 }
 // migrate old projects without folderId
 projects.forEach(p=>{ if(!('folderId' in p)) p.folderId=null; });
+// migrate old folders without parentId
+folders.forEach(f=>{ if(!('parentId' in f)) f.parentId=null; });
 
 // ── folder helpers ──────────────────────────
 function getFolderProjects(fid){
@@ -77,26 +79,32 @@ function renderSidebar(){
 
   const fl=document.getElementById('folder-list');
   fl.innerHTML='';
-  folders.forEach(f=>{
+
+  function renderFolderItem(f, depth) {
     const count=projects.filter(p=>p.folderId===f.id).length;
     const item=document.createElement('div');
     item.className='sidebar-item'+(currentFolderId===f.id?' active':'');
     item.dataset.fid=f.id;
+    item.style.paddingLeft=(8+depth*14)+'px';
     item.innerHTML=`
       <svg viewBox="0 0 14 14"><path d="M1 4a1 1 0 011-1h3l1.5 2H12a1 1 0 011 1v5a1 1 0 01-1 1H2a1 1 0 01-1-1V4z"/></svg>
       <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(f.name)}</span>
       <span class="sidebar-item-count">${count}</span>
       <div class="sidebar-item-actions">
+        <button title="new subfolder" onclick="newSubFolderPrompt('${f.id}',event)"><svg viewBox="0 0 12 12"><line x1="6" y1="1" x2="6" y2="11"/><line x1="1" y1="6" x2="11" y2="6"/></svg></button>
         <button title="rename" onclick="renameFolderPrompt('${f.id}',event)"><svg viewBox="0 0 12 12"><path d="M2 9l1-1 5-5 1 1-5 5-2 1z"/><line x1="7" y1="3" x2="9" y2="5"/></svg></button>
         <button class="del" title="delete folder" onclick="deleteFolderPrompt('${f.id}',event)"><svg viewBox="0 0 12 12"><polyline points="1,3 11,3"/><path d="M2,3l1,8h6l1-8"/><line x1="4" y1="1" x2="8" y2="1"/></svg></button>
       </div>`;
     item.addEventListener('click', ()=>setFolder(f.id));
-    // drag-over to move cards into folder
     item.addEventListener('dragover', e=>{ e.preventDefault(); item.classList.add('drag-over'); });
     item.addEventListener('dragleave', ()=>item.classList.remove('drag-over'));
     item.addEventListener('drop', e=>{ e.preventDefault(); item.classList.remove('drag-over'); const pid=e.dataTransfer.getData('text/plain'); if(pid) moveToFolder(pid, f.id); });
     fl.appendChild(item);
-  });
+    // render children
+    folders.filter(c=>c.parentId===f.id).forEach(child=>renderFolderItem(child, depth+1));
+  }
+
+  folders.filter(f=>!f.parentId).forEach(f=>renderFolderItem(f, 0));
 
   // unfiled also gets drag-over
   const uf=document.getElementById('sb-unfiled');
@@ -134,6 +142,17 @@ function showNewFolderModal(){
   document.getElementById('modal-overlay').classList.add('show');
   setTimeout(()=>document.getElementById('modal-input').focus(),50);
 }
+function newSubFolderPrompt(parentId, e){
+  if(e){e.stopPropagation();e.preventDefault();}
+  modalMode='new-subfolder'; renameTargetId=parentId;
+  document.getElementById('modal-title').textContent='new subfolder';
+  document.getElementById('modal-desc').textContent='name your subfolder.';
+  document.getElementById('modal-confirm-btn').textContent='create';
+  document.getElementById('modal-input').value='';
+  document.getElementById('modal-input').placeholder='subfolder name';
+  document.getElementById('modal-overlay').classList.add('show');
+  setTimeout(()=>document.getElementById('modal-input').focus(),50);
+}
 function renameFolderPrompt(fid, e){
   if(e){e.stopPropagation();e.preventDefault();}
   const f=folders.find(x=>x.id===fid); if(!f) return;
@@ -149,11 +168,13 @@ function renameFolderPrompt(fid, e){
 function deleteFolderPrompt(fid, e){
   if(e){e.stopPropagation();e.preventDefault();}
   const f=folders.find(x=>x.id===fid); if(!f) return;
-  // unfile all projects in this folder
-  projects.forEach(p=>{ if(p.folderId===fid) p.folderId=null; });
-  folders=folders.filter(x=>x.id!==fid);
+  // unfile all projects in this folder (and subfolders)
+  function collectIds(id){ return [id,...folders.filter(x=>x.parentId===id).flatMap(c=>collectIds(c.id))]; }
+  const ids=collectIds(fid);
+  projects.forEach(p=>{ if(ids.includes(p.folderId)) p.folderId=null; });
+  folders=folders.filter(x=>!ids.includes(x.id));
   saveFolders(folders); saveProjects(projects);
-  if(currentFolderId===fid) setFolder(null);
+  if(ids.includes(currentFolderId)) setFolder(null);
   renderSidebar(); dashRender();
   showToast(`"${f.name}" deleted, canvases moved to unfiled`);
 }
@@ -439,8 +460,12 @@ function modalConfirm(){
     }
   } else if(modalMode==='new-folder'){
     const name=val||'new folder';
-    const f={id:'fold_'+Date.now(),name};
+    const f={id:'fold_'+Date.now(),name,parentId:null};
     folders.push(f); saveFolders(folders); renderSidebar(); showToast(`folder "${name}" created`);
+  } else if(modalMode==='new-subfolder'&&renameTargetId){
+    const name=val||'new folder';
+    const f={id:'fold_'+Date.now(),name,parentId:renameTargetId};
+    folders.push(f); saveFolders(folders); renderSidebar(); showToast(`subfolder "${name}" created`);
   } else if(modalMode==='rename-folder'&&renameTargetId){
     const f=folders.find(x=>x.id===renameTargetId);
     if(f&&val){ f.name=val; saveFolders(folders); renderSidebar(); dashRender(); showToast('folder renamed'); }
