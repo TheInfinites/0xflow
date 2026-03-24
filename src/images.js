@@ -598,6 +598,7 @@ document.addEventListener('keydown',e=>{
   if(e.key==='-')doZoom(1/1.15);
   if(e.key==='0')zoomToFit();
   if(e.key==='Escape'){clearSelection();tool('select');closeMenu();closeClearConfirm();closeCmdPalette();}
+  if((e.key==='Delete'||e.key==='Backspace')&&selectedRelId!==null){removeRelation(selectedRelId);selectedRelId=null;e.preventDefault();return;}
   if((e.key==='Delete'||e.key==='Backspace')&&selected.size>0){deleteSelected();e.preventDefault();}
 });
 

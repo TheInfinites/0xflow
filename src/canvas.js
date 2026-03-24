@@ -398,7 +398,7 @@ function tool(t){
 function setPen(el){ penSize=parseFloat(el.dataset.s); document.querySelectorAll('.ps').forEach(p=>p.classList.remove('on')); el.classList.add('on'); }
 
 function selectEl(el){ el.classList.add('selected'); selected.add(el); updateSelBar(); }
-function clearSelection(){ selected.forEach(el=>{el.classList.remove('selected');el.classList.remove('stroke-selected');}); selected.clear(); updateSelBar(); }
+function clearSelection(){ selected.forEach(el=>{el.classList.remove('selected');el.classList.remove('stroke-selected');}); selected.clear(); deselectRelation(); updateSelBar(); }
 function updateSelBar(){
   const n=selected.size; selCount.textContent=n+(n===1?' item':' items');
   if(n>0){
@@ -413,6 +413,21 @@ function updateSelBar(){
         btn.style.opacity=domEls.length>=3?'1':'0.25';
         btn.style.pointerEvents=domEls.length>=3?'all':'none';
       });
+    }
+    // show frame align when a frame is in selection
+    const frameAlignDiv=document.getElementById('sel-frame-align');
+    if(frameAlignDiv){
+      const frames=[...selected].filter(e=>e.classList&&e.classList.contains('frame'));
+      if(frames.length>0){
+        const children=getElementsInsideFrame(frames[0], false);
+        frameAlignDiv.style.display=children.length>=2?'flex':'none';
+        frameAlignDiv.querySelectorAll('[title^="Distribute"]').forEach(btn=>{
+          btn.style.opacity=children.length>=3?'1':'0.25';
+          btn.style.pointerEvents=children.length>=3?'all':'none';
+        });
+      } else {
+        frameAlignDiv.style.display='none';
+      }
     }
     // update lock label
     const els=[...selected].filter(e=>e.classList);
@@ -571,14 +586,14 @@ function positionSelBar(){
   if(mnX===Infinity) return;
   selBar.style.left=(mnX+mxX)/2+'px'; selBar.style.top=Math.max(50,mnY-52)+'px';
 }
-function getElementsInsideFrame(frame) {
+function getElementsInsideFrame(frame, skipSelected) {
   const fl = parseFloat(frame.style.left) || 0;
   const ft = parseFloat(frame.style.top)  || 0;
   const fw = parseFloat(frame.style.width)  || 0;
   const fh = parseFloat(frame.style.height) || 0;
   const children = [];
   document.querySelectorAll('.note, .img-card, .lbl').forEach(el => {
-    if (selected.has(el)) return; // already being moved
+    if (skipSelected !== false && selected.has(el)) return; // already being moved
     const el2 = el;
     const el_l = parseFloat(el2.style.left) || 0;
     const el_t = parseFloat(el2.style.top)  || 0;
@@ -982,6 +997,21 @@ window._relations = [];
 let relIdCounter = 0;
 let relDragActive = false, relDragSource = null;
 let relDragSvg, relDragPath, relationsG;
+let selectedRelId = null;
+
+function selectRelation(id) {
+  deselectRelation();
+  selectedRelId = id;
+  const rel = window._relations.find(r => r.id === id);
+  if (rel) rel.pathEl.classList.add('selected-rel');
+}
+function deselectRelation() {
+  if (selectedRelId !== null) {
+    const rel = window._relations.find(r => r.id === selectedRelId);
+    if (rel) rel.pathEl.classList.remove('selected-rel');
+    selectedRelId = null;
+  }
+}
 
 function initRelations() {
   relDragSvg = document.getElementById('rel-drag-svg');
@@ -1040,6 +1070,7 @@ function addRelation(elA, elB) {
   path.setAttribute('marker-end', 'url(#rel-ah)');
   path.dataset.relId = id;
   path.addEventListener('mousedown', e => e.stopPropagation());
+  path.addEventListener('click', e => { e.stopPropagation(); selectRelation(id); });
   path.addEventListener('dblclick', e => { e.stopPropagation(); removeRelation(id); });
 
   relationsG.appendChild(path);
@@ -1054,6 +1085,7 @@ function removeRelation(id) {
   if (idx === -1) return;
   window._relations[idx].pathEl.remove();
   window._relations.splice(idx, 1);
+  if (selectedRelId === id) selectedRelId = null;
   snapshot();
 }
 
@@ -1091,7 +1123,7 @@ function startRelDrag(e, sourceEl) {
     const s2 = getElCenter(relDragSource);
     relDragPath.setAttribute('d', `M ${s2.x} ${s2.y} L ${ev.clientX} ${ev.clientY}`);
     // highlight potential targets
-    document.querySelectorAll('.note, .img-card, .frame').forEach(el => {
+    document.querySelectorAll('.note, .img-card, .frame, .lbl').forEach(el => {
       if (el === relDragSource) return;
       const r = el.getBoundingClientRect();
       const over = ev.clientX >= r.left && ev.clientX <= r.right &&
@@ -1106,10 +1138,10 @@ function startRelDrag(e, sourceEl) {
     relDragSource.querySelector('.rel-handle')?.classList.remove('active');
     relDragSvg.style.display = 'none';
     relDragPath.setAttribute('d', '');
-    document.querySelectorAll('.note, .img-card, .frame').forEach(el => el.style.outline = '');
+    document.querySelectorAll('.note, .img-card, .frame, .lbl').forEach(el => el.style.outline = '');
 
     const target = document.elementFromPoint(ev.clientX, ev.clientY)
-      ?.closest('.note, .img-card, .frame');
+      ?.closest('.note, .img-card, .frame, .lbl');
     if (target && target !== relDragSource) {
       addRelation(relDragSource, target);
     }
@@ -1757,6 +1789,143 @@ function buildMenu(){
 }
 buildMenu();
 
+// ── Frame context menu ──
+const FRAME_COLORS=[null,'rgba(198,42,42,0.10)','rgba(184,92,0,0.10)','rgba(122,104,0,0.10)','rgba(26,107,46,0.10)','rgba(19,94,150,0.10)','rgba(92,42,138,0.10)','rgba(138,26,74,0.10)','rgba(42,90,90,0.10)'];
+const FRAME_BORDER_COLORS=[null,'rgba(198,42,42,0.35)','rgba(184,92,0,0.35)','rgba(122,104,0,0.35)','rgba(26,107,46,0.35)','rgba(19,94,150,0.35)','rgba(92,42,138,0.35)','rgba(138,26,74,0.35)','rgba(42,90,90,0.35)'];
+let menuFrame=null;
+const frameMenu=document.getElementById('frame-menu');
+function buildFrameMenu(){
+  const cr=document.getElementById('frame-color-row');cr.innerHTML='';
+  NOTE_COLORS.forEach((c,i)=>{ const dot=document.createElement('div');dot.className='color-dot';dot.style.background=c||'var(--surface-active)';dot.title=COLOR_LABELS[i];if(!c)dot.style.border='1px solid var(--border-strong)';dot.addEventListener('click',()=>setFrameColor(i));cr.appendChild(dot); });
+}
+buildFrameMenu();
+function setFrameColor(i){
+  if(!menuFrame)return;
+  menuFrame.dataset.frameColor=i||'';
+  menuFrame.style.background=FRAME_COLORS[i]||'';
+  menuFrame.style.borderColor=FRAME_BORDER_COLORS[i]||'';
+  snapshot();closeFrameMenu();
+}
+function openFrameMenu(frame,cx,cy){
+  menuFrame=frame;
+  const ci=parseInt(frame.dataset.frameColor)||0;
+  frameMenu.querySelectorAll('.color-dot').forEach((dot,i)=>dot.classList.toggle('active',i===ci));
+  frameMenu.style.left=cx+'px';frameMenu.style.top=cy+'px';frameMenu.classList.add('show');
+}
+function closeFrameMenu(){ frameMenu.classList.remove('show');menuFrame=null; }
+function deleteMenuFrame(){ if(menuFrame){snapshot();removeRelationsForEl(menuFrame);menuFrame.remove();closeFrameMenu();} }
+document.addEventListener('click',e=>{ if(!e.target.closest('#frame-menu'))closeFrameMenu(); });
+
+function getSelectedFrame() {
+  return [...selected].find(e=>e.classList&&e.classList.contains('frame')) || null;
+}
+function alignSelFrame(dir) {
+  const frame = getSelectedFrame();
+  if(!frame) return;
+  const els = getElementsInsideFrame(frame, false).filter(e=>!e.classList.contains('locked'));
+  if(els.length<2) return;
+  snapshot();
+  const bounds = els.map(getElBounds);
+  if(dir==='left'){
+    const minL=Math.min(...bounds.map(b=>b.l));
+    els.forEach(el=>el.style.left=minL+'px');
+  } else if(dir==='right'){
+    const maxR=Math.max(...bounds.map(b=>b.l+b.w));
+    els.forEach((el,i)=>el.style.left=(maxR-bounds[i].w)+'px');
+  } else if(dir==='centerH'){
+    const minL=Math.min(...bounds.map(b=>b.l));
+    const maxR=Math.max(...bounds.map(b=>b.l+b.w));
+    const cx=(minL+maxR)/2;
+    els.forEach((el,i)=>el.style.left=(cx-bounds[i].w/2)+'px');
+  } else if(dir==='top'){
+    const minT=Math.min(...bounds.map(b=>b.t));
+    els.forEach(el=>el.style.top=minT+'px');
+  } else if(dir==='bottom'){
+    const maxB=Math.max(...bounds.map(b=>b.t+b.h));
+    els.forEach((el,i)=>el.style.top=(maxB-bounds[i].h)+'px');
+  } else if(dir==='centerV'){
+    const minT=Math.min(...bounds.map(b=>b.t));
+    const maxB=Math.max(...bounds.map(b=>b.t+b.h));
+    const cy=(minT+maxB)/2;
+    els.forEach((el,i)=>el.style.top=(cy-bounds[i].h/2)+'px');
+  }
+}
+function distributeSelFrame(axis) {
+  const frame = getSelectedFrame();
+  if(!frame) return;
+  const els = getElementsInsideFrame(frame, false).filter(e=>!e.classList.contains('locked'));
+  if(els.length<3) return;
+  snapshot();
+  if(axis==='H'){
+    const sorted=els.map(el=>({el,b:getElBounds(el)})).sort((a,b)=>a.b.l-b.b.l);
+    const totalW=sorted.reduce((s,{b})=>s+b.w,0);
+    const span=sorted[sorted.length-1].b.l+sorted[sorted.length-1].b.w-sorted[0].b.l;
+    const gap=(span-totalW)/(sorted.length-1);
+    let x=sorted[0].b.l;
+    sorted.forEach(({el,b})=>{ el.style.left=x+'px'; x+=b.w+gap; });
+  } else {
+    const sorted=els.map(el=>({el,b:getElBounds(el)})).sort((a,b)=>a.b.t-b.b.t);
+    const totalH=sorted.reduce((s,{b})=>s+b.h,0);
+    const span=sorted[sorted.length-1].b.t+sorted[sorted.length-1].b.h-sorted[0].b.t;
+    const gap=(span-totalH)/(sorted.length-1);
+    let y=sorted[0].b.t;
+    sorted.forEach(({el,b})=>{ el.style.top=y+'px'; y+=b.h+gap; });
+  }
+}
+
+function alignFrameChildren(dir) {
+  if(!menuFrame) return;
+  const els = getElementsInsideFrame(menuFrame, false).filter(e=>!e.classList.contains('locked'));
+  if(els.length<2) return;
+  snapshot();
+  const bounds = els.map(getElBounds);
+  if(dir==='left'){
+    const minL=Math.min(...bounds.map(b=>b.l));
+    els.forEach(el=>el.style.left=minL+'px');
+  } else if(dir==='right'){
+    const maxR=Math.max(...bounds.map(b=>b.l+b.w));
+    els.forEach((el,i)=>el.style.left=(maxR-bounds[i].w)+'px');
+  } else if(dir==='centerH'){
+    const minL=Math.min(...bounds.map(b=>b.l));
+    const maxR=Math.max(...bounds.map(b=>b.l+b.w));
+    const cx=(minL+maxR)/2;
+    els.forEach((el,i)=>el.style.left=(cx-bounds[i].w/2)+'px');
+  } else if(dir==='top'){
+    const minT=Math.min(...bounds.map(b=>b.t));
+    els.forEach(el=>el.style.top=minT+'px');
+  } else if(dir==='bottom'){
+    const maxB=Math.max(...bounds.map(b=>b.t+b.h));
+    els.forEach((el,i)=>el.style.top=(maxB-bounds[i].h)+'px');
+  } else if(dir==='centerV'){
+    const minT=Math.min(...bounds.map(b=>b.t));
+    const maxB=Math.max(...bounds.map(b=>b.t+b.h));
+    const cy=(minT+maxB)/2;
+    els.forEach((el,i)=>el.style.top=(cy-bounds[i].h/2)+'px');
+  }
+}
+
+function distributeFrameChildren(axis) {
+  if(!menuFrame) return;
+  const els = getElementsInsideFrame(menuFrame, false).filter(e=>!e.classList.contains('locked'));
+  if(els.length<3) return;
+  snapshot();
+  if(axis==='H'){
+    const sorted=els.map(el=>({el,b:getElBounds(el)})).sort((a,b)=>a.b.l-b.b.l);
+    const totalW=sorted.reduce((s,{b})=>s+b.w,0);
+    const span=sorted[sorted.length-1].b.l+sorted[sorted.length-1].b.w-sorted[0].b.l;
+    const gap=(span-totalW)/(sorted.length-1);
+    let x=sorted[0].b.l;
+    sorted.forEach(({el,b})=>{ el.style.left=x+'px'; x+=b.w+gap; });
+  } else {
+    const sorted=els.map(el=>({el,b:getElBounds(el)})).sort((a,b)=>a.b.t-b.b.t);
+    const totalH=sorted.reduce((s,{b})=>s+b.h,0);
+    const span=sorted[sorted.length-1].b.t+sorted[sorted.length-1].b.h-sorted[0].b.t;
+    const gap=(span-totalH)/(sorted.length-1);
+    let y=sorted[0].b.t;
+    sorted.forEach(({el,b})=>{ el.style.top=y+'px'; y+=b.h+gap; });
+  }
+}
+
 function openMenu(note,cx,cy){
   menuNote=note;
   document.getElementById('link-input').value=note.dataset.link||'';
@@ -1874,7 +2043,63 @@ function makeFrame(x,y,w,h,labelText='frame'){
   makeResizeHandles(frame, 80, 60);
   bindFrame(frame);world.appendChild(frame);return frame;
 }
-function bindFrame(frame){ frame.addEventListener('mousedown',e=>{ if(e.target.tagName==='INPUT')return; onElemMouseDown(e); }); }
+function bindFrame(frame){
+  frame.addEventListener('mousedown',e=>{
+    if(e.target.tagName==='INPUT')return;
+    if(e.button===2){ startFrameRightDrag(e,frame); return; }
+    onElemMouseDown(e);
+  });
+  frame.addEventListener('contextmenu',e=>{
+    e.preventDefault();
+    if(!frame._rcDragMoved && !window._noteRightDragActive) openFrameMenu(frame,e.clientX,e.clientY);
+    frame._rcDragMoved=false;
+  });
+}
+
+function startFrameRightDrag(e, frame) {
+  e.preventDefault(); e.stopPropagation();
+  const startX = e.clientX, startY = e.clientY;
+  frame._rcDragMoved = false;
+  window._noteRightDragActive = true;
+  const origin = cardCenter(frame);
+
+  function onMove(ev) {
+    if (Math.abs(ev.clientX - startX) > 4 || Math.abs(ev.clientY - startY) > 4) {
+      frame._rcDragMoved = true;
+    }
+    if (frame._rcDragMoved) setDragLine(origin.x, origin.y, ev.clientX, ev.clientY);
+  }
+  function onUp(ev) {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    clearDragLine();
+    if (frame._rcDragMoved) {
+      // Check if dropped on another element — create relation
+      frame.style.pointerEvents = 'none';
+      const target = document.elementFromPoint(ev.clientX, ev.clientY);
+      frame.style.pointerEvents = '';
+      const targetEl = target?.closest('.note, .img-card, .frame, .lbl, .todo-card');
+      if (targetEl && targetEl !== frame) {
+        addRelation(frame, targetEl);
+        setTimeout(() => { window._noteRightDragActive = false; }, 0);
+        return;
+      }
+      // No target — open move/copy menu for all img-cards inside the frame
+      const children = getElementsInsideFrame(frame);
+      const imgCards = children.filter(el => el.classList.contains('img-card'));
+      if (imgCards.length > 0) {
+        // Temporarily select all img-cards in frame so execFileOp picks them up
+        imgCards.forEach(c => { c.classList.add('selected'); selected.add(c); });
+        updateSelBar();
+        setDragLine(origin.x, origin.y, ev.clientX, ev.clientY);
+        openImgCtxMenu(ev.clientX, ev.clientY, imgCards[0]);
+      }
+    }
+    setTimeout(() => { window._noteRightDragActive = false; }, 0);
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
 
 function makeLabel(x,y){
   const div=document.createElement('div');div.className='lbl';div.contentEditable='true';div.dataset.placeholder='type...';div.style.left=x+'px';div.style.top=y+'px';
