@@ -1,6 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
+> Current version: **v0.5.0**
 
 ---
 
@@ -15,7 +16,8 @@
 │   ├── folder-browser.css    Folder browser + context menu styles
 │   ├── storage.js            Dashboard logic + localStorage store
 │   ├── canvas.js             Canvas, zoom, pan, selection, undo/redo, notes
-│   ├── images.js             Image/PDF handling, AI features, updater
+│   ├── editor.js             Block editor engine (contentEditable note editor)
+│   ├── images.js             Image/PDF/video/audio handling, AI features, updater
 │   ├── folder-browser.js     File ops context menu + cascading folder browser
 │   ├── tauri-mock.js         Browser dev mode — stubs window.__TAURI__ APIs
 │   └── fonts/                14 bundled TTF files (Geist, Geist Mono, Barlow Condensed, DM Mono)
@@ -55,9 +57,10 @@ index.html (app shell)
         └── #status        Bottom status bar
 
 style.css            All CSS + @font-face declarations
-storage.js           Dashboard, projects, folders, localStorage
+storage.js           Dashboard, projects, folders (nested), localStorage
 canvas.js            Pan/zoom, notes, selection, undo/redo, AI features
-images.js            Image/PDF handling, auto-updater, window controls
+editor.js            Block editor (paragraph, headings, lists, todo, code, divider)
+images.js            Image/PDF/video/audio handling, auto-updater, window controls
 folder-browser.js    Right-click context menu, cascading folder browser
 ```
 
@@ -141,6 +144,60 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 
 ---
 
+## Block Editor (`src/editor.js`)
+
+Replaces the plain `<textarea>` inside `.note` elements with a `contentEditable` block-based rich text editor. No external dependencies.
+
+### Block Types
+
+| Type | Markdown shortcut | Notes |
+|---|---|---|
+| `paragraph` | — | Default; placeholder text `idea...` when empty and focused |
+| `h1` | `# ` | |
+| `h2` | `## ` | |
+| `h3` | `### ` | |
+| `bullet` | `- ` or `* ` | Tab/Shift+Tab to indent (0–3 levels, 16px each) |
+| `numbered` | `1. ` | Same indent support as bullet |
+| `todo` | `[ ] ` or `[] ` | Custom checkbox button, strikethrough on complete |
+| `quote` | `> ` | |
+| `code` | ` ``` ` | |
+| `divider` | `---` | Non-editable `<hr>`; inserts new paragraph after |
+
+### Public API
+
+| Function | Description |
+|---|---|
+| `createBlockEditor(noteEl)` | Create `.block-editor` div, append to `noteEl`, return it |
+| `getNoteText(noteEl)` | Plain-text content of all blocks joined by `\n`. Falls back to `textarea.value` for legacy notes. |
+| `getEditorBlocks(noteEl)` | Return `{type, text?, checked?, indent?}[]` for serialization |
+| `setEditorBlocks(noteEl, blocks)` | Restore editor from saved blocks array |
+| `initEditorWithText(editorEl, text)` | Populate editor line-by-line from a plain text string (used during textarea migration) |
+
+### Keyboard Shortcuts (inside block editor)
+
+| Key | Behavior |
+|---|---|
+| `Enter` | Insert new block of same type (for list/todo) or paragraph |
+| `Enter` on empty list/todo | Convert block back to paragraph |
+| `Backspace` at start | Merge with previous block; or convert non-paragraph to paragraph |
+| `Tab` / `Shift+Tab` | Indent/outdent bullet and numbered blocks |
+| `Ctrl+B` / `I` / `U` | Bold / Italic / Underline (via `execCommand`) |
+| `Ctrl+Shift+S` | Strikethrough |
+| `/` | Open slash command menu |
+| `↑ ↓` in slash menu | Navigate items |
+| `Enter` in slash menu | Apply selected block type |
+| `Escape` | Close slash menu |
+
+### Slash Menu
+Typing `/` (or `/query`) opens a floating menu filtered by block type label. Clicking or pressing Enter applies the selected type. The `/…` text is stripped from the block content on apply.
+
+### Todo Blocks
+- Rendered as a `<div>` containing a `<button class="be-todo-cb">` + `<span class="be-todo-text" contenteditable>`.
+- The checkbox is a custom CSS button (not a native `<input type="checkbox">`): `13×13px`, `3px border-radius`, orange fill + white checkmark `::after` when `.checked`.
+- Toggle updates `block.dataset.checked`, `cb.classList`, and `span.style.textDecoration`.
+
+---
+
 ## Storage
 
 ### localStorage (via `store` wrapper)
@@ -148,7 +205,7 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 | Key | Content |
 |---|---|
 | `freeflow_projects` | JSON array of project metadata |
-| `freeflow_folders` | JSON array of folder metadata |
+| `freeflow_folders` | JSON array of folder metadata (each folder has `parentId` for nesting) |
 | `freeflow_canvas_{id}` | Serialized canvas state for each project |
 | `freeflow_dash_theme` | `'light'` or `'dark'` for dashboard |
 | `freeflow_key_gpt` | OpenAI API key (user-provided) |
@@ -206,7 +263,7 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 ### Element Creation
 | Function | Description |
 |---|---|
-| `makeNote(x, y, color?)` | Create a sticky note at world coords |
+| `makeNote(x, y, color?)` | Create a sticky note with a block editor (replaces old textarea) |
 | `makeTodo(x, y, title?)` | Create a to-do card with checkboxes and progress bar |
 | `makeAiNote(x, y)` | Create an AI conversation note |
 | `makeFrame(x, y, w, h, label?)` | Create a frame/group |
@@ -218,6 +275,10 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 | `toggleCollapse(el, getLabel)` | Toggle `.collapsed` class, save/restore dimensions in `dataset.expandedW/H` |
 | `placeImagesGrid(blobs, sourcePaths)` | Resolve all image dimensions, compute √n column grid, centre on viewport, place all in one snapshot |
 | `placeImageBlob(blob, wx?, wy?)` | Full pipeline: save blob → place on canvas. Used by both image and PDF import. |
+| `placeMediaBlob(blob, mediaType, wx?, wy?)` | Same pipeline for video/audio blobs; uses `makeVideoCard` / `makeAudioCard` based on `mediaType`. Passes `blob.name` to `makeAudioCard` for title/format display. |
+| `makeVideoCard(id, url, x, y, w, h)` | Create a video card with `<video controls>` element. |
+| `makeAudioCard(id, url, x, y, filename)` | Create an audio card with custom player controls. Single horizontal row: art square (44×44px) left, title + format label (e.g. "MP3") right, play button far right. Title extracted from `filename` (underscores/hyphens→spaces), extension shown as format label. |
+| `bindAudioCard(card)` | Rebind custom audio player controls (scrubber, play button, timestamps) after canvas restore. Called in `restoreCanvas` for `img-card[data-media-type=audio]` elements. |
 | `saveImgBlob(blob)` | Save image (Tauri: filesystem, Browser: IndexedDB) |
 | `loadImgBlob(id)` | Load image by ID from storage |
 | `placePdf(file, sourcePath?)` | Render each PDF page to a canvas at 2× scale, convert to PNG blob, place via `placeImageBlob()` in a vertical column with 24px gap. Each page card gets `dataset.pdfPage` and `dataset.pdfName`. |
@@ -303,6 +364,12 @@ Two separate systems:
 - `toggleCollapse(el, getLabel)` — saves expanded size to `dataset.expandedW/H`, restores on expand
 - Serialized automatically via `outerHTML` (`.collapsed` class and dataset attributes are preserved)
 - Resize handles hidden when collapsed (`display:none` via CSS)
+- **Collapsed label (v0.4.0):** when a card is collapsed, the empty bar shows a text preview via CSS `content: attr(data-collapsed-label)` on `.note.collapsed::before` / `.img-card.collapsed::before`. The label is set from `getNoteText(el).slice(0,40)` or the img filename. Falls back to `'—'` if empty.
+
+### Frame / Group Lock Propagation (v0.4.0)
+- `setElLocked(el, lock)` — sets `dataset.locked` and toggles `pointer-events: none`. When called on a `.frame`, it also calls `setElLocked` recursively on all children returned by `getElementsInsideFrame(frame)`.
+- `toggleLockSelected()` and `toggleLockNote()` both delegate to `setElLocked`.
+- Locking a frame cascades immediately to all contained notes, images, and labels.
 
 ### All-Edge Resize
 - 8 `.rh` handles per card: corners (`rh-nw/ne/sw/se`) and edges (`rh-n/e/s/w`)
@@ -354,8 +421,11 @@ el.dataset.color          — accent color (hex or empty)
 el.dataset.votes          — vote count
 el.dataset.link           — optional URL
 el.dataset.locked         — '1' if locked
-el.querySelector('textarea').value  — note text
+el.querySelector('.block-editor')   — rich text block editor (replaces old textarea)
 ```
+Content is stored as an array of block objects via `getEditorBlocks(el)` / `setEditorBlocks(el, blocks)`. See **Block Editor** section below.
+
+**Backward compatibility:** old canvases saved with `<textarea>` are auto-migrated on `restoreCanvas()` — the textarea text is read, removed, and used to seed the block editor via `initEditorWithText()`.
 
 ### To-Do Card (`.note.todo-card`)
 ```
@@ -386,10 +456,14 @@ Right-click opens frame context menu (`#frame-menu`) with color picker and delet
 ### Image Card (`.img-card`)
 ```
 el.style.left/top
-el.dataset.imgId   — storage key (Tauri: filename, Browser: IDB key)
-el.dataset.nw/nh   — native image dimensions
-el.querySelector('img').src  — data URL or object URL (cached)
+el.dataset.imgId      — storage key (Tauri: filename, Browser: IDB key)
+el.dataset.nw/nh      — native image dimensions
+el.dataset.mediaType  — 'video' | 'audio' | undefined (images have no mediaType)
+el.querySelector('img').src    — data URL or object URL (images)
+el.querySelector('video').src  — object URL (video cards)
+el.querySelector('audio').src  — object URL (audio cards)
 ```
+Video and audio cards are created via `makeVideoCard()` and `makeAudioCard()` respectively. Media blobs are stored to the same IDB/filesystem pipeline via `placeMediaBlob()`.
 
 ---
 
@@ -398,13 +472,28 @@ el.querySelector('img').src  — data URL or object URL (cached)
 `serializeCanvas()` (canvas save/undo state):
 ```json
 {
-  "items": [{"html": "<div class=\"note\"..."}],
+  "items": [
+    {
+      "html": "<div class=\"note\"...",
+      "blocks": [
+        {"type": "paragraph", "text": "hello"},
+        {"type": "h1", "text": "Title"},
+        {"type": "bullet", "text": "item", "indent": 1},
+        {"type": "todo", "text": "task", "checked": false},
+        {"type": "divider"}
+      ]
+    }
+  ],
   "strokes": "<g class=\"stroke-wrap\">...",
   "arrows": "<g class=\"stroke-wrap\">...",
   "viewport": {"scale": 1, "px": 0, "py": 0}
 }
 ```
-> ⚠️ For `.img-card` elements, the `<img src>` attribute is **stripped before serializing** (set to `""`). The src is restored after load via `restoreImgCards()` which reads from `blobURLCache` or storage using `data-img-id`. This prevents base64 data URLs from bloating undo snapshots and the saved file.
+> ⚠️ For `.img-card` elements, the `<img src>`, `<video src>`, and `<audio src>` attributes are **stripped before serializing** (set to `""`). The src is restored after load via `restoreImgCards()` which reads from `blobURLCache` or storage using `data-img-id`. This prevents base64/blob URLs from bloating undo snapshots and the saved file.
+
+> ⚠️ The `blocks` array is stored per note item alongside `html`. On `restoreCanvas()`, if `blocks` is present, `setEditorBlocks()` is called to restore rich content; otherwise the textarea fallback migration runs.
+
+> ⚠️ **Serialization bug fix (v0.4.0):** `outerHTML` does not capture the DOM `.value` property of `<textarea>` or `<input>` elements (only the original HTML attribute). Both `serializeCanvas()` and `copySelected()` now clone elements and copy `.value → innerHTML` / `.value → setAttribute('value')` before serializing.
 
 `serializeCanvas()` (brainstorm AI context — different function):
 ```json
@@ -465,6 +554,14 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 
 ## File Operations Feature
 
+### Import Panel (v0.5.0)
+- The old **"image"** button in the top bar has been replaced with an **"↑ import"** button (`#import-btn`)
+- `toggleImportPanel(e)` / `closeImportPanel()` — toggle a floating panel positioned below the button, right-aligned; closes on outside click
+- The panel lists 5 import options: **Image**, **PDF**, **Video**, **Audio**, **Any file**
+- `triggerImport(accept)` — sets the `accept` attribute on `#import-file` and programmatically clicks it to open the OS file picker
+- `onImportFiles(e)` — routes selected files to the correct pipeline based on MIME type (image → `placeImageBlob`, PDF → `placePdf`, video/audio → `placeMediaBlob`, other → `placeImageBlob` for generic blobs)
+- `#import-panel` — absolutely positioned below `#import-btn`, `right: 0`, appears with a small fade/scale animation
+
 ### Project Directory
 - Set per-session via the **"📁 project dir"** button in the top bar (`pickProjectDir()`)
 - Stored in `_projectDir` (module-level variable, not persisted)
@@ -479,8 +576,8 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 
 ### Context Menu (`#img-ctx-menu`)
 - Mac Finder-style linear list, appears at cursor on right-drag release
+- **"Rename file"** — renames the file on disk using `window.__TAURI__.fs.rename`; updates `card.dataset.sourcePath` on success. Browser mock: shows toast only.
 - **"Move / Copy to folder"** — hover opens cascading folder browser
-- Other slots are placeholders for future actions
 - Closes on: left-click anywhere on canvas or outside, `closeAllFolderUI()`
 
 ### Cascading Folder Browser (`#folder-browser`)
@@ -508,6 +605,12 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 ### Source Path Tracking
 - `data-source-path` attribute on `.img-card` — set when images are dropped from disk via Tauri drag-drop
 - In browser mock mode, a fake path is assigned for testing (`D:\art\test\<filename>`)
+
+### Sub-folder Support (v0.4.0)
+- Each folder object now has a `parentId` field (null = top-level). Old data is migrated on load by adding `parentId: null` where missing.
+- `renderSidebar()` uses recursive `renderFolderItem(f, depth)` to indent nested folders with `padding-left`.
+- **"New sub-folder"** button appears on folder hover → `newSubFolderPrompt(parentId, e)`.
+- `deleteFolderPrompt` recursively collects sub-folder IDs before deletion.
 
 ### Permissions added (`capabilities/default.json`)
 ```
@@ -580,13 +683,13 @@ gh release create v{version} \
 `latest.json` format:
 ```json
 {
-  "version": "0.2.3",
+  "version": "0.5.0",
   "notes": "What changed",
-  "pub_date": "2026-03-22T00:00:00Z",
+  "pub_date": "2026-03-25T00:00:00Z",
   "platforms": {
     "windows-x86_64": {
       "signature": "<contents of .sig file>",
-      "url": "https://github.com/TheInfinites/0xflow/releases/download/v0.2.3/0xflow_0.2.3_x64-setup.exe"
+      "url": "https://github.com/TheInfinites/0xflow/releases/download/v0.5.0/0xflow_0.5.0_x64-setup.exe"
     }
   }
 }
@@ -598,9 +701,11 @@ gh release create v{version} \
 
 - **Project directory not persisted** — `_projectDir` resets on app restart. Should be saved to `store` plugin.
 - **Source path lost on canvas restore** — `data-source-path` is serialized in `outerHTML` but not explicitly restored. Needs verification.
-- **Right-click context menu** — only "Move / Copy to folder" is implemented. Other slots are placeholders.
 - **File ops browser mock** — `execFileOp` only shows a toast in browser mode; no real I/O until Tauri build.
+- **Rename browser mock** — `renameImgFile` only shows a toast in browser mode.
 - **PDF import browser mock** — `placePdf()` works in browser via PDF.js CDN, but Tauri drag-drop PDFs require the binary file read path; test in Tauri build to confirm blob handoff.
+- **Video not persisted to disk** — `placeMediaBlob()` uses IndexedDB in browser for video; Tauri path stores to AppData, but video src is stripped on serialize (same as images). Verify Tauri restore path for video cards.
+- **Block editor light mode** — todo checkbox styling and some block type colors may need refinement in light mode.
 
 ### Pre-existing
 
