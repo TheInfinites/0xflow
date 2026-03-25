@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.6.0**
+> Current version: **v0.7.1**
 
 ---
 
@@ -49,7 +49,10 @@ index.html (app shell)
         │   │   ├── .todo-card         To-do checklist cards
         │   │   ├── .frame             Frame/group containers
         │   │   ├── .lbl               Text labels
-        │   │   └── .img-card          Dropped images
+        │   │   └── .note.draw-card    Embedded drawing canvas cards
+        │   │   ├── .frame             Frame/group containers
+        │   │   ├── .lbl               Text labels
+        │   │   └── .img-card          Dropped images / video / audio
         │   └── <svg>      Vector layer (strokes, arrows, relations)
         ├── #sel-bar       Selection bar (dup, group, lock, pin, del)
         ├── #toolbar       Bottom dock (tools + AI cluster)
@@ -128,7 +131,14 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 | `scale` | `number` | Canvas zoom (0.1–5, default 1) |
 | `px`, `py` | `number` | Canvas pan offset in pixels |
 | `selected` | `Set<Element>` | Currently selected DOM elements |
-| `curTool` | `string` | Active tool: select/pen/eraser/arrow/text/frame |
+| `curTool` | `string` | Active tool: select/pen/eraser/arrow/text/frame/rect/ellipse/diamond/triangle |
+| `SHAPE_TOOLS` | `Set<string>` | Shape tool names: rect, ellipse, line, diamond, triangle |
+| `shapeDrawing` | `boolean` | Whether a shape is currently being drawn |
+| `shapeStart` | `{x,y}|null` | World coords of shape drag start |
+| `shapeStrokeColor` | `string` | Current shape stroke color |
+| `shapeStrokeW` | `number` | Current shape stroke width |
+| `shapeFillColor` | `string` | Current shape fill color |
+| `shapeFillEnabled` | `boolean` | Whether shapes are filled |
 | `snapEnabled` | `boolean` | Snap to 20px grid |
 | `undoStack` | `object[]` | Serialized canvas states (capped at 30) |
 | `redoStack` | `object[]` | Serialized canvas states |
@@ -264,6 +274,11 @@ Typing `/` (or `/query`) opens a floating menu filtered by block type label. Cli
 | Function | Description |
 |---|---|
 | `makeNote(x, y, color?)` | Create a sticky note with a block editor (replaces old textarea) |
+| `makeDrawCard(x, y, w?, h?)` | Create an embedded draw-canvas card (.note.draw-card). Header toolbar: pen/rect/ellipse/eraser, size select, color picker, clear. Canvas surface is an HTML5 `<canvas>`. Resizable; drawing preserved across resizes via temp canvas copy. |
+| `bindDrawCard(d)` | Wire up drawing interactions on a draw-card (pen strokes, shape preview, eraser). Called on create and on restore. |
+| `addDrawCard(x?, y?)` | Convenience wrapper — centers draw-card in current viewport. |
+| `serializeDrawCard(d)` | Returns `canvas.toDataURL("image/png")` for persistence in canvas state. |
+| `restoreDrawCardData(d, dataURL)` | Draws saved dataURL back onto the dc-canvas after restore. |
 | `makeTodo(x, y, title?)` | Create a to-do card with checkboxes and progress bar |
 | `makeAiNote(x, y)` | Create an AI conversation note |
 | `makeFrame(x, y, w, h, label?)` | Create a frame/group |
@@ -276,9 +291,11 @@ Typing `/` (or `/query`) opens a floating menu filtered by block type label. Cli
 | `placeImagesGrid(blobs, sourcePaths)` | Resolve all image dimensions, compute √n column grid, centre on viewport, place all in one snapshot |
 | `placeImageBlob(blob, wx?, wy?)` | Full pipeline: save blob → place on canvas. Used by both image and PDF import. |
 | `placeMediaBlob(blob, mediaType, wx?, wy?)` | Same pipeline for video/audio blobs; uses `makeVideoCard` / `makeAudioCard` based on `mediaType`. Passes `blob.name` to `makeAudioCard` for title/format display. |
-| `makeVideoCard(id, url, x, y, w, h)` | Create a video card with `<video controls>` element. |
+| `makeVideoCard(id, url, x, y, w)` | Create a video card. Video fills top, footer bar below separator holds controls. Drag from footer; video controls are native (no overlay). |
 | `makeAudioCard(id, url, x, y, filename)` | Create an audio card with custom player controls. Single horizontal row: art square (44×44px) left, title + format label (e.g. "MP3") right, play button far right. Title extracted from `filename` (underscores/hyphens→spaces), extension shown as format label. |
 | `bindAudioCard(card)` | Rebind custom audio player controls (scrubber, play button, timestamps) after canvas restore. Called in `restoreCanvas` for `img-card[data-media-type=audio]` elements. |
+| `buildShapePath(type, x1, y1, x2, y2)` | Returns SVG path `d` string for rect/ellipse/diamond/triangle/line given two corner points. |
+| `makeShapeEl(d, stroke, fill, sw)` | Create a `stroke-wrap` SVG `<g>` with visible path + transparent hit-zone path — same structure as pen strokes. |
 | `saveImgBlob(blob)` | Save image (Tauri: filesystem, Browser: IndexedDB) |
 | `loadImgBlob(id)` | Load image by ID from storage |
 | `placePdf(file, sourcePath?)` | Render each PDF page to a canvas at 2× scale, convert to PNG blob, place via `placeImageBlob()` in a vertical column with 24px gap. Each page card gets `dataset.pdfPage` and `dataset.pdfName`. |
@@ -317,6 +334,8 @@ Typing `/` (or `/query`) opens a floating menu filtered by block type label. Cli
 | `exportJSON()` | Export notes/frames/labels as structured JSON |
 | `exportMarkdown()` | Export as readable Markdown document |
 | `downloadBlob(blob, filename)` | Trigger browser download |
+| `exportSharedCanvas()` | Export self-contained canvas JSON with all media blobs base64-encoded inline under `blobs` key and `shared: true` flag. Saves via Tauri dialog or browser download. |
+| `importSharedCanvas()` | Open a shared canvas JSON, inject bundled blobs into `blobURLCache`, create a new project, restore canvas, then persist each blob to local storage in the background. |
 
 ### Connection Systems
 Two separate systems:
@@ -489,6 +508,10 @@ Video and audio cards are created via `makeVideoCard()` and `makeAudioCard()` re
   "viewport": {"scale": 1, "px": 0, "py": 0}
 }
 ```
+> ⚠️ **Draw-cards** store their canvas content as `drawData: "data:image/png;base64,..."` alongside `html` in the items array. Restored via `restoreDrawCardData()`.
+
+> ⚠️ **Shared canvas format** adds two top-level keys: `shared: true` and `blobs: {[imgId]: dataURL}`. All media referenced by img-cards is bundled inline. On import, blobs are injected into `blobURLCache` before `restoreCanvas()` runs, then persisted to local storage in the background. The `blobs` key is stripped before saving to localStorage to avoid size bloat.
+
 > ⚠️ For `.img-card` elements, the `<img src>`, `<video src>`, and `<audio src>` attributes are **stripped before serializing** (set to `""`). The src is restored after load via `restoreImgCards()` which reads from `blobURLCache` or storage using `data-img-id`. This prevents base64/blob URLs from bloating undo snapshots and the saved file.
 
 > ⚠️ The `blocks` array is stored per note item alongside `html`. On `restoreCanvas()`, if `blocks` is present, `setEditorBlocks()` is called to restore rich content; otherwise the textarea fallback migration runs.
@@ -570,8 +593,10 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 
 ### Project Directory
 - Set per-session via the **"📁 project dir"** button in the top bar (`pickProjectDir()`)
-- Stored in `_projectDir` (module-level variable, not persisted)
+- Stored in `_projectDir` (module-level variable) **and** persisted to localStorage per canvas via `saveProjectDir(dir)` / `loadProjectDir()`
+- Key: `freeflow_projdir_{canvasId}` — loaded inside `loadCanvasState()`
 - Uses `window.__TAURI__.dialog.open({ directory: true })` in Tauri; prompt() in browser mock
+- `openProjectDirInExplorer()` — opens `_projectDir` in the OS file explorer via `window.__TAURI__.shell.open`
 
 ### Right-Click Drag Gesture (`startImgRightDrag`)
 - Triggered by `mousedown` with `button === 2` on `.img-card`
@@ -715,9 +740,28 @@ gh release create v{version} \
 
 ---
 
+## Changes in v0.7.x
+
+### v0.7.1
+- **Video card drag fix** — video controls are now fully native (no overlay div). Drag works from the footer bar. `bindImgCard` skips mousedown events targeting `.vc-video` so native video controls are not intercepted.
+- **Draw-card drag fix** — draw-cards now call `bindNote(d)` in addition to `bindDrawCard(d)` so the `onElemMouseDown` drag handler is registered. Only clicks directly on the `<canvas>` surface stop propagation (to prevent draw strokes from triggering card drag).
+
+### v0.7.0
+- **Shape drawing tools** — rect, ellipse, diamond, triangle, line tools on the SVG `#strokes` layer. Same `stroke-wrap` structure as pen strokes (hit-zone + visible path). `#shape-row` toolbar shows stroke width, fill color, fill toggle. Keyboard shortcuts: R (rect), L (ellipse).
+- **Draw Canvas node** () —  with embedded HTML5 `<canvas>`. Tools: pen, rect, ellipse, eraser. Resizable with drawing preserved. Serialized as PNG dataURL in `drawData` field.
+- **Shared canvas export/import** — `⬡ share` toolbar button + CMD palette entries. Exports self-contained JSON with all media bundled as base64. Importing creates a new project and persists blobs to local storage.
+- **Project directory persistence** — `_projectDir` now saved per canvas to localStorage.
+- **Command palette cursor-positioned** — opens near right-click cursor with viewport edge clamping.
+- **Note first-click fix** — clicking an unselected note selects/drags it; text editing only activates on second click (when already selected).
+- **Video card redesign** — video fills card top, footer bar with separator line holds grab-still and delete buttons. Drag from footer.
+- **Audio card resize** — audio cards are now resizable (removed fixed-width override).
+- **Radial menu bookmarks** — dynamic bookmark jump items appended to radial menu at runtime.
+
+---
+
 ## Known Issues / Incomplete Features
 
-- **Project directory not persisted** — `_projectDir` resets on app restart. Should be saved to `store` plugin.
+- **Project directory persisted to localStorage** (fixed v0.7.0) — `_projectDir` now saved/loaded per canvas via `freeflow_projdir_{id}` localStorage key.
 - **Source path lost on canvas restore** — `data-source-path` is serialized in `outerHTML` but not explicitly restored. Needs verification.
 - **File ops browser mock** — `execFileOp` only shows a toast in browser mode; no real I/O until Tauri build.
 - **Rename browser mock** — `renameImgFile` only shows a toast in browser mode.
