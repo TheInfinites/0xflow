@@ -427,7 +427,7 @@ function zoomToFit(){
   applyT();positionSelBar();
 }
 
-const SHAPE_TOOLS = new Set(['rect','ellipse','line','diamond','triangle']);
+const SHAPE_TOOLS = new Set(['rect','ellipse','line']);
 
 function tool(t){
   curTool=t;
@@ -817,8 +817,12 @@ async function pasteClipboard() {
       if (el.classList.contains('note')) bindNote(el);
       else if (el.classList.contains('frame')) bindFrame(el);
       else if (el.classList.contains('img-card')) {
-        el.addEventListener('mousedown', onElemMouseDown);
-        if (item.imgId) el.dataset.imgId = item.imgId;
+        if (item.imgId) {
+          // duplicate the blob under a new id so deleting the original doesn't orphan this copy
+          const newId = await duplicateImgBlob(item.imgId);
+          el.dataset.imgId = newId || item.imgId;
+        }
+        bindImgCard(el);
       } else el.addEventListener('mousedown', onElemMouseDown);
       world.appendChild(el);
       newEls.push(el);

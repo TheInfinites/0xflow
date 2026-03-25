@@ -58,14 +58,19 @@ async function saveImgBlob(blob) {
 
 async function loadImgBlob(id) {
   if (IS_TAURI) {
-    try {
-      const { readFile } = window.__TAURI__.fs;
-      const { join } = window.__TAURI__.path;
-      const dir = await getTauriImagesDir();
-      const path = await join(dir, id + '.png');
-      const data = await readFile(path);
-      return new Blob([data]);
-    } catch { return null; }
+    const { readFile } = window.__TAURI__.fs;
+    const { join } = window.__TAURI__.path;
+    const dir = await getTauriImagesDir();
+    // media_ ids can be .mp4 or .mp3; img_ ids are .png
+    const exts = id.startsWith('media_') ? ['.mp4', '.mp3', '.webm', '.png'] : ['.png'];
+    for (const ext of exts) {
+      try {
+        const path = await join(dir, id + ext);
+        const data = await readFile(path);
+        return new Blob([data]);
+      } catch { /* try next */ }
+    }
+    return null;
   } else {
     const db = await openImgDB();
     return new Promise((res, rej) => {
@@ -75,6 +80,18 @@ async function loadImgBlob(id) {
       req.onerror = () => rej(req.error);
     });
   }
+}
+
+async function duplicateImgBlob(id) {
+  if (!id) return null;
+  try {
+    const blob = await loadImgBlob(id);
+    if (!blob) return null;
+    const newId = await saveImgBlob(blob);
+    // copy cache entry so the new card renders immediately
+    if (blobURLCache[id]) blobURLCache[newId] = blobURLCache[id];
+    return newId;
+  } catch { return null; }
 }
 
 async function deleteImgBlob(id) {
@@ -224,8 +241,8 @@ function makeImgCard(id, url, x, y, w, h, nw, nh) {
 function bindImgCard(card) {
   card.addEventListener('mousedown', e => {
     if (e.target.classList.contains('rh') || e.target.closest('.img-toolbar') || e.target.classList.contains('collapse-btn') || e.target.closest('.collapse-btn')) return;
-    // For video cards: only drag from footer or card border (not from the video element itself)
-    if (card.classList.contains('video-card') && e.target.closest('.vc-video')) return;
+    // For video cards: footer buttons handle themselves; video area drags normally
+    if (card.classList.contains('video-card') && e.target.closest('.vc-btn')) return;
     if (e.button === 2) { startImgRightDrag(e, card); return; }
     onElemMouseDown(e);
   });
@@ -282,6 +299,87 @@ function imgDelete(card) {
   card.remove(); snapshot();
 }
 
+// ── still placement: arrange around the video card without overlapping ──
+function findStillSlot(card, w, h) {
+  const GAP = 20;
+  if (!card._stills) card._stills = [];
+
+  const vx = parseFloat(card.style.left);
+  const vy = parseFloat(card.style.top);
+  const vw = card.offsetWidth;
+  const vh = card.offsetHeight;
+
+  const occupied = [{ x: vx, y: vy, w: vw, h: vh }, ...card._stills];
+
+  function free(x, y) {
+    for (const r of occupied) {
+      if (x < r.x + r.w + GAP && x + w + GAP > r.x &&
+          y < r.y + r.h + GAP && y + h + GAP > r.y) return false;
+    }
+    return true;
+  }
+
+  // Build a grid of candidate positions: rows along right side, then bottom, left, top
+  // Each side generates positions spaced by (still size + gap)
+  const candidates = [];
+  const maxSlots = 20;
+
+  // Right side — row of stills aligned to top of video, expanding right
+  for (let col = 0; col < maxSlots; col++) {
+    const x = vx + vw + GAP + col * (w + GAP);
+    for (let row = 0; row < maxSlots; row++) {
+      candidates.push({ x, y: vy + row * (h + GAP) });
+      if (row > 0) candidates.push({ x, y: vy - row * (h + GAP) });
+    }
+  }
+  // Bottom side
+  for (let row = 0; row < maxSlots; row++) {
+    const y = vy + vh + GAP + row * (h + GAP);
+    for (let col = 0; col < maxSlots; col++) {
+      candidates.push({ x: vx + col * (w + GAP), y });
+      if (col > 0) candidates.push({ x: vx - col * (w + GAP), y });
+    }
+  }
+  // Left side
+  for (let col = 0; col < maxSlots; col++) {
+    const x = vx - w - GAP - col * (w + GAP);
+    for (let row = 0; row < maxSlots; row++) {
+      candidates.push({ x, y: vy + row * (h + GAP) });
+      if (row > 0) candidates.push({ x, y: vy - row * (h + GAP) });
+    }
+  }
+
+  // Sort by a blend of: distance from video + distance from viewport center + jitter
+  // This makes stills prefer the open space the user is looking at
+  const vcx = vx + vw / 2, vcy = vy + vh / 2;
+  const cvR = cv.getBoundingClientRect();
+  const vport = c2w(cvR.left + cvR.width / 2, cvR.top + cvR.height / 2);
+  candidates.sort((a, b) => {
+    const ax = a.x + w/2, ay = a.y + h/2;
+    const bx = b.x + w/2, by = b.y + h/2;
+    const da = (ax - vcx) ** 2 + (ay - vcy) ** 2;
+    const db = (bx - vcx) ** 2 + (by - vcy) ** 2;
+    const va = (ax - vport.x) ** 2 + (ay - vport.y) ** 2;
+    const vb = (bx - vport.x) ** 2 + (by - vport.y) ** 2;
+    // weighted: 40% distance from video, 60% distance from viewport center, plus small jitter
+    const scoreA = 0.4 * da + 0.6 * va + Math.random() * (w * h * 0.1);
+    const scoreB = 0.4 * db + 0.6 * vb + Math.random() * (w * h * 0.1);
+    return scoreA - scoreB;
+  });
+
+  for (const s of candidates) {
+    if (free(s.x, s.y)) {
+      card._stills.push({ x: s.x, y: s.y, w, h });
+      return { x: s.x, y: s.y };
+    }
+  }
+
+  // absolute fallback
+  const pos = { x: vx + vw + GAP, y: vy + card._stills.length * (h + GAP) };
+  card._stills.push({ ...pos, w, h });
+  return pos;
+}
+
 // ── video card ──
 function makeVideoCard(id, url, x, y, w) {
   const card = document.createElement('div');
@@ -290,64 +388,100 @@ function makeVideoCard(id, url, x, y, w) {
   card.dataset.imgId = id;
   card.dataset.mediaType = 'video';
 
-  // Video — fills card width, native controls, pointer-events:none so card drag works
+  // Video — no native controls, fills card width
   const video = document.createElement('video');
   video.src = url;
-  video.controls = true;
+  video.controls = false;
   video.draggable = false;
+  video.loop = false;
   video.className = 'vc-video';
-  // Let mousedown propagate so card drag works; native controls respond to click/pointerup anyway
   card.appendChild(video);
 
-  // Footer bar
+  // ── custom footer controls ──
   const footer = document.createElement('div');
   footer.className = 'vc-footer';
 
-  // Still-grab button
+  // Play/pause button
+  const playBtn = document.createElement('button');
+  playBtn.className = 'vc-btn vc-play';
+  playBtn.title = 'Play / Pause';
+  playBtn.innerHTML = '<svg class="vc-icon-play" viewBox="0 0 16 16" fill="currentColor" stroke="none"><path d="M5.5 3.2a.8.8 0 011.2-.7l6 4.8a.8.8 0 010 1.4l-6 4.8A.8.8 0 015.5 12.8z"/></svg><svg class="vc-icon-pause" viewBox="0 0 16 16" fill="currentColor" stroke="none" style="display:none"><rect x="4" y="3" width="2.5" height="10" rx="1.2"/><rect x="9.5" y="3" width="2.5" height="10" rx="1.2"/></svg>';
+  playBtn.addEventListener('mousedown', e => e.stopPropagation());
+  playBtn.addEventListener('click', e => { e.stopPropagation(); video.paused ? video.play() : video.pause(); });
+
+  // Seek bar
+  const seekBar = document.createElement('input');
+  seekBar.type = 'range'; seekBar.className = 'vc-seek'; seekBar.min = 0; seekBar.max = 1000; seekBar.value = 0; seekBar.step = 1;
+  seekBar.addEventListener('mousedown', e => e.stopPropagation());
+  seekBar.addEventListener('input', () => { if (video.duration) video.currentTime = (seekBar.value / 1000) * video.duration; });
+
+  // Volume button (toggle mute)
+  const volBtn = document.createElement('button');
+  volBtn.className = 'vc-btn vc-vol';
+  volBtn.title = 'Mute / Unmute';
+  volBtn.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h2.5L9 3.5v9L5.5 10H3a.5.5 0 01-.5-.5v-3A.5.5 0 013 6z" fill="currentColor" stroke="none"/><path class="vc-vol-wave" d="M11 6a3 3 0 010 4"/></svg>';
+  volBtn.addEventListener('mousedown', e => e.stopPropagation());
+  volBtn.addEventListener('click', e => { e.stopPropagation(); video.muted = !video.muted; volBtn.classList.toggle('muted', video.muted); });
+
+  // Fullscreen button
+  const fsBtn = document.createElement('button');
+  fsBtn.className = 'vc-btn vc-fs';
+  fsBtn.title = 'Fullscreen';
+  fsBtn.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6V3h3M10.5 3h3v3M13.5 10v3h-3M5.5 13h-3v-3"/></svg>';
+  fsBtn.addEventListener('mousedown', e => e.stopPropagation());
+  fsBtn.addEventListener('click', e => { e.stopPropagation(); video.requestFullscreen && video.requestFullscreen(); });
+
+  // Grab-still button
   const stillBtn = document.createElement('button');
-  stillBtn.className = 'vc-btn video-still-btn';
+  stillBtn.className = 'vc-btn vc-still';
   stillBtn.title = 'Grab still frame as image';
-  stillBtn.innerHTML = '<svg viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="13" height="9" rx="1.5"/><circle cx="7.5" cy="7.5" r="2.5"/><circle cx="7.5" cy="7.5" r="1"/><rect x="5" y="1.5" width="5" height="1.5" rx="0.5" fill="currentColor" stroke="none"/></svg> grab still';
+  stillBtn.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 5.5A1.5 1.5 0 013 4h1.5l1-1.5h5L11.5 4H13a1.5 1.5 0 011.5 1.5v6A1.5 1.5 0 0113 13H3a1.5 1.5 0 01-1.5-1.5z"/><circle cx="8" cy="8.5" r="2"/></svg>';
   stillBtn.addEventListener('mousedown', e => e.stopPropagation());
   stillBtn.addEventListener('click', async e => {
     e.stopPropagation();
-    const vid = card.querySelector('video');
-    if (!vid || vid.readyState < 2) { showToast('Video not ready'); return; }
+    if (!video || video.readyState < 2) { showToast('Video not ready'); return; }
     try {
       const c = document.createElement('canvas');
-      c.width = vid.videoWidth; c.height = vid.videoHeight;
-      c.getContext('2d').drawImage(vid, 0, 0);
+      c.width = video.videoWidth; c.height = video.videoHeight;
+      c.getContext('2d').drawImage(video, 0, 0);
       const blob = await new Promise(res => c.toBlob(res, 'image/png'));
       const sid = await saveImgBlob(blob);
       let srcPath = null;
-      if (IS_TAURI && typeof _projectDir !== 'undefined' && _projectDir) {
-        srcPath = await saveImgToProjectDir(blob, sid);
-      }
-      const dataURL = await new Promise((res, rej) => { const r = new FileReader(); r.onload = e => res(e.target.result); r.onerror = rej; r.readAsDataURL(blob); });
+      if (IS_TAURI && typeof _projectDir !== 'undefined' && _projectDir) srcPath = await saveImgToProjectDir(blob, sid);
+      const dataURL = await new Promise((res, rej) => { const r = new FileReader(); r.onload = ev => res(ev.target.result); r.onerror = rej; r.readAsDataURL(blob); });
       blobURLCache[sid] = dataURL;
-      const cx = parseFloat(card.style.left) + card.offsetWidth + 20;
-      const cy = parseFloat(card.style.top);
-      const dispW = Math.min(vid.videoWidth, 600);
-      const dispH = Math.round(vid.videoHeight * (dispW / vid.videoWidth));
+      const dispW = Math.min(video.videoWidth, 600);
+      const dispH = Math.round(video.videoHeight * (dispW / video.videoWidth));
+      const { x: cx, y: cy } = findStillSlot(card, dispW, dispH);
       snapshot();
-      const imgCard = makeImgCard(sid, dataURL, cx, cy, dispW, dispH, vid.videoWidth, vid.videoHeight);
+      const imgCard = makeImgCard(sid, dataURL, cx, cy, dispW, dispH, video.videoWidth, video.videoHeight);
       if (srcPath) imgCard.dataset.sourcePath = srcPath;
       showToast('Still captured');
     } catch(err) { console.error('still grab error', err); showToast('Could not grab still'); }
   });
 
-  // Delete button
-  const delBtn = document.createElement('button');
-  delBtn.className = 'vc-btn vc-btn-danger';
-  delBtn.title = 'Delete';
-  delBtn.innerHTML = '<svg viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><polyline points="3,4 12,4"/><path d="M5 4V3h5v1"/><path d="M4 4l.8 8h6.4L12 4"/></svg>';
-  delBtn.addEventListener('mousedown', e => e.stopPropagation());
-  delBtn.addEventListener('click', e => { e.stopPropagation(); imgDelete(card); });
+  // Click on video body to toggle play/pause — but not if it was a drag
+  video.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    const sx = e.clientX, sy = e.clientY;
+    let moved = false;
+    const onMove = m => { if (Math.abs(m.clientX-sx) > 3 || Math.abs(m.clientY-sy) > 3) moved = true; };
+    document.addEventListener('mousemove', onMove);
+    video.addEventListener('click', ce => { if (moved) { ce.stopPropagation(); ce.preventDefault(); } else { video.paused ? video.play() : video.pause(); } document.removeEventListener('mousemove', onMove); }, { once: true });
+  });
 
+  // Sync play/pause icon and seek bar
+  video.addEventListener('play',  () => { playBtn.querySelector('.vc-icon-play').style.display='none'; playBtn.querySelector('.vc-icon-pause').style.display=''; });
+  video.addEventListener('pause', () => { playBtn.querySelector('.vc-icon-play').style.display=''; playBtn.querySelector('.vc-icon-pause').style.display='none'; });
+  video.addEventListener('ended', () => { playBtn.querySelector('.vc-icon-play').style.display=''; playBtn.querySelector('.vc-icon-pause').style.display='none'; });
+  video.addEventListener('timeupdate', () => { if (video.duration) seekBar.value = (video.currentTime / video.duration) * 1000; });
+  video.addEventListener('loadedmetadata', () => { seekBar.value = 0; });
+
+  footer.appendChild(seekBar);
+  footer.appendChild(volBtn);
+  footer.appendChild(fsBtn);
   footer.appendChild(stillBtn);
-  footer.appendChild(delBtn);
-  // footer is the drag handle — don't stopPropagation so card drag works
-  // but stop it on buttons so they don't trigger drag
+  footer.appendChild(playBtn);
   card.appendChild(footer);
 
   makeResizeHandles(card, 160, 100, (el, nw) => {
@@ -537,6 +671,70 @@ async function placeMediaBlob(blob, wx, wy, sourcePath, mediaType) {
   else if (!IS_TAURI) card.dataset.sourcePath = 'D:\\art\\test\\' + (blob.name || id);
 }
 
+function bindVideoCard(card) {
+  const video = card.querySelector('.vc-video');
+  const playBtn = card.querySelector('.vc-play');
+  const seekBar = card.querySelector('.vc-seek');
+  const volBtn  = card.querySelector('.vc-vol');
+  const fsBtn   = card.querySelector('.vc-fs');
+  const stillBtn = card.querySelector('.vc-still');
+  if (!video) return;
+
+  video.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    const sx = e.clientX, sy = e.clientY;
+    let moved = false;
+    const onMove = m => { if (Math.abs(m.clientX-sx) > 3 || Math.abs(m.clientY-sy) > 3) moved = true; };
+    document.addEventListener('mousemove', onMove);
+    video.addEventListener('click', ce => { if (moved) { ce.stopPropagation(); ce.preventDefault(); } else { video.paused ? video.play() : video.pause(); } document.removeEventListener('mousemove', onMove); }, { once: true });
+  });
+
+  if (playBtn) {
+    playBtn.addEventListener('mousedown', e => e.stopPropagation());
+    playBtn.addEventListener('click', e => { e.stopPropagation(); video.paused ? video.play() : video.pause(); });
+    video.addEventListener('play',  () => { playBtn.querySelector('.vc-icon-play').style.display='none'; playBtn.querySelector('.vc-icon-pause').style.display=''; });
+    video.addEventListener('pause', () => { playBtn.querySelector('.vc-icon-play').style.display=''; playBtn.querySelector('.vc-icon-pause').style.display='none'; });
+    video.addEventListener('ended', () => { playBtn.querySelector('.vc-icon-play').style.display=''; playBtn.querySelector('.vc-icon-pause').style.display='none'; });
+  }
+  if (seekBar) {
+    seekBar.addEventListener('mousedown', e => e.stopPropagation());
+    seekBar.addEventListener('input', () => { if (video.duration) video.currentTime = (seekBar.value / 1000) * video.duration; });
+    video.addEventListener('timeupdate', () => { if (video.duration) seekBar.value = (video.currentTime / video.duration) * 1000; });
+  }
+  if (volBtn) {
+    volBtn.addEventListener('mousedown', e => e.stopPropagation());
+    volBtn.addEventListener('click', e => { e.stopPropagation(); video.muted = !video.muted; volBtn.classList.toggle('muted', video.muted); });
+  }
+  if (fsBtn) {
+    fsBtn.addEventListener('mousedown', e => e.stopPropagation());
+    fsBtn.addEventListener('click', e => { e.stopPropagation(); video.requestFullscreen && video.requestFullscreen(); });
+  }
+  if (stillBtn) {
+    stillBtn.addEventListener('mousedown', e => e.stopPropagation());
+    stillBtn.addEventListener('click', async e => {
+      e.stopPropagation();
+      if (!video || video.readyState < 2) { showToast('Video not ready'); return; }
+      try {
+        const c = document.createElement('canvas');
+        c.width = video.videoWidth; c.height = video.videoHeight;
+        c.getContext('2d').drawImage(video, 0, 0);
+        const blob = await new Promise(res => c.toBlob(res, 'image/png'));
+        const sid = await saveImgBlob(blob);
+        let srcPath = null;
+        if (IS_TAURI && typeof _projectDir !== 'undefined' && _projectDir) srcPath = await saveImgToProjectDir(blob, sid);
+        const dataURL = await new Promise((res, rej) => { const r = new FileReader(); r.onload = ev => res(ev.target.result); r.onerror = rej; r.readAsDataURL(blob); });
+        blobURLCache[sid] = dataURL;
+        const dispW = Math.min(video.videoWidth, 600); const dispH = Math.round(video.videoHeight * (dispW / video.videoWidth));
+        const { x: cx, y: cy } = findStillSlot(card, dispW, dispH);
+        snapshot();
+        const imgCard = makeImgCard(sid, dataURL, cx, cy, dispW, dispH, video.videoWidth, video.videoHeight);
+        if (srcPath) imgCard.dataset.sourcePath = srcPath;
+        showToast('Still captured');
+      } catch(err) { console.error('still grab error', err); showToast('Could not grab still'); }
+    });
+  }
+}
+
 // ── restore img cards after undo/redo/load ──
 async function restoreImgCards() {
   const cards = document.querySelectorAll('.img-card[data-img-id]');
@@ -567,6 +765,7 @@ async function restoreImgCards() {
         }
       }
     }
+    if (mediaType === 'video') bindVideoCard(card);
     bindImgCard(card);
     const rh = card.querySelector('.img-resize');
     if (rh) rh.addEventListener('mousedown', e => startImgResize(e, card));
@@ -1102,8 +1301,6 @@ const CMD_ACTIONS = [
   { id: 'draw-card',  label: 'Draw Canvas',       shortcut: 'W',      section: 'create', icon: '<rect x="2" y="2" width="11" height="11" rx="1.5" fill="none"/><path d="M4 10l2-3 2 2 2-4"/>', fn: () => addDrawCard() },
   { id: 'rect',       label: 'Rectangle',         shortcut: 'R',      section: 'tools',  icon: '<rect x="2.5" y="3.5" width="10" height="8" rx="1" fill="none"/>', fn: () => tool('rect') },
   { id: 'ellipse',    label: 'Ellipse',           shortcut: 'L',      section: 'tools',  icon: '<ellipse cx="7.5" cy="7.5" rx="5" ry="3.5" fill="none"/>', fn: () => tool('ellipse') },
-  { id: 'diamond',    label: 'Diamond',           shortcut: '',       section: 'tools',  icon: '<polygon points="7.5,2 13,7.5 7.5,13 2,7.5" fill="none"/>', fn: () => tool('diamond') },
-  { id: 'triangle',   label: 'Triangle',          shortcut: '',       section: 'tools',  icon: '<polygon points="7.5,2.5 13,12.5 2,12.5" fill="none"/>', fn: () => tool('triangle') },
   { id: 'arrow',      label: 'Connect',           shortcut: 'A',      section: 'tools',  icon: '<line x1="3" y1="12" x2="12" y2="3"/><polyline points="7,3 12,3 12,8"/>', fn: () => tool('arrow') },
   { id: 'eraser',     label: 'Eraser',            shortcut: 'E',      section: 'tools',  icon: '<path d="M3 11l5-7 4 4-5 7z"/><line x1="2" y1="13" x2="13" y2="13"/>', fn: () => tool('eraser') },
   { id: 'brainstorm', label: 'Brainstorm',        shortcut: 'B',      section: 'ai',     icon: '<path d="M7.5 2a4 4 0 014 4c0 1.5-.8 2.8-2 3.5V11h-4V9.5C4.3 8.8 3.5 7.5 3.5 6a4 4 0 014-4z"/><line x1="5.5" y1="13" x2="9.5" y2="13"/>', fn: () => toggleBrainstorm() },
