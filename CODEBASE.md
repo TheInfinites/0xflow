@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.7.1**
+> Current version: **v0.7.2**
 
 ---
 
@@ -132,7 +132,7 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 | `px`, `py` | `number` | Canvas pan offset in pixels |
 | `selected` | `Set<Element>` | Currently selected DOM elements |
 | `curTool` | `string` | Active tool: select/pen/eraser/arrow/text/frame/rect/ellipse/diamond/triangle |
-| `SHAPE_TOOLS` | `Set<string>` | Shape tool names: rect, ellipse, line, diamond, triangle |
+| `SHAPE_TOOLS` | `Set<string>` | Shape tool names: rect, ellipse, line (diamond and triangle removed) |
 | `shapeDrawing` | `boolean` | Whether a shape is currently being drawn |
 | `shapeStart` | `{x,y}|null` | World coords of shape drag start |
 | `shapeStrokeColor` | `string` | Current shape stroke color |
@@ -277,6 +277,8 @@ Typing `/` (or `/query`) opens a floating menu filtered by block type label. Cli
 | `makeDrawCard(x, y, w?, h?)` | Create an embedded draw-canvas card (.note.draw-card). Header toolbar: pen/rect/ellipse/eraser, size select, color picker, clear. Canvas surface is an HTML5 `<canvas>`. Resizable; drawing preserved across resizes via temp canvas copy. |
 | `bindDrawCard(d)` | Wire up drawing interactions on a draw-card (pen strokes, shape preview, eraser). Called on create and on restore. |
 | `addDrawCard(x?, y?)` | Convenience wrapper — centers draw-card in current viewport. |
+| `findStillSlot(card, w, h)` | Find a non-overlapping position for a grabbed still frame. Candidates sorted by blend of distance-from-video + distance-from-viewport-center + jitter, so stills spread naturally into visible space. |
+| `bindVideoCard(card)` | Rebind all custom video controls after canvas restore. |
 | `serializeDrawCard(d)` | Returns `canvas.toDataURL("image/png")` for persistence in canvas state. |
 | `restoreDrawCardData(d, dataURL)` | Draws saved dataURL back onto the dc-canvas after restore. |
 | `makeTodo(x, y, title?)` | Create a to-do card with checkboxes and progress bar |
@@ -291,7 +293,7 @@ Typing `/` (or `/query`) opens a floating menu filtered by block type label. Cli
 | `placeImagesGrid(blobs, sourcePaths)` | Resolve all image dimensions, compute √n column grid, centre on viewport, place all in one snapshot |
 | `placeImageBlob(blob, wx?, wy?)` | Full pipeline: save blob → place on canvas. Used by both image and PDF import. |
 | `placeMediaBlob(blob, mediaType, wx?, wy?)` | Same pipeline for video/audio blobs; uses `makeVideoCard` / `makeAudioCard` based on `mediaType`. Passes `blob.name` to `makeAudioCard` for title/format display. |
-| `makeVideoCard(id, url, x, y, w)` | Create a video card. Video fills top, footer bar below separator holds controls. Drag from footer; video controls are native (no overlay). |
+| `makeVideoCard(id, url, x, y, w)` | Create a video card. Video fills top (no native controls). Custom footer: seek bar, mute, fullscreen, grab-still, play/pause. Click video to play/pause; drag anywhere on card to move. `bindVideoCard(card)` rebinds controls after restore. |
 | `makeAudioCard(id, url, x, y, filename)` | Create an audio card with custom player controls. Single horizontal row: art square (44×44px) left, title + format label (e.g. "MP3") right, play button far right. Title extracted from `filename` (underscores/hyphens→spaces), extension shown as format label. |
 | `bindAudioCard(card)` | Rebind custom audio player controls (scrubber, play button, timestamps) after canvas restore. Called in `restoreCanvas` for `img-card[data-media-type=audio]` elements. |
 | `buildShapePath(type, x1, y1, x2, y2)` | Returns SVG path `d` string for rect/ellipse/diamond/triangle/line given two corner points. |
@@ -741,6 +743,13 @@ gh release create v{version} \
 ---
 
 ## Changes in v0.7.x
+
+### v0.7.2
+- **Diamond and triangle shape tools removed** from toolbar, CMD palette, and SHAPE_TOOLS set.
+- **Video card custom controls** — no native browser controls. Footer has: seek bar, mute toggle, fullscreen, grab-still (camera), play/pause. Click video body to play/pause (suppressed on drag). Drag works from anywhere on card.
+- **Grab-still smart placement** — stills placed in nearest free slot around the video, weighted toward viewport center with jitter. No overlaps.
+- **Copy-paste image persistence fix** — pasted img-cards get a new `imgId` via `duplicateImgBlob()` so deleting the original does not orphan the copy.
+- **Video restore fix** — `loadImgBlob` now tries `.mp4/.mp3/.webm` extensions for `media_*` ids in Tauri (was always trying `.png`).
 
 ### v0.7.1
 - **Video card drag fix** — video controls are now fully native (no overlay div). Drag works from the footer bar. `bindImgCard` skips mousedown events targeting `.vc-video` so native video controls are not intercepted.
