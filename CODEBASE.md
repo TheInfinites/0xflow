@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.5.0**
+> Current version: **v0.6.0**
 
 ---
 
@@ -554,6 +554,12 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 
 ## File Operations Feature
 
+### Changes in v0.6.0
+- **Light mode note text fix** — notes keep dark background (`#2a2a2a`) in light mode; added `.note`-scoped CSS overrides so all block editor text (paragraph, quote, code, bullet, divider) stays white inside notes.
+- **Sel-bar drop shadow removed** — `box-shadow` stripped from `#sel-bar`.
+- **Font size input** — `#sel-font-size` changed from a `<span>` to `<input type="number">`. User can type a value directly; Enter or blur commits it. Clamped to 8–48px. Spinner arrows hidden. Canvas keyboard shortcuts suppressed while focused.
+- **Batch rename** — new modal and context menu item for renaming multiple selected files at once. See **Batch Rename Modal** above.
+
 ### Import Panel (v0.5.0)
 - The old **"image"** button in the top bar has been replaced with an **"↑ import"** button (`#import-btn`)
 - `toggleImportPanel(e)` / `closeImportPanel()` — toggle a floating panel positioned below the button, right-aligned; closes on outside click
@@ -576,9 +582,21 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 
 ### Context Menu (`#img-ctx-menu`)
 - Mac Finder-style linear list, appears at cursor on right-drag release
-- **"Rename file"** — renames the file on disk using `window.__TAURI__.fs.rename`; updates `card.dataset.sourcePath` on success. Browser mock: shows toast only.
+- **"Rename file"** (`#ictx-rename-file`) — shown when a single img-card is right-dragged; renames on disk via `window.__TAURI__.fs.rename`; updates `card.dataset.sourcePath`. Browser mock: toast only.
+- **"Batch rename"** (`#ictx-batch-rename`) — shown instead of "rename file" when 2+ img-cards are selected; opens the batch rename modal.
 - **"Move / Copy to folder"** — hover opens cascading folder browser
 - Closes on: left-click anywhere on canvas or outside, `closeAllFolderUI()`
+
+### Batch Rename Modal (`#batch-rename-overlay`)
+- Opens via the **"batch rename"** context menu item when 2+ img-cards with source paths are selected
+- Fields: **Find** (substring), **Replace**, **Prefix** (prepended to base name), **Suffix** (appended before extension)
+- Live preview list shows all old → new filenames; unchanged files shown dimmed as `(no change)`
+- Counter badge (`#brm-count`) shows how many files will actually change
+- Confirm button disabled until ≥1 file would change
+- **`applyBatchPattern(name, find, replace, prefix, suffix)`** — splits on last `.`, applies find/replace on base, prepends prefix, appends suffix, reassembles with extension
+- **`openBatchRenameModal()`** — filters `selected` for img-cards with source paths, wires inputs, runs Tauri `fs.rename` loop (browser mock: updates `dataset.sourcePath` only)
+- Keyboard: Escape cancels, Enter confirms (when not focused on a button)
+- All event listeners cleaned up on close via `cleanup()`
 
 ### Cascading Folder Browser (`#folder-browser`)
 - `position:fixed; inset:0; pointer-events:none` container — only `.fb-panel` children get `pointer-events:auto` (so clicks pass through to canvas)
