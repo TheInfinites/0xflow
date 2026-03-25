@@ -955,12 +955,19 @@ body.light .be-todo-cb:hover { border-color: rgba(0,0,0,0.4); }
   flex-shrink: 0;
 }
 /* light mode overrides */
+/* Notes have dark bg (#2a2a2a) even in light mode, so keep text light inside them */
 body.light .block-editor { color: rgba(0,0,0,0.85); }
+body.light .note .block-editor { color: rgba(255,255,255,0.85); }
 body.light .be-block:empty::before { color: rgba(0,0,0,0.25); }
+body.light .note .be-block:empty::before { color: rgba(255,255,255,0.25); }
 body.light .be-block[data-type="quote"] { border-left-color: rgba(0,0,0,0.2); color: rgba(0,0,0,0.5); }
+body.light .note .be-block[data-type="quote"] { border-left-color: rgba(255,255,255,0.2); color: rgba(255,255,255,0.5); }
 body.light .be-block[data-type="code"] { background: rgba(0,0,0,0.05); color: rgba(0,0,0,0.75); }
+body.light .note .be-block[data-type="code"] { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.75); }
 body.light .be-block[data-type="bullet"]::before { color: rgba(0,0,0,0.35); }
+body.light .note .be-block[data-type="bullet"]::before { color: rgba(255,255,255,0.35); }
 body.light .be-block[data-type="divider"] { border-top-color: rgba(0,0,0,0.12); }
+body.light .note .be-block[data-type="divider"] { border-top-color: rgba(255,255,255,0.12); }
 body.light .be-slash-menu { background: #fff; border-color: rgba(0,0,0,0.1); }
 body.light .be-slash-item { color: rgba(0,0,0,0.7); }
 body.light .be-slash-item:hover, body.light .be-slash-item.active { background: rgba(0,0,0,0.06); color: #000; }
@@ -1539,7 +1546,7 @@ body.on-canvas.light .todo-progress { background: rgba(255,255,255,0.06); }
   position: fixed; z-index: 2000; display: none; align-items: center; gap: 0;
   background: rgba(10,10,10,0.95); backdrop-filter: blur(20px);
   border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 4px 5px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.5); transform: translateX(-50%); pointer-events: all;
+  transform: translateX(-50%); pointer-events: all;
 }
 #sel-bar.show { display: flex; }
 .sel-btn { height: 26px; padding: 0 9px; background: none; border: 1px solid transparent; border-radius: 0; font-family: 'Geist Mono', monospace; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255,255,255,0.35); cursor: pointer; transition: all 0.1s; white-space: nowrap; display: flex; align-items: center; gap: 4px; }
@@ -1550,6 +1557,14 @@ body.on-canvas.light .todo-progress { background: rgba(255,255,255,0.06); }
 .sel-count { font-family: 'Geist Mono', monospace; font-size: 9px; color: rgba(255,255,255,0.25); padding: 0 8px; border-right: 1px solid rgba(255,255,255,0.08); letter-spacing: 0.08em; }
 .sel-icon-btn { padding: 0 5px !important; min-width: 24px; }
 .sel-icon-btn svg { width: 12px !important; height: 12px !important; }
+#sel-font-size {
+  font-family: 'Geist Mono', monospace; font-size: 9px; color: rgba(255,255,255,0.55);
+  background: transparent; border: none; outline: none; width: 26px; text-align: center;
+  padding: 0 2px; -moz-appearance: textfield;
+}
+#sel-font-size::-webkit-inner-spin-button,
+#sel-font-size::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+#sel-font-size:focus { color: rgba(255,255,255,0.9); background: rgba(255,255,255,0.06); border-radius: 3px; }
 
 /* image cards */
 .img-card {

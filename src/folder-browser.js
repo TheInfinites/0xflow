@@ -274,6 +274,20 @@ function openImgCtxMenu(x, y, card) {
   fb.classList.remove('show');
   fb.innerHTML = '';
 
+  // Show batch-rename when multiple img-cards are selected
+  const selImgCards = [...selected].filter(e => e.classList && e.classList.contains('img-card') && e.dataset.sourcePath);
+  const batchBtn = document.getElementById('ictx-batch-rename');
+  const singleBtn = document.getElementById('ictx-rename-file');
+  if (batchBtn && singleBtn) {
+    if (selImgCards.length > 1) {
+      batchBtn.style.display = 'flex';
+      singleBtn.style.display = 'none';
+    } else {
+      batchBtn.style.display = 'none';
+      singleBtn.style.display = 'flex';
+    }
+  }
+
   // Position — keep on screen
   imgCtxMenu.style.left = '0px';
   imgCtxMenu.style.top = '0px';
@@ -324,6 +338,11 @@ imgCtxMenu.addEventListener('mouseover', e => {
 
 document.getElementById('ictx-rename-file')?.addEventListener('click', () => {
   if (_ctxCard) renameImgFile(_ctxCard);
+});
+
+document.getElementById('ictx-batch-rename')?.addEventListener('click', () => {
+  closeAllFolderUI();
+  openBatchRenameModal();
 });
 
 // Close when clicking toolbar, bar, or anywhere outside cv/menu/folder-browser
@@ -437,6 +456,131 @@ function buildNewFolderRow(dirPath, panel, depth) {
   });
   row.appendChild(btn);
   return row;
+}
+
+// ══════════════════════════════════════════
+// BATCH RENAME
+// ══════════════════════════════════════════
+
+function applyBatchPattern(name, find, replace, prefix, suffix) {
+  // Split name into base and extension
+  const dotIdx = name.lastIndexOf('.');
+  const base = dotIdx > 0 ? name.slice(0, dotIdx) : name;
+  const ext  = dotIdx > 0 ? name.slice(dotIdx) : '';
+
+  let result = base;
+  if (find) result = result.split(find).join(replace);
+  if (prefix) result = prefix + result;
+  if (suffix) result = result + suffix;
+  return result + ext;
+}
+
+function openBatchRenameModal() {
+  const cards = [...selected].filter(e => e.classList && e.classList.contains('img-card') && e.dataset.sourcePath);
+  if (cards.length < 2) { showToast('Select 2+ files to batch rename'); return; }
+
+  const overlay  = document.getElementById('batch-rename-overlay');
+  const findEl   = document.getElementById('brm-find');
+  const replaceEl = document.getElementById('brm-replace');
+  const prefixEl = document.getElementById('brm-prefix');
+  const suffixEl = document.getElementById('brm-suffix');
+  const listEl   = document.getElementById('brm-preview-list');
+  const countEl  = document.getElementById('brm-count');
+  const confirmBtn = document.getElementById('brm-confirm');
+
+  // Reset inputs
+  findEl.value = replaceEl.value = prefixEl.value = suffixEl.value = '';
+
+  function updatePreview() {
+    const find    = findEl.value;
+    const replace = replaceEl.value;
+    const prefix  = prefixEl.value;
+    const suffix  = suffixEl.value;
+
+    listEl.innerHTML = '';
+    let changedCount = 0;
+    for (const card of cards) {
+      const oldName = card.dataset.sourcePath.split(/[\\/]/).pop();
+      const newName = applyBatchPattern(oldName, find, replace, prefix, suffix);
+      const unchanged = newName === oldName;
+      if (!unchanged) changedCount++;
+
+      const row = document.createElement('div');
+      row.className = 'brm-preview-row';
+      row.innerHTML = `<span class="brm-old">${oldName}</span><span class="brm-arrow">→</span><span class="brm-new${unchanged ? ' unchanged' : ''}">${unchanged ? '(no change)' : newName}</span>`;
+      listEl.appendChild(row);
+    }
+    countEl.textContent = `${changedCount}/${cards.length}`;
+    confirmBtn.disabled = changedCount === 0;
+  }
+
+  [findEl, replaceEl, prefixEl, suffixEl].forEach(el => el.addEventListener('input', updatePreview));
+  updatePreview();
+  overlay.classList.add('show');
+  findEl.focus();
+
+  async function doRename() {
+    const find    = findEl.value;
+    const replace = replaceEl.value;
+    const prefix  = prefixEl.value;
+    const suffix  = suffixEl.value;
+
+    let ok = 0, fail = 0;
+    for (const card of cards) {
+      const sourcePath = card.dataset.sourcePath;
+      const oldName = sourcePath.split(/[\\/]/).pop();
+      const newName = applyBatchPattern(oldName, find, replace, prefix, suffix);
+      if (newName === oldName) continue;
+      const dir = sourcePath.replace(/[\\/][^\\/]+$/, '');
+      const sep = sourcePath.includes('\\') ? '\\' : '/';
+      const newPath = dir + sep + newName;
+      if (IS_TAURI) {
+        try {
+          const { rename } = window.__TAURI__.fs;
+          await rename(sourcePath, newPath);
+          card.dataset.sourcePath = newPath;
+          ok++;
+        } catch (e) {
+          console.error('Batch rename failed:', e);
+          fail++;
+        }
+      } else {
+        card.dataset.sourcePath = newPath;
+        ok++;
+      }
+    }
+    overlay.classList.remove('show');
+    cleanup();
+    if (fail === 0) showToast(`Renamed ${ok} file${ok !== 1 ? 's' : ''}`);
+    else showToast(`${ok} renamed, ${fail} failed`);
+  }
+
+  function onKey(e) {
+    if (e.key === 'Escape') { cancel(); }
+    if (e.key === 'Enter' && e.target.tagName !== 'BUTTON' && !confirmBtn.disabled) { doRename(); }
+  }
+
+  function cleanup() {
+    [findEl, replaceEl, prefixEl, suffixEl].forEach(el => el.removeEventListener('input', updatePreview));
+    confirmBtn.removeEventListener('click', doRename);
+    document.getElementById('brm-cancel').removeEventListener('click', cancel);
+    overlay.removeEventListener('mousedown', outsideClick);
+    document.removeEventListener('keydown', onKey);
+  }
+
+  function cancel() {
+    overlay.classList.remove('show');
+    cleanup();
+  }
+
+  function outsideClick(e) {
+    if (e.target === overlay) cancel();
+  }
+
+  confirmBtn.addEventListener('click', doRename);
+  document.getElementById('brm-cancel').addEventListener('click', cancel);
+  overlay.addEventListener('mousedown', outsideClick);
+  document.addEventListener('keydown', onKey);
 }
 
 async function buildFolderPanel(dirPath, depth, x, y) {

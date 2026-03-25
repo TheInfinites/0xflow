@@ -488,7 +488,7 @@ function updateSelBar(){
         const titleInput=noteEls[0].querySelector('.todo-title');
         const sz=be?parseInt(be.style.fontSize)||13:titleInput?parseInt(titleInput.style.fontSize)||13:(parseInt(noteEls[0].dataset.fontSize)||13);
         const fontSizeEl=document.getElementById('sel-font-size');
-        if(fontSizeEl) fontSizeEl.textContent=sz;
+        if(fontSizeEl) fontSizeEl.value=sz;
       }
     }
   }else{selBar.classList.remove('show');document.body.classList.remove('has-sel-bar');}
@@ -513,8 +513,36 @@ function changeSelectedFontSize(delta){
   const firstTitle=firstEl.querySelector('.todo-title');
   const sz=firstBe?parseInt(firstBe.style.fontSize)||13:firstTitle?parseInt(firstTitle.style.fontSize)||13:(parseInt(firstEl.dataset.fontSize)||13);
   const fontSizeEl=document.getElementById('sel-font-size');
-  if(fontSizeEl) fontSizeEl.textContent=sz;
+  if(fontSizeEl) fontSizeEl.value=sz;
 }
+
+// Wire up direct font-size input
+(function(){
+  const fontSizeEl=document.getElementById('sel-font-size');
+  if(!fontSizeEl) return;
+  function applyInput(){
+    const v=Math.min(48,Math.max(8,parseInt(fontSizeEl.value)||13));
+    fontSizeEl.value=v;
+    const noteEls=[...selected].filter(e=>e.classList&&e.classList.contains('note'));
+    if(!noteEls.length) return;
+    snapshot();
+    noteEls.forEach(el=>{
+      const be=el.querySelector('.block-editor');
+      const titleInput=el.querySelector('.todo-title');
+      if(be) be.style.fontSize=v+'px';
+      if(titleInput) titleInput.style.fontSize=v+'px';
+      el.querySelectorAll('.todo-item-text').forEach(s=>s.style.fontSize=v+'px');
+      el.dataset.fontSize=v;
+    });
+  }
+  fontSizeEl.addEventListener('change', applyInput);
+  fontSizeEl.addEventListener('keydown', e=>{
+    if(e.key==='Enter'){ e.preventDefault(); applyInput(); fontSizeEl.blur(); }
+    // prevent canvas keyboard shortcuts while typing
+    e.stopPropagation();
+  });
+  fontSizeEl.addEventListener('focus', ()=>fontSizeEl.select());
+})();
 
 function getElBounds(el) {
   const l = parseFloat(el.style.left)||0;

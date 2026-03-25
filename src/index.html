@@ -312,7 +312,7 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
     <!-- font size control — shown when notes are selected -->
     <div id="sel-font-row" style="display:none;align-items:center;gap:0;">
       <button class="sel-btn sel-icon-btn" title="Decrease font size" onclick="changeSelectedFontSize(-1)"><svg viewBox="0 0 12 12"><line x1="2" y1="6" x2="10" y2="6"/></svg></button>
-      <span id="sel-font-size" style="font-family:'Geist Mono',monospace;font-size:9px;color:rgba(255,255,255,0.35);padding:0 4px;min-width:24px;text-align:center;">13</span>
+      <input id="sel-font-size" type="number" min="8" max="48" value="13">
       <button class="sel-btn sel-icon-btn" title="Increase font size" onclick="changeSelectedFontSize(1)"><svg viewBox="0 0 12 12"><line x1="6" y1="2" x2="6" y2="10"/><line x1="2" y1="6" x2="10" y2="6"/></svg></button>
       <div class="sel-divider"></div>
     </div>
@@ -573,6 +573,12 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
     <svg viewBox="0 0 12 12" style="width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:1.4;stroke-linecap:round;"><path d="M2 9l1-1 5-5 1 1-5 5-2 1z"/><line x1="7" y1="3" x2="9" y2="5"/></svg>
     rename file
   </div>
+  <div class="ictx-item" id="ictx-batch-rename" style="display:none">
+    <svg viewBox="0 0 12 12" style="width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:1.4;stroke-linecap:round;">
+      <path d="M1 3h10M1 6h7M1 9h5"/><path d="M9 7l1-1 1.5 1.5-2 2L8 8l1-1z"/>
+    </svg>
+    batch rename
+  </div>
   <div class="ictx-sep"></div>
   <div class="ictx-item" data-action="move-copy">
     <span class="ictx-icon">
@@ -597,6 +603,39 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
 </div>
 
 <div id="folder-browser"></div>
+
+<!-- ══════════════════════════════════════════
+     BATCH RENAME MODAL
+══════════════════════════════════════════ -->
+<div id="batch-rename-overlay">
+  <div id="batch-rename-modal">
+    <div id="brm-title">batch rename</div>
+    <div id="brm-fields">
+      <div class="brm-row">
+        <label class="brm-label">find</label>
+        <input class="brm-input" id="brm-find" placeholder="text to find (leave empty to skip)" spellcheck="false">
+      </div>
+      <div class="brm-row">
+        <label class="brm-label">replace</label>
+        <input class="brm-input" id="brm-replace" placeholder="replacement text" spellcheck="false">
+      </div>
+      <div class="brm-row">
+        <label class="brm-label">prefix</label>
+        <input class="brm-input" id="brm-prefix" placeholder="add before filename" spellcheck="false">
+      </div>
+      <div class="brm-row">
+        <label class="brm-label">suffix</label>
+        <input class="brm-input" id="brm-suffix" placeholder="add before extension" spellcheck="false">
+      </div>
+    </div>
+    <div id="brm-preview-label">preview <span id="brm-count"></span></div>
+    <div id="brm-preview-list"></div>
+    <div id="brm-actions">
+      <button id="brm-cancel">cancel</button>
+      <button id="brm-confirm">rename</button>
+    </div>
+  </div>
+</div>
 
 <link rel="stylesheet" href="./folder-browser.css">
 
