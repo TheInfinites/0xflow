@@ -224,6 +224,8 @@ function makeImgCard(id, url, x, y, w, h, nw, nh) {
 function bindImgCard(card) {
   card.addEventListener('mousedown', e => {
     if (e.target.classList.contains('rh') || e.target.closest('.img-toolbar') || e.target.classList.contains('collapse-btn') || e.target.closest('.collapse-btn')) return;
+    // For video cards: only drag from footer or card border (not from the video element itself)
+    if (card.classList.contains('video-card') && e.target.closest('.vc-video')) return;
     if (e.button === 2) { startImgRightDrag(e, card); return; }
     onElemMouseDown(e);
   });
@@ -284,45 +286,28 @@ function imgDelete(card) {
 function makeVideoCard(id, url, x, y, w) {
   const card = document.createElement('div');
   card.className = 'img-card video-card';
-  card.style.cssText = `left:${x}px;top:${y}px;width:${w+12}px`;
+  card.style.cssText = `left:${x}px;top:${y}px;width:${w}px`;
   card.dataset.imgId = id;
   card.dataset.mediaType = 'video';
 
+  // Video — fills card width, native controls, pointer-events:none so card drag works
   const video = document.createElement('video');
-  video.src = url; video.controls = true; video.style.width = w+'px';
-  video.style.cssText += 'display:block;max-width:100%;pointer-events:none;';
+  video.src = url;
+  video.controls = true;
   video.draggable = false;
+  video.className = 'vc-video';
+  // Let mousedown propagate so card drag works; native controls respond to click/pointerup anyway
   card.appendChild(video);
 
-  // Transparent drag-handle overlay — sits above the video, lets mousedown
-  // propagate for dragging. Click passes through to video controls via pointer-events toggle.
-  const vidOverlay = document.createElement('div');
-  vidOverlay.className = 'video-drag-overlay';
-  vidOverlay.style.cssText = 'position:absolute;inset:0;z-index:1;cursor:grab;';
-  vidOverlay.addEventListener('mousedown', e => {
-    // Let the card's bindImgCard handler deal with it
-    // (it will call onElemMouseDown for dragging)
-  });
-  vidOverlay.addEventListener('dblclick', e => {
-    // Double-click: pass control to video by temporarily removing overlay
-    vidOverlay.style.pointerEvents = 'none';
-    video.style.pointerEvents = 'auto';
-    video.focus();
-    const restore = () => {
-      vidOverlay.style.pointerEvents = '';
-      video.style.pointerEvents = 'none';
-      document.removeEventListener('mousedown', restore);
-    };
-    setTimeout(() => document.addEventListener('mousedown', restore), 0);
-  });
-  card.appendChild(vidOverlay);
+  // Footer bar
+  const footer = document.createElement('div');
+  footer.className = 'vc-footer';
 
-  // Still-grab button — appears when video is paused
+  // Still-grab button
   const stillBtn = document.createElement('button');
-  stillBtn.className = 'video-still-btn';
-  stillBtn.title = 'Grab still as image';
-  stillBtn.innerHTML = '<svg viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="13" height="9" rx="1.5"/><circle cx="7.5" cy="7.5" r="2.5"/><circle cx="7.5" cy="7.5" r="1"/><rect x="5" y="1.5" width="5" height="1.5" rx="0.5" fill="currentColor" stroke="none"/></svg>';
-  stillBtn.style.cssText = 'position:absolute;bottom:8px;right:8px;z-index:5;width:28px;height:28px;border-radius:50%;background:rgba(0,0,0,0.7);border:1px solid rgba(255,255,255,0.2);color:rgba(255,255,255,0.8);cursor:pointer;display:none;align-items:center;justify-content:center;padding:0;';
+  stillBtn.className = 'vc-btn video-still-btn';
+  stillBtn.title = 'Grab still frame as image';
+  stillBtn.innerHTML = '<svg viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="13" height="9" rx="1.5"/><circle cx="7.5" cy="7.5" r="2.5"/><circle cx="7.5" cy="7.5" r="1"/><rect x="5" y="1.5" width="5" height="1.5" rx="0.5" fill="currentColor" stroke="none"/></svg> grab still';
   stillBtn.addEventListener('mousedown', e => e.stopPropagation());
   stillBtn.addEventListener('click', async e => {
     e.stopPropagation();
@@ -333,42 +318,40 @@ function makeVideoCard(id, url, x, y, w) {
       c.width = vid.videoWidth; c.height = vid.videoHeight;
       c.getContext('2d').drawImage(vid, 0, 0);
       const blob = await new Promise(res => c.toBlob(res, 'image/png'));
-      const id = await saveImgBlob(blob);
+      const sid = await saveImgBlob(blob);
       let srcPath = null;
       if (IS_TAURI && typeof _projectDir !== 'undefined' && _projectDir) {
-        srcPath = await saveImgToProjectDir(blob, id);
+        srcPath = await saveImgToProjectDir(blob, sid);
       }
       const dataURL = await new Promise((res, rej) => { const r = new FileReader(); r.onload = e => res(e.target.result); r.onerror = rej; r.readAsDataURL(blob); });
-      blobURLCache[id] = dataURL;
+      blobURLCache[sid] = dataURL;
       const cx = parseFloat(card.style.left) + card.offsetWidth + 20;
       const cy = parseFloat(card.style.top);
       const dispW = Math.min(vid.videoWidth, 600);
       const dispH = Math.round(vid.videoHeight * (dispW / vid.videoWidth));
       snapshot();
-      const imgCard = makeImgCard(id, dataURL, cx, cy, dispW, dispH, vid.videoWidth, vid.videoHeight);
+      const imgCard = makeImgCard(sid, dataURL, cx, cy, dispW, dispH, vid.videoWidth, vid.videoHeight);
       if (srcPath) imgCard.dataset.sourcePath = srcPath;
       showToast('Still captured');
     } catch(err) { console.error('still grab error', err); showToast('Could not grab still'); }
   });
-  card.appendChild(stillBtn);
 
-  // Show/hide still button based on video play state
-  video.addEventListener('pause', () => { stillBtn.style.display = 'flex'; });
-  video.addEventListener('play', () => { stillBtn.style.display = 'none'; });
-  video.addEventListener('ended', () => { stillBtn.style.display = 'flex'; });
+  // Delete button
+  const delBtn = document.createElement('button');
+  delBtn.className = 'vc-btn vc-btn-danger';
+  delBtn.title = 'Delete';
+  delBtn.innerHTML = '<svg viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><polyline points="3,4 12,4"/><path d="M5 4V3h5v1"/><path d="M4 4l.8 8h6.4L12 4"/></svg>';
+  delBtn.addEventListener('mousedown', e => e.stopPropagation());
+  delBtn.addEventListener('click', e => { e.stopPropagation(); imgDelete(card); });
 
-  const tb = document.createElement('div'); tb.className = 'img-toolbar';
-  tb.innerHTML = `<button class="img-tb-btn danger" title="delete" onclick="imgDelete(this.closest('.img-card'))">delete</button>`;
-  tb.addEventListener('mousedown', e => e.stopPropagation());
-  card.appendChild(tb);
+  footer.appendChild(stillBtn);
+  footer.appendChild(delBtn);
+  // footer is the drag handle — don't stopPropagation so card drag works
+  // but stop it on buttons so they don't trigger drag
+  card.appendChild(footer);
 
-  const collapseBtn = makeCollapseBtn(card, () => { const sp=card.dataset.sourcePath||card.dataset.imgId||''; return sp.split(/[\\/]/).pop(); });
-  card.appendChild(collapseBtn);
-
-  makeResizeHandles(card, 120, 80, (el, nw) => {
-    const vid = el.querySelector('video');
-    if(vid) vid.style.width = (nw-12)+'px';
-    // Video height is driven by aspect ratio — clear explicit height
+  makeResizeHandles(card, 160, 100, (el, nw) => {
+    el.style.width = nw + 'px';
     requestAnimationFrame(() => { el.style.height = ''; });
   });
 
