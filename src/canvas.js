@@ -70,6 +70,7 @@ async function loadCanvasState(id){
   }
   if(!raw) raw=store.get('freeflow_canvas_'+id);
   loadViewBookmarks(id);
+  loadProjectDir();
   if(!raw) return;
   try{
     const parsed = JSON.parse(raw);
@@ -149,8 +150,12 @@ function serializeCanvas(){
       htmlStr=clone.outerHTML;
     }
     const item = {html:htmlStr};
+    // persist draw-card canvas data
+    if(el.classList.contains('draw-card')) {
+      item.drawData = serializeDrawCard(el);
+    }
     // persist block editor content
-    if(el.classList.contains('note') && !el.classList.contains('ai-note') && !el.classList.contains('todo-card')) {
+    if(el.classList.contains('note') && !el.classList.contains('ai-note') && !el.classList.contains('todo-card') && !el.classList.contains('draw-card')) {
       item.blocks = getEditorBlocks(el);
     }
     // persist AI note conversation history
@@ -192,7 +197,19 @@ function restoreCanvas(state){
   const tmp=document.createElement('div'); tmp.innerHTML=items.map(i=>(i&&i.html)||'').join('');
   [...tmp.children].forEach((el, i)=>{
     world.appendChild(el);
-    if(el.classList.contains('note')) {
+    if(el.classList.contains('draw-card')) {
+      bindNote(el);
+      bindDrawCard(el);
+      makeResizeHandles(el, 160, 120, (card, nw, nh) => {
+        const c = card.querySelector('.dc-canvas'); if(!c) return;
+        const tmp2 = document.createElement('canvas'); tmp2.width=c.width; tmp2.height=c.height;
+        tmp2.getContext('2d').drawImage(c,0,0);
+        c.width=Math.max(100,nw-12); c.height=Math.max(80,nh-38);
+        c.getContext('2d').drawImage(tmp2,0,0);
+      });
+      addRelHandle(el);
+      if(items[i] && items[i].drawData) restoreDrawCardData(el, items[i].drawData);
+    } else if(el.classList.contains('note')) {
       bindNote(el);
       // migrate old textarea-based notes or init block editor
       if(!el.classList.contains('ai-note') && !el.classList.contains('todo-card')) {
@@ -244,7 +261,7 @@ function restoreCanvas(state){
       }
     }
     else if(el.classList.contains('frame')) { bindFrame(el); addRelHandle(el); }
-    else if(el.classList.contains('img-card')){ bindImgCard(el); el.querySelectorAll('.rh').forEach(rh=>{ const dir=rh.className.replace('rh rh-',''); rh.addEventListener('mousedown',e=>startEdgeResize(e,el,dir,60,60,(card,nw)=>{ const imgEl=card.querySelector('img'); const nwMax=parseInt(card.dataset.nw)||99999; if(imgEl) imgEl.style.width=Math.min(nw-12,nwMax)+'px'; })); }); addRelHandle(el); const cp=el.querySelector('.conn-port'); if(cp) cp.addEventListener('mousedown',e=>{e.stopPropagation();startConnDrag(e,el);}); if(el.dataset.mediaType==='audio') bindAudioCard(el); }
+    else if(el.classList.contains('img-card')){ bindImgCard(el); el.querySelectorAll('.rh').forEach(rh=>{ const dir=rh.className.replace('rh rh-',''); rh.addEventListener('mousedown',e=>startEdgeResize(e,el,dir,60,60,(card,nw)=>{ const imgEl=card.querySelector('img'); const vidEl=card.querySelector('video'); const nwMax=parseInt(card.dataset.nw)||99999; if(imgEl) imgEl.style.width=Math.min(nw-12,nwMax)+'px'; if(vidEl){ vidEl.style.width=(nw-12)+'px'; requestAnimationFrame(()=>{ card.style.height=''; }); } const body=card.querySelector('.ac-body'); if(body) body.style.width=(nw-12)+'px'; })); }); addRelHandle(el); const cp=el.querySelector('.conn-port'); if(cp) cp.addEventListener('mousedown',e=>{e.stopPropagation();startConnDrag(e,el);}); if(el.dataset.mediaType==='audio') bindAudioCard(el); if(el.dataset.mediaType==='video'){ const overlay=el.querySelector('.video-drag-overlay'); if(!overlay){ const vo=document.createElement('div'); vo.className='video-drag-overlay'; vo.style.cssText='position:absolute;inset:0;z-index:1;cursor:grab;'; el.appendChild(vo); } } }
     else if(el.classList.contains('lbl')) { bindLabel(el); addRelHandle(el); }
     restoredEls.push(el);
   });
@@ -410,13 +427,17 @@ function zoomToFit(){
   applyT();positionSelBar();
 }
 
+const SHAPE_TOOLS = new Set(['rect','ellipse','line','diamond','triangle']);
+
 function tool(t){
   curTool=t;
   document.querySelectorAll('.t[id^="tb-"]').forEach(b=>b.classList.remove('on'));
   const el=document.getElementById('tb-'+t);if(el)el.classList.add('on');
   stTool.textContent=t; syncInkPointerEvents();
-  cv.style.cursor=t==='text'?'text':t==='pen'||t==='eraser'||t==='frame'?'crosshair':'';
+  const isCross = t==='pen'||t==='eraser'||t==='frame'||SHAPE_TOOLS.has(t);
+  cv.style.cursor=t==='text'?'text':isCross?'crosshair':'';
   document.getElementById('pen-row').classList.toggle('show',t==='pen');
+  document.getElementById('shape-row').classList.toggle('show', SHAPE_TOOLS.has(t));
   if(t!=='select') clearSelection();
   // when switching away from text tool, lock all labels to non-editable
   if(t!=='text') {
@@ -846,7 +867,7 @@ function onStrokeMouseDown(e){
   }
 }
 function syncInkPointerEvents(){
-  if(curTool==='pen'||curTool==='eraser'){ink.style.pointerEvents='all';ink.classList.add('live');}
+  if(curTool==='pen'||curTool==='eraser'||SHAPE_TOOLS.has(curTool)){ink.style.pointerEvents='all';ink.classList.add('live');}
   else if(curTool==='select'){ink.style.pointerEvents='all';ink.classList.remove('live');}
   else{ink.style.pointerEvents='none';ink.classList.remove('live');}
 }
@@ -856,6 +877,7 @@ cv.addEventListener('mousedown',e=>{
   closeMenu();
   if(imgCtxMenu.classList.contains('show')) closeAllFolderUI();
   if(curTool==='arrow'){arrowSt=c2w(e.clientX,e.clientY);return;}
+  if(SHAPE_TOOLS.has(curTool)){ shapeStart=c2w(e.clientX,e.clientY); shapeDrawing=true; e.preventDefault(); return; }
   if(curTool==='pen'||curTool==='eraser') return;
   if(curTool==='text') return;
   if(curTool==='frame'){
@@ -1651,6 +1673,161 @@ function updateTodoProgress(card) {
   }));
 }
 
+// ── Drawing Canvas Node ──────────────────────────────────────────
+function makeDrawCard(x, y, w, h) {
+  w = w || 320; h = h || 240;
+  const d = document.createElement('div');
+  d.className = 'note draw-card';
+  d.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px;`;
+
+  // header / toolbar
+  const hdr = document.createElement('div'); hdr.className = 'draw-card-hdr';
+  const penBtn = document.createElement('button'); penBtn.className = 'dc-tool on'; penBtn.dataset.tool='pen'; penBtn.title='Pen'; penBtn.innerHTML='<svg viewBox="0 0 12 12"><path d="M2 10L7 3l2 2-5 7z"/></svg>';
+  const rectBtn = document.createElement('button'); rectBtn.className = 'dc-tool'; rectBtn.dataset.tool='rect'; rectBtn.title='Rectangle'; rectBtn.innerHTML='<svg viewBox="0 0 12 12"><rect x="1.5" y="2.5" width="9" height="7" rx="0.8" fill="none"/></svg>';
+  const ellBtn = document.createElement('button'); ellBtn.className = 'dc-tool'; ellBtn.dataset.tool='ellipse'; ellBtn.title='Ellipse'; ellBtn.innerHTML='<svg viewBox="0 0 12 12"><ellipse cx="6" cy="6" rx="4.5" ry="3" fill="none"/></svg>';
+  const erasBtn = document.createElement('button'); erasBtn.className = 'dc-tool'; erasBtn.dataset.tool='eraser'; erasBtn.title='Eraser'; erasBtn.innerHTML='<svg viewBox="0 0 12 12"><path d="M2 9l4-6 3 3-4 6z"/></svg>';
+  const clrBtn = document.createElement('button'); clrBtn.className = 'dc-clear'; clrBtn.title='Clear'; clrBtn.textContent='clear';
+  const szSel = document.createElement('select'); szSel.className='dc-sz';
+  [['1','thin'],['2','med'],['4','thick'],['8','bold']].forEach(([v,l])=>{ const o=document.createElement('option'); o.value=v; o.textContent=l; szSel.appendChild(o); });
+  szSel.value='2';
+  const colIn = document.createElement('input'); colIn.type='color'; colIn.className='dc-color'; colIn.value='#ffffff'; colIn.title='Color';
+
+  [penBtn,rectBtn,ellBtn,erasBtn].forEach(btn=>{
+    btn.addEventListener('mousedown',e=>e.stopPropagation());
+    btn.addEventListener('click',e=>{ e.stopPropagation(); d._dcTool=btn.dataset.tool; d.querySelectorAll('.dc-tool').forEach(b=>b.classList.toggle('on',b===btn)); });
+  });
+  clrBtn.addEventListener('mousedown',e=>e.stopPropagation());
+  clrBtn.addEventListener('click',e=>{ e.stopPropagation(); const cvs=d.querySelector('.dc-canvas'); if(cvs){ cvs.getContext('2d').clearRect(0,0,cvs.width,cvs.height); snapshot(); }});
+  szSel.addEventListener('mousedown',e=>e.stopPropagation());
+  szSel.addEventListener('change',()=>{ d._dcSize=parseFloat(szSel.value)||2; });
+  colIn.addEventListener('mousedown',e=>e.stopPropagation());
+  colIn.addEventListener('input',()=>{ d._dcColor=colIn.value; });
+
+  hdr.appendChild(penBtn); hdr.appendChild(rectBtn); hdr.appendChild(ellBtn); hdr.appendChild(erasBtn);
+  hdr.appendChild(szSel); hdr.appendChild(colIn); hdr.appendChild(clrBtn);
+  d.appendChild(hdr);
+
+  // canvas surface
+  const cvs = document.createElement('canvas'); cvs.className='dc-canvas';
+  cvs.width = w-12; cvs.height = h-38;
+  cvs.style.cssText='display:block;border-radius:4px;cursor:crosshair;touch-action:none;';
+  d.appendChild(cvs);
+
+  d._dcTool = 'pen'; d._dcSize = 2; d._dcColor = '#ffffff';
+
+  bindNote(d);
+  bindDrawCard(d);
+  makeResizeHandles(d, 160, 120, (el, nw, nh) => {
+    const c = el.querySelector('.dc-canvas'); if(!c) return;
+    // preserve existing drawing
+    const tmp = document.createElement('canvas');
+    tmp.width = c.width; tmp.height = c.height;
+    tmp.getContext('2d').drawImage(c, 0, 0);
+    c.width = Math.max(100, nw-12);
+    c.height = Math.max(80, nh-38);
+    c.getContext('2d').drawImage(tmp, 0, 0);
+  });
+  addRelHandle(d);
+  world.appendChild(d);
+  d.style.opacity='0'; d.style.transform='scale(0.95)';
+  d.style.transition='opacity 0.18s,transform 0.18s';
+  requestAnimationFrame(()=>{ d.style.opacity='1'; d.style.transform='scale(1)'; });
+  snapshot();
+  return d;
+}
+
+function bindDrawCard(d) {
+  const cvs = d.querySelector('.dc-canvas'); if(!cvs) return;
+  let dcDrawing=false, dcPath=null, dcStartX=0, dcStartY=0, dcSnap=null;
+
+  function dcPos(e){
+    const r=cvs.getBoundingClientRect();
+    return { x:(e.clientX-r.left), y:(e.clientY-r.top) };
+  }
+
+  cvs.addEventListener('mousedown',e=>{
+    if(e.button!==0) return;
+    e.stopPropagation(); e.preventDefault();
+    dcDrawing=true;
+    const p=dcPos(e); dcStartX=p.x; dcStartY=p.y;
+    const ctx=cvs.getContext('2d');
+    ctx.strokeStyle = d._dcTool==='eraser'?'#000':d._dcColor;
+    ctx.lineWidth = d._dcSize||2;
+    ctx.lineCap='round'; ctx.lineJoin='round';
+    if(d._dcTool==='pen'||d._dcTool==='eraser'){
+      if(d._dcTool==='eraser'){ ctx.globalCompositeOperation='destination-out'; }
+      else { ctx.globalCompositeOperation='source-over'; }
+      ctx.beginPath(); ctx.moveTo(p.x,p.y); dcPath=ctx;
+    }
+    if(d._dcTool==='rect'||d._dcTool==='ellipse'){
+      // snapshot canvas for live preview restore
+      dcSnap=document.createElement('canvas'); dcSnap.width=cvs.width; dcSnap.height=cvs.height;
+      dcSnap.getContext('2d').drawImage(cvs,0,0);
+    }
+  });
+
+  cvs.addEventListener('mousemove',e=>{
+    if(!dcDrawing) return;
+    e.stopPropagation();
+    const p=dcPos(e);
+    const ctx=cvs.getContext('2d');
+    if(d._dcTool==='pen'||d._dcTool==='eraser'){
+      ctx.lineTo(p.x,p.y); ctx.stroke();
+    } else if(d._dcTool==='rect'||d._dcTool==='ellipse'){
+      // restore snapshot and redraw preview
+      ctx.clearRect(0,0,cvs.width,cvs.height);
+      ctx.drawImage(dcSnap,0,0);
+      ctx.globalCompositeOperation='source-over';
+      ctx.strokeStyle=d._dcColor; ctx.lineWidth=d._dcSize||2;
+      ctx.beginPath();
+      if(d._dcTool==='rect'){
+        ctx.strokeRect(dcStartX,dcStartY,p.x-dcStartX,p.y-dcStartY);
+      } else {
+        const rx=Math.abs(p.x-dcStartX)/2, ry=Math.abs(p.y-dcStartY)/2;
+        const ex=(dcStartX+p.x)/2, ey=(dcStartY+p.y)/2;
+        ctx.ellipse(ex,ey,rx,ry,0,0,Math.PI*2);
+        ctx.stroke();
+      }
+    }
+  });
+
+  function dcEnd(e){
+    if(!dcDrawing) return;
+    dcDrawing=false;
+    const ctx=cvs.getContext('2d');
+    ctx.globalCompositeOperation='source-over';
+    dcPath=null; dcSnap=null;
+    snapshot();
+  }
+
+  cvs.addEventListener('mouseup', dcEnd);
+  cvs.addEventListener('mouseleave', dcEnd);
+
+  // prevent card drag only when clicking the drawing canvas itself
+  d.addEventListener('mousedown',e=>{
+    if(e.target===cvs) e.stopPropagation();
+  });
+}
+
+function serializeDrawCard(d) {
+  const cvs = d.querySelector('.dc-canvas');
+  return cvs ? cvs.toDataURL('image/png') : null;
+}
+
+function restoreDrawCardData(d, dataURL) {
+  if(!dataURL) return;
+  const cvs = d.querySelector('.dc-canvas'); if(!cvs) return;
+  const img = new Image();
+  img.onload = () => cvs.getContext('2d').drawImage(img,0,0);
+  img.src = dataURL;
+}
+
+function addDrawCard(x, y) {
+  const r = cv.getBoundingClientRect();
+  const p = c2w(r.left+r.width/2, r.top+r.height/2);
+  makeDrawCard(x!==undefined?x:p.x-160, y!==undefined?y:p.y-120);
+}
+
 function bindTodoCard(card) {
   bindNote(card);
   card._todoItems = card._todoItems || [];
@@ -2230,9 +2407,80 @@ function bindLabel(div){
   });
 }
 
+// ── Shape drawing ──────────────────────────────────────────────
+let shapeDrawing = false, shapeStart = null, shapeTempG = null, shapeStrokeColor = '';
+let shapeStrokeW = 2, shapeFillColor = 'none', shapeFillEnabled = false;
+
+function setShapeStrokeWidth(v){ shapeStrokeW = parseFloat(v)||2; }
+function setShapeFill(v){ shapeFillColor = v; }
+function setShapeFillEnabled(on){ shapeFillEnabled = on; }
+
+function _shapeStroke(){ return isLight?'rgba(0,0,0,0.65)':'rgba(255,255,255,0.65)'; }
+function _shapeFillVal(){ return shapeFillEnabled ? shapeFillColor : 'none'; }
+
+function buildShapePath(type, x1, y1, x2, y2){
+  const minX=Math.min(x1,x2), minY=Math.min(y1,y2);
+  const maxX=Math.max(x1,x2), maxY=Math.max(y1,y2);
+  const cx=(minX+maxX)/2, cy=(minY+maxY)/2;
+  const w=maxX-minX, h=maxY-minY;
+  if(type==='rect') return `M ${minX} ${minY} L ${maxX} ${minY} L ${maxX} ${maxY} L ${minX} ${maxY} Z`;
+  if(type==='ellipse'){
+    const rx=w/2, ry=h/2;
+    return `M ${cx-rx} ${cy} A ${rx} ${ry} 0 1 0 ${cx+rx} ${cy} A ${rx} ${ry} 0 1 0 ${cx-rx} ${cy} Z`;
+  }
+  if(type==='line') return `M ${x1} ${y1} L ${x2} ${y2}`;
+  if(type==='diamond') return `M ${cx} ${minY} L ${maxX} ${cy} L ${cx} ${maxY} L ${minX} ${cy} Z`;
+  if(type==='triangle') return `M ${cx} ${minY} L ${maxX} ${maxY} L ${minX} ${maxY} Z`;
+  return '';
+}
+
+function makeShapeEl(d, stroke, fill, sw){
+  const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+  g.setAttribute('class','stroke-wrap shape-wrap');
+  g.dataset.shapeStrokeW = sw||2;
+  const hit = document.createElementNS('http://www.w3.org/2000/svg','path');
+  hit.setAttribute('d',d); hit.setAttribute('stroke','transparent');
+  hit.setAttribute('stroke-width','14'); hit.setAttribute('fill','none');
+  hit.setAttribute('class','stroke-hit');
+  const vis = document.createElementNS('http://www.w3.org/2000/svg','path');
+  vis.setAttribute('d',d); vis.setAttribute('stroke',stroke);
+  vis.setAttribute('stroke-width', String(sw||2)); vis.setAttribute('fill',fill);
+  vis.setAttribute('stroke-linecap','round'); vis.setAttribute('stroke-linejoin','round');
+  g.appendChild(hit); g.appendChild(vis);
+  return g;
+}
+
+document.addEventListener('mousemove', e => {
+  if(!shapeDrawing || !shapeStart) return;
+  const p = c2w(e.clientX,e.clientY);
+  const d = buildShapePath(curTool, shapeStart.x, shapeStart.y, p.x, p.y);
+  if(!shapeTempG){
+    shapeStrokeColor = _shapeStroke();
+    shapeTempG = makeShapeEl(d, shapeStrokeColor, _shapeFillVal(), shapeStrokeW);
+    strokes.appendChild(shapeTempG);
+  } else {
+    shapeTempG.querySelectorAll('path').forEach(p2 => p2.setAttribute('d',d));
+  }
+});
+
+document.addEventListener('mouseup', e => {
+  if(!shapeDrawing) return;
+  shapeDrawing = false;
+  if(shapeTempG && shapeStart){
+    const p = c2w(e.clientX,e.clientY);
+    const dx = p.x-shapeStart.x, dy = p.y-shapeStart.y;
+    if(Math.abs(dx)+Math.abs(dy) < 6){
+      shapeTempG.remove(); shapeTempG=null; shapeStart=null; return;
+    }
+    shapeTempG.addEventListener('mousedown', onStrokeMouseDown);
+    snapshot();
+  }
+  shapeTempG = null; shapeStart = null;
+});
+
 ink.addEventListener('mousedown',e=>{
   if(curTool==='select') return;
-  if(curTool!=='pen'&&curTool!=='eraser') return;
+  if(!SHAPE_TOOLS.has(curTool) && curTool!=='pen'&&curTool!=='eraser') return;
   drawing=true;const p=c2w(e.clientX,e.clientY);
   if(curTool==='pen'){
     curStrokeG=document.createElementNS('http://www.w3.org/2000/svg','g');curStrokeG.setAttribute('class','stroke-wrap');

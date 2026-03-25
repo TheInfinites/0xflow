@@ -15,6 +15,26 @@ async function getTauriImagesDir() {
   return _tauriImagesDir;
 }
 
+// Save an image blob to {projectDir}/images/ and return its path (or null)
+async function saveImgToProjectDir(blob, id) {
+  if (!IS_TAURI || typeof _projectDir === 'undefined' || !_projectDir) return null;
+  try {
+    const { writeFile, mkdir } = window.__TAURI__.fs;
+    const { join } = window.__TAURI__.path;
+    const imagesDir = await join(_projectDir, 'images');
+    try { await mkdir(imagesDir, { recursive: true }); } catch {}
+    const ext = blob.type === 'image/jpeg' ? '.jpg' : '.png';
+    const filename = id + ext;
+    const filePath = await join(imagesDir, filename);
+    const buf = await blob.arrayBuffer();
+    await writeFile(filePath, new Uint8Array(buf));
+    return filePath;
+  } catch (e) {
+    console.warn('saveImgToProjectDir failed:', e);
+    return null;
+  }
+}
+
 async function saveImgBlob(blob) {
   const id = 'img_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
   if (IS_TAURI) {
@@ -132,10 +152,16 @@ async function placeImageBlob(blob, wx, wy, sourcePath) {
     wx = p.x - dispW / 2; wy = p.y - dispH / 2;
   }
 
+  // Save to {projectDir}/images/ if available and no explicit source path
+  let resolvedSourcePath = sourcePath;
+  if (!resolvedSourcePath && IS_TAURI && typeof _projectDir !== 'undefined' && _projectDir) {
+    resolvedSourcePath = await saveImgToProjectDir(blob, id);
+  }
+
   snapshot();
   const card = makeImgCard(id, dataURL, wx, wy, dispW, dispH, nw, nh);
   // In browser mock mode, assign a fake source path so file-op UI can be tested
-  if (sourcePath) card.dataset.sourcePath = sourcePath;
+  if (resolvedSourcePath) card.dataset.sourcePath = resolvedSourcePath;
   else if (!IS_TAURI) card.dataset.sourcePath = 'D:\\art\\test\\' + (blob.name || id + '.png');
 }
 
@@ -264,9 +290,72 @@ function makeVideoCard(id, url, x, y, w) {
 
   const video = document.createElement('video');
   video.src = url; video.controls = true; video.style.width = w+'px';
-  video.style.display = 'block'; video.draggable = false;
-  video.addEventListener('mousedown', e => e.stopPropagation());
+  video.style.cssText += 'display:block;max-width:100%;pointer-events:none;';
+  video.draggable = false;
   card.appendChild(video);
+
+  // Transparent drag-handle overlay — sits above the video, lets mousedown
+  // propagate for dragging. Click passes through to video controls via pointer-events toggle.
+  const vidOverlay = document.createElement('div');
+  vidOverlay.className = 'video-drag-overlay';
+  vidOverlay.style.cssText = 'position:absolute;inset:0;z-index:1;cursor:grab;';
+  vidOverlay.addEventListener('mousedown', e => {
+    // Let the card's bindImgCard handler deal with it
+    // (it will call onElemMouseDown for dragging)
+  });
+  vidOverlay.addEventListener('dblclick', e => {
+    // Double-click: pass control to video by temporarily removing overlay
+    vidOverlay.style.pointerEvents = 'none';
+    video.style.pointerEvents = 'auto';
+    video.focus();
+    const restore = () => {
+      vidOverlay.style.pointerEvents = '';
+      video.style.pointerEvents = 'none';
+      document.removeEventListener('mousedown', restore);
+    };
+    setTimeout(() => document.addEventListener('mousedown', restore), 0);
+  });
+  card.appendChild(vidOverlay);
+
+  // Still-grab button — appears when video is paused
+  const stillBtn = document.createElement('button');
+  stillBtn.className = 'video-still-btn';
+  stillBtn.title = 'Grab still as image';
+  stillBtn.innerHTML = '<svg viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="13" height="9" rx="1.5"/><circle cx="7.5" cy="7.5" r="2.5"/><circle cx="7.5" cy="7.5" r="1"/><rect x="5" y="1.5" width="5" height="1.5" rx="0.5" fill="currentColor" stroke="none"/></svg>';
+  stillBtn.style.cssText = 'position:absolute;bottom:8px;right:8px;z-index:5;width:28px;height:28px;border-radius:50%;background:rgba(0,0,0,0.7);border:1px solid rgba(255,255,255,0.2);color:rgba(255,255,255,0.8);cursor:pointer;display:none;align-items:center;justify-content:center;padding:0;';
+  stillBtn.addEventListener('mousedown', e => e.stopPropagation());
+  stillBtn.addEventListener('click', async e => {
+    e.stopPropagation();
+    const vid = card.querySelector('video');
+    if (!vid || vid.readyState < 2) { showToast('Video not ready'); return; }
+    try {
+      const c = document.createElement('canvas');
+      c.width = vid.videoWidth; c.height = vid.videoHeight;
+      c.getContext('2d').drawImage(vid, 0, 0);
+      const blob = await new Promise(res => c.toBlob(res, 'image/png'));
+      const id = await saveImgBlob(blob);
+      let srcPath = null;
+      if (IS_TAURI && typeof _projectDir !== 'undefined' && _projectDir) {
+        srcPath = await saveImgToProjectDir(blob, id);
+      }
+      const dataURL = await new Promise((res, rej) => { const r = new FileReader(); r.onload = e => res(e.target.result); r.onerror = rej; r.readAsDataURL(blob); });
+      blobURLCache[id] = dataURL;
+      const cx = parseFloat(card.style.left) + card.offsetWidth + 20;
+      const cy = parseFloat(card.style.top);
+      const dispW = Math.min(vid.videoWidth, 600);
+      const dispH = Math.round(vid.videoHeight * (dispW / vid.videoWidth));
+      snapshot();
+      const imgCard = makeImgCard(id, dataURL, cx, cy, dispW, dispH, vid.videoWidth, vid.videoHeight);
+      if (srcPath) imgCard.dataset.sourcePath = srcPath;
+      showToast('Still captured');
+    } catch(err) { console.error('still grab error', err); showToast('Could not grab still'); }
+  });
+  card.appendChild(stillBtn);
+
+  // Show/hide still button based on video play state
+  video.addEventListener('pause', () => { stillBtn.style.display = 'flex'; });
+  video.addEventListener('play', () => { stillBtn.style.display = 'none'; });
+  video.addEventListener('ended', () => { stillBtn.style.display = 'flex'; });
 
   const tb = document.createElement('div'); tb.className = 'img-toolbar';
   tb.innerHTML = `<button class="img-tb-btn danger" title="delete" onclick="imgDelete(this.closest('.img-card'))">delete</button>`;
@@ -279,6 +368,8 @@ function makeVideoCard(id, url, x, y, w) {
   makeResizeHandles(card, 120, 80, (el, nw) => {
     const vid = el.querySelector('video');
     if(vid) vid.style.width = (nw-12)+'px';
+    // Video height is driven by aspect ratio — clear explicit height
+    requestAnimationFrame(() => { el.style.height = ''; });
   });
 
   const connPort = document.createElement('div'); connPort.className = 'conn-port';
@@ -337,6 +428,11 @@ function makeAudioCard(id, url, x, y, filename) {
     </div>`);
 
   bindAudioCard(card);
+
+  makeResizeHandles(card, 200, 80, (el, nw) => {
+    const body = el.querySelector('.ac-body');
+    if (body) body.style.width = (nw - 12) + 'px';
+  });
 
   const tb = document.createElement('div'); tb.className = 'img-toolbar';
   tb.innerHTML = `<button class="img-tb-btn danger" title="delete" onclick="imgDelete(this.closest('.img-card'))">delete</button>`;
@@ -562,6 +658,116 @@ document.addEventListener('mousedown', e => {
   }
 });
 
+// ── Shared canvas export/import ──
+async function exportSharedCanvas() {
+  if (!activeProjectId) { showToast('No active canvas'); return; }
+  showToast('Bundling canvas…');
+  const state = serializeCanvas();
+  state.viewport = { scale, px, py };
+  // collect all blob dataURLs referenced by img-cards
+  const blobs = {};
+  document.querySelectorAll('.img-card[data-img-id]').forEach(card => {
+    const id = card.dataset.imgId;
+    if (id && blobURLCache[id]) blobs[id] = blobURLCache[id];
+  });
+  // also load any that aren't cached yet
+  const uncached = [...document.querySelectorAll('.img-card[data-img-id]')]
+    .map(c => c.dataset.imgId).filter(id => id && !blobs[id]);
+  for (const id of uncached) {
+    const blob = await loadImgBlob(id);
+    if (blob) {
+      blobs[id] = await new Promise((res, rej) => {
+        const r = new FileReader(); r.onload = e => res(e.target.result); r.onerror = rej; r.readAsDataURL(blob);
+      });
+    }
+  }
+  state.shared = true;
+  state.blobs = blobs;
+  const json = JSON.stringify(state);
+  if (IS_TAURI) {
+    try {
+      const { save } = window.__TAURI__.dialog;
+      const p = projects.find(x => x.id === activeProjectId);
+      const defName = (p ? p.name.replace(/[^a-z0-9_\-]/gi, '_') : 'canvas') + '_shared.json';
+      const filePath = await save({ filters: [{ name: 'Shared Canvas', extensions: ['json'] }], defaultPath: defName });
+      if (!filePath) return;
+      await window.__TAURI__.fs.writeTextFile(filePath, json);
+      showToast('Exported: ' + filePath.split(/[\\/]/).pop());
+    } catch (e) { console.error('exportSharedCanvas', e); showToast('Export failed'); }
+  } else {
+    // browser fallback: download
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'canvas_shared.json'; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    showToast('Shared canvas downloaded');
+  }
+}
+
+async function importSharedCanvas() {
+  if (IS_TAURI) {
+    try {
+      const { open } = window.__TAURI__.dialog;
+      const filePath = await open({ filters: [{ name: 'Canvas', extensions: ['json'] }] });
+      if (!filePath) return;
+      const raw = await window.__TAURI__.fs.readTextFile(filePath);
+      await _applySharedCanvas(raw);
+    } catch (e) { console.error('importSharedCanvas', e); showToast('Import failed'); }
+  } else {
+    // browser fallback
+    const input = document.createElement('input'); input.type = 'file'; input.accept = '.json';
+    input.addEventListener('change', async () => {
+      const f = input.files[0]; if (!f) return;
+      const raw = await f.text();
+      await _applySharedCanvas(raw);
+    });
+    input.click();
+  }
+}
+
+async function _applySharedCanvas(raw) {
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { showToast('Invalid canvas file'); return; }
+  if (!parsed || typeof parsed !== 'object') { showToast('Invalid canvas file'); return; }
+  if (!parsed.shared) { showToast('Not a shared canvas file'); return; }
+  // inject blobs into cache so restoreImgCards can find them
+  if (parsed.blobs) {
+    Object.entries(parsed.blobs).forEach(([id, dataURL]) => { blobURLCache[id] = dataURL; });
+  }
+  // create a new project for this shared canvas
+  const newId = 'proj_' + Date.now();
+  const p = { id: newId, name: 'Imported Canvas', createdAt: Date.now(), updatedAt: Date.now(), noteCount: 0 };
+  projects.push(p); saveProjects(projects);
+  // save state to localStorage under new id (without the blobs to save space)
+  const stateCopy = { ...parsed }; delete stateCopy.blobs; delete stateCopy.shared;
+  store.set('freeflow_canvas_' + newId, JSON.stringify(stateCopy));
+  // switch to the new canvas
+  activeProjectId = newId;
+  await loadCanvasState(newId);
+  showToast('Shared canvas imported');
+  // save blobs to local storage for future loads
+  for (const [id, dataURL] of Object.entries(parsed.blobs || {})) {
+    try {
+      const res = await fetch(dataURL); const blob = await res.blob();
+      if (IS_TAURI) {
+        const { writeFile } = window.__TAURI__.fs;
+        const { join } = window.__TAURI__.path;
+        const dir = await getTauriImagesDir();
+        const path = await join(dir, id + '.png');
+        const ab = await blob.arrayBuffer();
+        await writeFile(path, new Uint8Array(ab));
+      } else {
+        const db = await openImgDB();
+        await new Promise((res2, rej) => {
+          const tx = db.transaction('blobs', 'readwrite');
+          tx.objectStore('blobs').put({ id, blob });
+          tx.oncomplete = res2; tx.onerror = () => rej(tx.error);
+        });
+      }
+    } catch (e) { console.warn('blob persist failed for', id, e); }
+  }
+}
+
 // ── file upload ──
 function triggerImg() { document.getElementById('img-file').click(); }
 // Layout a batch of image blobs in a grid centred on the canvas viewport.
@@ -620,8 +826,13 @@ async function placeImagesGrid(blobs, sourcePaths) {
     const y = rowY[row] + (rowH[row] - dispH) / 2;
     const id = await saveImgBlob(blob);
     blobURLCache[id] = dataURL;
+    // If no source path and we have a project dir, also save to {projectDir}/images/
+    let resolvedSourcePath = sourcePath;
+    if (!resolvedSourcePath && IS_TAURI && typeof _projectDir !== 'undefined' && _projectDir) {
+      resolvedSourcePath = await saveImgToProjectDir(blob, id);
+    }
     const card = makeImgCard(id, dataURL, x, y, dispW, dispH, nw, nh);
-    if (sourcePath) card.dataset.sourcePath = sourcePath;
+    if (resolvedSourcePath) card.dataset.sourcePath = resolvedSourcePath;
     else if (!IS_TAURI) card.dataset.sourcePath = 'D:\\art\\test\\' + (blob.name || id + '.png');
   }
 }
@@ -879,9 +1090,10 @@ document.addEventListener('keydown',e=>{
   if((e.metaKey||e.ctrlKey)&&e.key==='d'){if(selected.size>0){duplicateSelected();e.preventDefault();}return;}
   if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();toggleCmdPalette();return;}
   if((e.metaKey||e.ctrlKey)&&e.key==='f'){toggleSearch();e.preventDefault();return;}
-  const m={v:'select',t:'text',d:'pen',a:'arrow',e:'eraser',f:'frame'};
+  const m={v:'select',t:'text',d:'pen',a:'arrow',e:'eraser',f:'frame',r:'rect',l:'ellipse'};
   if(m[e.key])tool(m[e.key]);
   if(e.key==='n')addNote();
+  if(e.key==='w')addDrawCard();
   if(e.key==='g')toggleSnap();
   if((e.metaKey||e.ctrlKey)&&e.key==='\\'){e.preventDefault();toggleDashboard();}
   if(e.key==='i')addAiNote();
@@ -904,6 +1116,11 @@ const CMD_ACTIONS = [
   { id: 'label',      label: 'Label',             shortcut: 'T',      section: 'create', icon: '<line x1="7.5" y1="2" x2="7.5" y2="13"/><line x1="3" y1="4" x2="12" y2="4"/>', fn: () => tool('text') },
   { id: 'select',     label: 'Select',            shortcut: 'V',      section: 'tools',  icon: '<path d="M3 2l4 10 2-3.5 3.5-2z"/>', fn: () => tool('select') },
   { id: 'pen',        label: 'Draw',              shortcut: 'D',      section: 'tools',  icon: '<path d="M3 12L10 3.5l2.5 2.5L5 14z"/><line x1="10" y1="3.5" x2="12.5" y2="6"/>', fn: () => tool('pen') },
+  { id: 'draw-card',  label: 'Draw Canvas',       shortcut: 'W',      section: 'create', icon: '<rect x="2" y="2" width="11" height="11" rx="1.5" fill="none"/><path d="M4 10l2-3 2 2 2-4"/>', fn: () => addDrawCard() },
+  { id: 'rect',       label: 'Rectangle',         shortcut: 'R',      section: 'tools',  icon: '<rect x="2.5" y="3.5" width="10" height="8" rx="1" fill="none"/>', fn: () => tool('rect') },
+  { id: 'ellipse',    label: 'Ellipse',           shortcut: 'L',      section: 'tools',  icon: '<ellipse cx="7.5" cy="7.5" rx="5" ry="3.5" fill="none"/>', fn: () => tool('ellipse') },
+  { id: 'diamond',    label: 'Diamond',           shortcut: '',       section: 'tools',  icon: '<polygon points="7.5,2 13,7.5 7.5,13 2,7.5" fill="none"/>', fn: () => tool('diamond') },
+  { id: 'triangle',   label: 'Triangle',          shortcut: '',       section: 'tools',  icon: '<polygon points="7.5,2.5 13,12.5 2,12.5" fill="none"/>', fn: () => tool('triangle') },
   { id: 'arrow',      label: 'Connect',           shortcut: 'A',      section: 'tools',  icon: '<line x1="3" y1="12" x2="12" y2="3"/><polyline points="7,3 12,3 12,8"/>', fn: () => tool('arrow') },
   { id: 'eraser',     label: 'Eraser',            shortcut: 'E',      section: 'tools',  icon: '<path d="M3 11l5-7 4 4-5 7z"/><line x1="2" y1="13" x2="13" y2="13"/>', fn: () => tool('eraser') },
   { id: 'brainstorm', label: 'Brainstorm',        shortcut: 'B',      section: 'ai',     icon: '<path d="M7.5 2a4 4 0 014 4c0 1.5-.8 2.8-2 3.5V11h-4V9.5C4.3 8.8 3.5 7.5 3.5 6a4 4 0 014-4z"/><line x1="5.5" y1="13" x2="9.5" y2="13"/>', fn: () => toggleBrainstorm() },
@@ -915,6 +1132,9 @@ const CMD_ACTIONS = [
   { id: 'undo',       label: 'Undo',              shortcut: 'Ctrl+Z', section: 'edit',   icon: '<path d="M4 7l3-3M4 7l3 3"/><path d="M4 7h6a3 3 0 010 6H9"/>', fn: () => undo() },
   { id: 'redo',       label: 'Redo',              shortcut: 'Ctrl+Y', section: 'edit',   icon: '<path d="M11 7l-3-3M11 7l-3 3"/><path d="M11 7H5a3 3 0 000 6h1"/>', fn: () => redo() },
   { id: 'dashboard',  label: 'Dashboard',         shortcut: 'Ctrl+\\', section: 'view',  icon: '<rect x="2" y="2" width="4.5" height="4.5" rx="1"/><rect x="8.5" y="2" width="4.5" height="4.5" rx="1"/><rect x="2" y="8.5" width="4.5" height="4.5" rx="1"/><rect x="8.5" y="8.5" width="4.5" height="4.5" rx="1"/>', fn: () => toggleDashboard() },
+  { id: 'open-folder',    label: 'Open Project Folder', shortcut: '', section: 'view', icon: '<path d="M2 4.5A1.5 1.5 0 013.5 3h3l1.5 2H12A1.5 1.5 0 0113.5 6.5v6A1.5 1.5 0 0112 14H3.5A1.5 1.5 0 012 12.5z"/>', fn: () => openProjectDirInExplorer() },
+  { id: 'export-shared',  label: 'Export Shared Canvas', shortcut: '', section: 'view', icon: '<path d="M7.5 2v9M4 8l3.5 3.5L11 8"/><path d="M2 12v1.5A1.5 1.5 0 003.5 15h8a1.5 1.5 0 001.5-1.5V12"/>', fn: () => exportSharedCanvas() },
+  { id: 'import-shared',  label: 'Import Shared Canvas', shortcut: '', section: 'view', icon: '<path d="M7.5 13V4M4 7l3.5-3.5L11 7"/><path d="M2 12v1.5A1.5 1.5 0 003.5 15h8a1.5 1.5 0 001.5-1.5V12"/>', fn: () => importSharedCanvas() },
 ];
 
 const CMD_SECTIONS = { create: 'Create', tools: 'Tools', ai: 'AI', view: 'View', edit: 'Edit' };
@@ -965,8 +1185,25 @@ function toggleCmdPalette() {
   if (pal.classList.contains('show')) { closeCmdPalette(); } else { openCmdPalette(); }
 }
 
-function openCmdPalette() {
+function openCmdPalette(cx, cy) {
   const pal = document.getElementById('cmd-palette');
+  if (cx !== undefined && cy !== undefined) {
+    const palW = 480, palH = 440;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    let left = cx - palW / 2;
+    let top = cy + 12;
+    if (left < 8) left = 8;
+    if (left + palW > vw - 8) left = vw - palW - 8;
+    if (top + palH > vh - 8) top = cy - palH - 12;
+    if (top < 8) top = 8;
+    pal.style.left = left + 'px';
+    pal.style.top = top + 'px';
+    pal.style.transform = 'none';
+  } else {
+    pal.style.left = '50%';
+    pal.style.top = '28%';
+    pal.style.transform = 'translateX(-50%)';
+  }
   pal.classList.add('show');
   const input = document.getElementById('cmd-search');
   input.value = '';
@@ -1350,6 +1587,7 @@ const RADIAL_ITEMS = [
   { label: 'Note',      icon: '<rect x="2" y="2" width="11" height="11" rx="1.5"/><line x1="4.5" y1="5.5" x2="10.5" y2="5.5"/><line x1="4.5" y1="7.5" x2="10.5" y2="7.5"/><line x1="4.5" y1="9.5" x2="8" y2="9.5"/>', action: (x,y)=>{ const p=c2w(x,y); snapshot(); makeNote(p.x-100,p.y-64); } },
   { label: 'Draw',      icon: '<path d="M3 12 Q5 8 8 7 Q11 6 12 3"/><circle cx="3" cy="12" r="1" fill="currentColor" stroke="none"/>', action: ()=>tool('pen') },
   { label: 'AI Note',   icon: '<circle cx="7.5" cy="7.5" r="5.5" stroke-width="1.2"/><circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/>', action: (x,y)=>{ const p=c2w(x,y); snapshot(); makeAiNote(p.x-130,p.y-90); }, color: '#E8440A' },
+  { label: 'Bookmark',  icon: '<path d="M3 2h9v11l-4.5-3L3 13z"/>', action: ()=>{ addViewBookmark(); } },
   { label: 'Dashboard', icon: '<rect x="1" y="1" width="5" height="5" rx="0.8"/><rect x="9" y="1" width="5" height="5" rx="0.8"/><rect x="1" y="9" width="5" height="5" rx="0.8"/><rect x="9" y="9" width="5" height="5" rx="0.8"/>', action: ()=>goToDashboard() },
 ];
 
@@ -1358,6 +1596,7 @@ const radialRing = document.getElementById('radial-ring');
 const radialCenter = document.getElementById('radial-center');
 let radialOrigin = null;
 let radialOpen = false;
+let _radialActiveItems = [];
 const RADIAL_RADIUS = 62;
 const DRAG_THRESHOLD = 6;
 
@@ -1370,8 +1609,21 @@ function openRadialMenu(cx, cy) {
   radialCenter.style.top = '0px';
   radialRing.innerHTML = '';
 
-  const count = RADIAL_ITEMS.length;
-  RADIAL_ITEMS.forEach((item, i) => {
+  // Build dynamic items: base items + bookmark jump items (up to 4)
+  const bkmarks = typeof _viewBookmarks !== 'undefined' ? _viewBookmarks.slice(0, 4) : [];
+  const dynamicItems = [
+    ...RADIAL_ITEMS,
+    ...bkmarks.map((bk, i) => ({
+      label: bk.name,
+      icon: '<path d="M3 2h9v11l-4.5-3L3 13z" fill="currentColor" stroke="none"/>',
+      color: 'rgba(255,200,60,0.85)',
+      action: () => jumpToBookmark(i),
+    }))
+  ];
+
+  _radialActiveItems = dynamicItems;
+  const count = dynamicItems.length;
+  dynamicItems.forEach((item, i) => {
     const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
     const ix = Math.cos(angle) * RADIAL_RADIUS;
     const iy = Math.sin(angle) * RADIAL_RADIUS;
@@ -1409,6 +1661,7 @@ function closeRadialMenu() {
   radialMenu.classList.remove('show');
   radialOpen = false;
   radialOrigin = null;
+  _radialActiveItems = [];
 }
 
 // Right-click + drag on canvas
@@ -1435,7 +1688,7 @@ document.addEventListener('mousemove', e => {
   // highlight by angle sector — whichever direction you drag, that item lights up
   if (radialOpen && Math.sqrt(dx*dx+dy*dy) > DRAG_THRESHOLD) {
     const angle = Math.atan2(dy, dx);
-    const count = RADIAL_ITEMS.length;
+    const count = _radialActiveItems.length || RADIAL_ITEMS.length;
     const sectorSize = (Math.PI * 2) / count;
     const items = radialRing.querySelectorAll('.radial-item');
     items.forEach(el => {
@@ -1461,7 +1714,7 @@ document.addEventListener('mouseup', e => {
     if (hovered) {
       const idx = parseInt(hovered.dataset.index);
       closeRadialMenu();
-      RADIAL_ITEMS[idx].action(ox, oy);
+      _radialActiveItems[idx].action(ox, oy);
     } else {
       closeRadialMenu();
     }
@@ -1487,7 +1740,7 @@ cv.addEventListener('contextmenu', e => {
   e.preventDefault();
   if (_cvRightDragMoved) { _cvRightDragMoved = false; return; }
   if (!e.target.closest('.note, .img-card, .frame, .lbl, .todo-card, .stroke-wrap') && !window._noteRightDragActive) {
-    openCmdPalette();
+    openCmdPalette(e.clientX, e.clientY);
   }
 });
 

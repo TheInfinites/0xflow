@@ -23,7 +23,15 @@ function createBlockEditor(noteEl) {
   const editor = document.createElement('div');
   editor.className = 'block-editor';
 
-  editor.addEventListener('mousedown', e => e.stopPropagation());
+  editor.addEventListener('mousedown', e => {
+    if (noteEl.classList.contains('selected')) {
+      // Note already selected — allow focus, stop drag from starting
+      e.stopPropagation();
+    } else {
+      // First click — prevent focus so the note selects/drags normally
+      e.preventDefault();
+    }
+  });
   editor.addEventListener('wheel', e => e.stopPropagation(), { passive: true });
 
   editor.addEventListener('click', e => {

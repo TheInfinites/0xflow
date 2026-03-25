@@ -4,6 +4,22 @@
 
 let _projectDir = null; // absolute path set by user
 
+function _projDirKey() { return 'freeflow_projdir_' + (activeProjectId || '_default'); }
+
+function loadProjectDir() {
+  const saved = store.get(_projDirKey());
+  if (saved) {
+    _projectDir = saved;
+    const btn = document.getElementById('proj-dir-btn');
+    if (btn) btn.textContent = '📁 ' + saved.split(/[\\/]/).pop();
+  }
+}
+
+function saveProjectDir(dir) {
+  _projectDir = dir;
+  store.set(_projDirKey(), dir);
+}
+
 async function pickProjectDir() {
   if (IS_TAURI) {
     try {
@@ -11,7 +27,7 @@ async function pickProjectDir() {
       if (!open) { showToast('Dialog plugin not available'); return; }
       const dir = await open({ directory: true, multiple: false, title: 'Select project directory' });
       if (dir) {
-        _projectDir = dir;
+        saveProjectDir(dir);
         document.getElementById('proj-dir-btn').textContent = '📁 ' + dir.split(/[\\/]/).pop();
         showToast('Project dir: ' + dir);
       }
@@ -23,10 +39,33 @@ async function pickProjectDir() {
     // Browser mock: prompt for a fake path so UI can be tested
     const fake = prompt('Enter a mock project directory path (browser mode):', 'D:\\art\\test');
     if (fake) {
-      _projectDir = fake;
+      saveProjectDir(fake);
       document.getElementById('proj-dir-btn').textContent = '📁 ' + fake.split(/[\\/]/).pop();
       showToast('Project dir set (mock): ' + fake);
     }
+  }
+}
+
+// Open the project directory in the system file explorer
+async function openProjectDirInExplorer() {
+  if (!_projectDir) {
+    showToast('No project directory set — click "📁 project dir" first');
+    return;
+  }
+  if (IS_TAURI) {
+    try {
+      const shell = window.__TAURI__.shell;
+      if (shell && shell.open) {
+        await shell.open(_projectDir);
+      } else {
+        showToast('Shell plugin not available');
+      }
+    } catch (e) {
+      console.warn('openProjectDirInExplorer error:', e);
+      showToast('Could not open folder');
+    }
+  } else {
+    showToast('Open folder requires the desktop app (path: ' + _projectDir + ')');
   }
 }
 

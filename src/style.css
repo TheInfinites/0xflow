@@ -1276,6 +1276,18 @@ body.light .be-slash-item:hover, body.light .be-slash-item.active { background: 
 .ai-send svg { width: 11px; height: 11px; stroke: #fff; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .ai-send.loading { background: rgba(232,68,10,0.3); cursor: default; }
 
+/* ── Draw Card ──────────────────────────────────────────── */
+.draw-card { padding: 4px !important; display: flex; flex-direction: column; overflow: hidden; box-sizing: border-box; }
+.draw-card-hdr { display: flex; align-items: center; gap: 4px; padding: 4px 4px 4px; flex-shrink: 0; }
+.dc-tool { width: 22px; height: 22px; background: none; border: 1px solid transparent; border-radius: 4px; cursor: pointer; color: rgba(255,255,255,0.5); display: flex; align-items: center; justify-content: center; padding: 0; }
+.dc-tool.on, .dc-tool:hover { border-color: rgba(255,255,255,0.2); color: rgba(255,255,255,0.9); background: rgba(255,255,255,0.06); }
+.dc-tool svg { width: 11px; height: 11px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; }
+.dc-sz { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.6); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; font-size: 10px; padding: 2px 3px; cursor: pointer; }
+.dc-color { width: 20px; height: 20px; border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; cursor: pointer; padding: 0; background: none; }
+.dc-clear { background: none; border: 1px solid transparent; border-radius: 4px; font-size: 9px; color: rgba(255,255,255,0.3); cursor: pointer; padding: 2px 5px; margin-left: auto; }
+.dc-clear:hover { color: #E8440A; border-color: rgba(232,68,10,0.3); }
+.dc-canvas { flex: 1; display: block; width: 100%; border-radius: 4px; background: rgba(0,0,0,0.3); cursor: crosshair; }
+
 /* ── To-do card ─────────────────────────────────────────── */
 .todo-card { width: 220px; min-height: 140px; display: flex; flex-direction: column; padding-bottom: 8px !important; overflow: hidden; box-sizing: border-box; }
 .todo-card .todo-badge, .todo-card .rel-handle, .todo-card .rh, .todo-card .lock-icon, .todo-card .note-idx { overflow: visible; }
@@ -1575,6 +1587,12 @@ body.on-canvas.light .todo-progress { background: rgba(255,255,255,0.06); }
 .img-card:hover { border-color: rgba(255,255,255,0.18); }
 .img-card.drag { cursor: grabbing; z-index: 200; }
 .img-card img { display: block; border-radius: 5px; pointer-events: none; max-width: 100%; height: auto; }
+/* ── Video card ──────────────────────────── */
+.video-card { position: relative; }
+.video-card video { display: block; border-radius: 5px; max-width: 100%; height: auto; }
+.video-drag-overlay { border-radius: 5px; }
+.video-still-btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.video-still-btn:hover { background: rgba(232,68,10,0.85) !important; border-color: rgba(232,68,10,0.6) !important; color: white !important; }
 /* ── Audio card ──────────────────────────── */
 .audio-card {
   border-radius: 14px !important;
@@ -1582,7 +1600,7 @@ body.on-canvas.light .todo-progress { background: rgba(255,255,255,0.06); }
   background: var(--note-bg, #1a1a1b) !important;
   border: 1px solid var(--note-border, rgba(255,255,255,0.08)) !important;
   padding: 0 !important;
-  width: 300px !important;
+  min-width: 200px;
   height: auto !important;
 }
 .ac-body {
@@ -1590,6 +1608,8 @@ body.on-canvas.light .todo-progress { background: rgba(255,255,255,0.06); }
   display: flex;
   flex-direction: column;
   gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 /* single row: art · info · play */
@@ -1733,6 +1753,12 @@ body.has-sel-bar .img-toolbar { display: none !important; }
 .ps.on span { background: rgba(255,255,255,0.7); }
 #pen-row { display: none; gap: 3px; align-items: center; }
 #pen-row.show { display: flex; }
+#shape-row { display: none; gap: 6px; align-items: center; }
+#shape-row.show { display: flex; }
+#shape-stroke-w { background: var(--surface-active, #222); color: var(--text, rgba(255,255,255,0.7)); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; font-size: 10px; padding: 2px 4px; cursor: pointer; }
+.shape-fill-label { font-size: 10px; color: rgba(255,255,255,0.45); display: flex; align-items: center; gap: 3px; cursor: pointer; }
+.shape-fill-label input[type=color] { width: 18px; height: 14px; border: none; padding: 0; border-radius: 2px; cursor: pointer; background: none; }
+.shape-fill-label input[type=checkbox] { cursor: pointer; }
 
 /* search box */
 #search-box {
@@ -1760,7 +1786,7 @@ body.has-sel-bar .img-toolbar { display: none !important; }
   box-shadow: 0 24px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04) inset;
 }
 #cmd-palette.show { display: flex; animation: cmdIn 0.15s ease-out; }
-@keyframes cmdIn { from { opacity: 0; transform: translateX(-50%) scale(0.97); } to { opacity: 1; transform: translateX(-50%) scale(1); } }
+@keyframes cmdIn { from { opacity: 0; scale: 0.97; } to { opacity: 1; scale: 1; } }
 .cmd-input-wrap {
   display: flex; align-items: center; gap: 10px; padding: 14px 18px;
   border-bottom: 1px solid rgba(255,255,255,0.06);
