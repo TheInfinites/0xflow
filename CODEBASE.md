@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.7.2**
+> Current version: **v0.7.3**
 
 ---
 
@@ -743,6 +743,12 @@ gh release create v{version} \
 ---
 
 ## Changes in v0.7.x
+
+### v0.7.3
+- **Shape right-click context menu** — right-clicking any drawn shape (rect, ellipse, line) opens a floating panel matching the image context menu style. Controls: stroke color swatches + custom picker, fill color swatches + custom picker, stroke width (thin/medium/bold), stroke style (solid/dashed/dotted), opacity slider, delete. All changes apply live. Bottom toolbar for shapes removed.
+- **Radial menu redesign** — right-click drag on canvas now shows pills radiating outward from the cursor (not a vertical list). Each pill is a dark frosted-glass card with icon + label. Items: Note (top), Draw (top-right), AI Note (right), Dashboard (bottom-right), Bookmark panel (bottom-left). Bookmark jump items group into a single panel with Bookmark. Drag direction highlights the nearest item.
+- **Radial menu action fix** — drag-select path now correctly captures the action reference before `closeRadialMenu()` clears `_radialActiveItems`, fixing actions never firing on drag-release.
+- **Open folder fix** — `openProjectDirInExplorer` updated to use Tauri v2 shell plugin API (`plugin:shell|open` invoke) instead of the removed `window.__TAURI__.shell`.
 
 ### v0.7.2
 - **Diamond and triangle shape tools removed** from toolbar, CMD palette, and SHAPE_TOOLS set.
