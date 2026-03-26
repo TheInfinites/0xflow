@@ -8,4 +8,4 @@ app-icon.png
 *.exe
 *.sig
 release.sh
-FEATURES_ROADMAP.md
+IMPLEMENTATION_PLAN.md
