@@ -54,12 +54,7 @@ async function openProjectDirInExplorer() {
   }
   if (IS_TAURI) {
     try {
-      const shell = window.__TAURI__.shell;
-      if (shell && shell.open) {
-        await shell.open(_projectDir);
-      } else {
-        showToast('Shell plugin not available');
-      }
+      await window.__TAURI__.core.invoke('plugin:shell|open', { path: _projectDir });
     } catch (e) {
       console.warn('openProjectDirInExplorer error:', e);
       showToast('Could not open folder');

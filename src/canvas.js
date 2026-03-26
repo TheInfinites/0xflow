@@ -279,7 +279,7 @@ function restoreCanvas(state){
 function undo(){ if(!undoStack.length)return; redoStack.push(serializeCanvas()); clearSelection(); restoreCanvas(undoStack.pop()); syncUndoButtons(); }
 function redo(){ if(!redoStack.length)return; undoStack.push(serializeCanvas()); clearSelection(); restoreCanvas(redoStack.pop()); syncUndoButtons(); }
 function syncUndoButtons(){ document.getElementById('undo-btn').disabled=undoStack.length===0; document.getElementById('redo-btn').disabled=redoStack.length===0; }
-function rebindAll(){ document.querySelectorAll('.note').forEach(n=>{ if(n.classList.contains('todo-card')){bindTodoCard(n);}else{bindNote(n);} }); document.querySelectorAll('.img-card').forEach(c=>c.addEventListener('mousedown',onElemMouseDown)); document.querySelectorAll('.lbl').forEach(l=>bindLabel(l)); document.querySelectorAll('.frame').forEach(f=>bindFrame(f)); document.querySelectorAll('.stroke-wrap').forEach(g=>g.addEventListener('mousedown',onStrokeMouseDown)); }
+function rebindAll(){ document.querySelectorAll('.note').forEach(n=>{ if(n.classList.contains('todo-card')){bindTodoCard(n);}else{bindNote(n);} }); document.querySelectorAll('.img-card').forEach(c=>c.addEventListener('mousedown',onElemMouseDown)); document.querySelectorAll('.lbl').forEach(l=>bindLabel(l)); document.querySelectorAll('.frame').forEach(f=>bindFrame(f)); document.querySelectorAll('.stroke-wrap').forEach(g=>g.addEventListener('mousedown',onStrokeMouseDown)); document.querySelectorAll('.shape-wrap').forEach(g=>{ if(!g._strokeCtxBound&&window._bindShapeContextMenu){window._bindShapeContextMenu(g);g._strokeCtxBound=true;} }); }
 
 const cv=document.getElementById('cv'), world=document.getElementById('world');
 const ink=document.getElementById('ink'), strokes=document.getElementById('strokes');
@@ -2477,6 +2477,7 @@ document.addEventListener('mouseup', e => {
       shapeTempG.remove(); shapeTempG=null; shapeStart=null; return;
     }
     shapeTempG.addEventListener('mousedown', onStrokeMouseDown);
+    if (window._bindShapeContextMenu) { window._bindShapeContextMenu(shapeTempG); shapeTempG._strokeCtxBound = true; }
     snapshot();
   }
   shapeTempG = null; shapeStart = null;
@@ -2504,6 +2505,194 @@ document.addEventListener('mousemove',e=>{
   else if(curTool==='eraser'){document.querySelectorAll('#strokes .stroke-wrap,#arrows .stroke-wrap').forEach(g=>{const pt=g.querySelector('path:not(.stroke-hit)');if(!pt)return;try{const len=pt.getTotalLength();for(let i=0;i<len;i+=6){const pp=pt.getPointAtLength(i);if((pp.x-p.x)**2+(pp.y-p.y)**2<700){selected.delete(g);g.remove();updateSelBar();break;}}}catch{}});}
 });
 document.addEventListener('mouseup',()=>{ if(drawing){drawing=false;if(curPath)snapshot();curPath=null;curD='';curStrokeG=null;} });
+
+// ── Shape right-click context menu ─────────────────────────────
+(function(){
+  const menu = document.getElementById('stroke-ctx-menu');
+  if (!menu) return;
+  let _ctxShape = null; // the shape-wrap <g> being edited
+
+  function getVis(g) { return g.querySelector('path:not(.stroke-hit)'); }
+
+  function openStrokeCtxMenu(g, x, y) {
+    _ctxShape = g;
+    const vis = getVis(g);
+    if (!vis) return;
+
+    // Sync stroke colors
+    const currentStroke = vis.getAttribute('stroke') || '';
+    menu.querySelectorAll('#sctx-stroke-colors .sctx-color-dot').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.color && btn.dataset.color === currentStroke);
+    });
+
+    // Sync fill colors
+    const currentFill = vis.getAttribute('fill') || 'none';
+    menu.querySelectorAll('#sctx-fill-colors .sctx-color-dot').forEach(btn => {
+      const v = btn.dataset.fill ?? null;
+      if (v !== null) btn.classList.toggle('active', v === currentFill);
+    });
+    menu.querySelector('.sctx-fill-none')?.classList.toggle('active', currentFill === 'none');
+
+    // Sync stroke width
+    const sw = parseFloat(vis.getAttribute('stroke-width')) || 2;
+    menu.querySelectorAll('#sctx-stroke-widths .sctx-opt-btn').forEach(btn => {
+      btn.classList.toggle('active', parseFloat(btn.dataset.sw) === sw);
+    });
+
+    // Sync stroke style
+    const dash = vis.getAttribute('stroke-dasharray') || 'none';
+    const dashKey = dash === 'none' || !dash ? 'none' : dash.startsWith('1') ? 'dotted' : 'dashed';
+    menu.querySelectorAll('#sctx-stroke-styles .sctx-opt-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.dash === dashKey);
+    });
+
+    // Sync opacity
+    const op = Math.round((parseFloat(vis.getAttribute('opacity') ?? g.getAttribute('opacity') ?? '1')) * 100);
+    const slider = menu.querySelector('#sctx-opacity');
+    slider.value = op;
+    menu.querySelector('#sctx-opacity-val').textContent = op;
+
+    // Position
+    menu.style.left = '0'; menu.style.top = '0';
+    menu.classList.add('show');
+    const mw = menu.offsetWidth, mh = menu.offsetHeight;
+    const fx = Math.min(x, window.innerWidth - mw - 8);
+    const fy = Math.min(y, window.innerHeight - mh - 8);
+    menu.style.left = fx + 'px';
+    menu.style.top = fy + 'px';
+  }
+
+  function closeStrokeCtxMenu() {
+    menu.classList.remove('show');
+    _ctxShape = null;
+  }
+
+  // Close on outside click
+  document.addEventListener('mousedown', e => {
+    if (_ctxShape && !e.target.closest('#stroke-ctx-menu')) closeStrokeCtxMenu();
+  });
+
+  // Stroke color dots
+  menu.querySelectorAll('#sctx-stroke-colors .sctx-color-dot[data-color]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!_ctxShape) return;
+      const vis = getVis(_ctxShape);
+      if (vis) vis.setAttribute('stroke', btn.dataset.color);
+      menu.querySelectorAll('#sctx-stroke-colors .sctx-color-dot').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      snapshot();
+    });
+  });
+  const strokeInput = menu.querySelector('#sctx-stroke-color-input');
+  strokeInput?.addEventListener('input', () => {
+    if (!_ctxShape) return;
+    const vis = getVis(_ctxShape);
+    if (vis) vis.setAttribute('stroke', strokeInput.value);
+    menu.querySelectorAll('#sctx-stroke-colors .sctx-color-dot').forEach(b => b.classList.remove('active'));
+  });
+  strokeInput?.addEventListener('change', () => snapshot());
+
+  // Fill color dots
+  menu.querySelectorAll('#sctx-fill-colors .sctx-color-dot').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!_ctxShape) return;
+      const vis = getVis(_ctxShape);
+      const fill = btn.dataset.fill ?? 'none';
+      if (vis) vis.setAttribute('fill', fill);
+      menu.querySelectorAll('#sctx-fill-colors .sctx-color-dot').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      snapshot();
+    });
+  });
+  const fillInput = menu.querySelector('#sctx-fill-color-input');
+  fillInput?.addEventListener('input', () => {
+    if (!_ctxShape) return;
+    const vis = getVis(_ctxShape);
+    if (vis) vis.setAttribute('fill', fillInput.value);
+    menu.querySelectorAll('#sctx-fill-colors .sctx-color-dot').forEach(b => b.classList.remove('active'));
+  });
+  fillInput?.addEventListener('change', () => snapshot());
+
+  // Stroke width
+  menu.querySelectorAll('#sctx-stroke-widths .sctx-opt-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!_ctxShape) return;
+      const vis = getVis(_ctxShape);
+      if (vis) vis.setAttribute('stroke-width', btn.dataset.sw);
+      menu.querySelectorAll('#sctx-stroke-widths .sctx-opt-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      snapshot();
+    });
+  });
+
+  // Stroke style (dash)
+  menu.querySelectorAll('#sctx-stroke-styles .sctx-opt-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!_ctxShape) return;
+      const vis = getVis(_ctxShape);
+      const sw = parseFloat(vis?.getAttribute('stroke-width') || '2');
+      const dashMap = { none: null, dashed: `${sw*3} ${sw*2}`, dotted: `${sw} ${sw*3}` };
+      const val = dashMap[btn.dataset.dash];
+      if (vis) {
+        if (val) vis.setAttribute('stroke-dasharray', val);
+        else vis.removeAttribute('stroke-dasharray');
+      }
+      menu.querySelectorAll('#sctx-stroke-styles .sctx-opt-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      snapshot();
+    });
+  });
+
+  // Opacity
+  const opacitySlider = menu.querySelector('#sctx-opacity');
+  const opacityVal = menu.querySelector('#sctx-opacity-val');
+  opacitySlider?.addEventListener('input', () => {
+    if (!_ctxShape) return;
+    const v = parseInt(opacitySlider.value) / 100;
+    _ctxShape.setAttribute('opacity', v);
+    opacityVal.textContent = opacitySlider.value;
+  });
+  opacitySlider?.addEventListener('change', () => snapshot());
+
+  // Delete
+  menu.querySelector('#sctx-delete')?.addEventListener('click', () => {
+    if (!_ctxShape) return;
+    snapshot();
+    selected.delete(_ctxShape);
+    _ctxShape.remove();
+    updateSelBar();
+    closeStrokeCtxMenu();
+  });
+
+  // Wire right-click on shapes — use event delegation on the SVG containers
+  function bindShapeContextMenu(g) {
+    let _rcMoved = false, _rcX = 0, _rcY = 0;
+    g.addEventListener('mousedown', e => {
+      if (e.button !== 2) return;
+      _rcMoved = false; _rcX = e.clientX; _rcY = e.clientY;
+    });
+    g.addEventListener('mousemove', e => {
+      if (!(e.buttons & 2)) return;
+      if (Math.abs(e.clientX - _rcX) > 4 || Math.abs(e.clientY - _rcY) > 4) _rcMoved = true;
+    });
+    g.addEventListener('contextmenu', e => {
+      e.preventDefault(); e.stopPropagation();
+      if (_rcMoved) { _rcMoved = false; return; }
+      openStrokeCtxMenu(g, e.clientX, e.clientY);
+    });
+  }
+
+  // Bind on any shapes restored from snapshot/load
+  function bindAll() {
+    document.querySelectorAll('.shape-wrap').forEach(g => {
+      if (!g._strokeCtxBound) { bindShapeContextMenu(g); g._strokeCtxBound = true; }
+    });
+  }
+  // Run after load
+  setTimeout(bindAll, 500);
+  // Expose for rebindAll
+  window._bindShapeContextMenu = bindShapeContextMenu;
+})();
 
 cv.addEventListener('mouseup',e=>{
   if(curTool!=='arrow'||!arrowSt) return;

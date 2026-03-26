@@ -1802,27 +1802,22 @@ function openRadialMenu(cx, cy) {
   ];
 
   _radialActiveItems = dynamicItems;
-  const count = dynamicItems.length;
-  dynamicItems.forEach((item, i) => {
-    const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
-    const ix = Math.cos(angle) * RADIAL_RADIUS;
-    const iy = Math.sin(angle) * RADIAL_RADIUS;
 
-    // spoke line
-    const spoke = document.createElement('div');
-    spoke.className = 'radial-spoke';
-    const spokeLen = RADIAL_RADIUS - 20;
-    spoke.style.cssText = `left:0;top:0;width:${spokeLen}px;transform:rotate(${angle}rad) translateY(-50%);`;
-    radialRing.appendChild(spoke);
+  // Fixed angles: Note=top, Draw=top-right, AI Note=right, Dashboard=bottom-right, Bookmark=bottom-left
+  // RADIAL_ITEMS order: Note(0), Draw(1), AI Note(2), Bookmark(3), Dashboard(4)
+  const ITEM_ANGLES_DEG = [-90, -35, 35, 215, 145];
+  const BASE_R = 82;
+  const BK_ANGLE = ITEM_ANGLES_DEG[3] * Math.PI / 180; // bookmark panel angle
 
-    // item
+  // --- Base items (single pills) ---
+  const baseEls = [];
+  RADIAL_ITEMS.forEach((item, i) => {
+    const angle = ITEM_ANGLES_DEG[i] * Math.PI / 180;
     const el = document.createElement('div');
     el.className = 'radial-item';
-    el.style.left = ix + 'px';
-    el.style.top = iy + 'px';
-    el.style.transitionDelay = (i * 0.03) + 's';
-    if (item.color) el.style.setProperty('--accent', item.color);
-    el.innerHTML = `<svg viewBox="0 0 15 15">${item.icon}</svg><span>${item.label}</span>`;
+    if (Math.cos(angle) < -0.15) el.classList.add('radial-item-left');
+    const iconColor = item.color ? `color:${item.color}` : '';
+    el.innerHTML = `<span class="radial-item-icon" style="${iconColor}"><svg viewBox="0 0 15 15">${item.icon}</svg></span><span>${item.label}</span>`;
     el.addEventListener('mouseup', e => {
       e.stopPropagation();
       const ox = radialOrigin ? radialOrigin.x : radialStartX;
@@ -1831,10 +1826,90 @@ function openRadialMenu(cx, cy) {
       item.action(ox, oy);
     });
     el.dataset.index = i;
+    el.dataset.angle = angle;
     radialRing.appendChild(el);
+    baseEls.push(el);
   });
 
+  // --- Bookmark jump items: grouped into a panel with the Bookmark item ---
+  if (bkmarks.length > 0) {
+    // Remove standalone Bookmark pill — replace with a panel
+    const bkBaseEl = baseEls[3]; // index 3 = Bookmark
+    bkBaseEl.remove();
+
+    const panel = document.createElement('div');
+    panel.className = 'radial-panel';
+    panel.dataset.angle = BK_ANGLE;
+
+    // Bookmark (add) row inside panel
+    const bkRow = document.createElement('div');
+    bkRow.className = 'radial-item radial-panel-item';
+    bkRow.classList.add('radial-item-left');
+    bkRow.innerHTML = baseEls[3].innerHTML;
+    bkRow.dataset.index = 3;
+    bkRow.dataset.angle = BK_ANGLE;
+    bkRow.addEventListener('mouseup', e => {
+      e.stopPropagation();
+      const ox = radialOrigin ? radialOrigin.x : radialStartX;
+      const oy = radialOrigin ? radialOrigin.y : radialStartY;
+      closeRadialMenu();
+      RADIAL_ITEMS[3].action(ox, oy);
+    });
+    panel.appendChild(bkRow);
+
+    // Separator
+    const sep = document.createElement('div');
+    sep.className = 'radial-panel-sep';
+    panel.appendChild(sep);
+
+    // Jump items
+    bkmarks.forEach((bk, bi) => {
+      const globalIdx = RADIAL_ITEMS.length + bi;
+      const row = document.createElement('div');
+      row.className = 'radial-item radial-panel-item';
+      row.classList.add('radial-item-left');
+      row.innerHTML = `<span class="radial-item-icon" style="color:rgba(255,200,60,0.85)"><svg viewBox="0 0 15 15"><path d="M3 2h9v11l-4.5-3L3 13z" fill="currentColor" stroke="none"/></svg></span><span>${bk.name}</span>`;
+      row.dataset.index = globalIdx;
+      row.dataset.angle = BK_ANGLE;
+      row.addEventListener('mouseup', e => {
+        e.stopPropagation();
+        const ox = radialOrigin ? radialOrigin.x : radialStartX;
+        const oy = radialOrigin ? radialOrigin.y : radialStartY;
+        closeRadialMenu();
+        jumpToBookmark(bi);
+      });
+      panel.appendChild(row);
+      _radialActiveItems[globalIdx] = { action: () => jumpToBookmark(bi) };
+    });
+
+    radialRing.appendChild(panel);
+  }
+
+  // Show first so offsetWidth is measurable
+  radialMenu.style.left = cx + 'px';
+  radialMenu.style.top = cy + 'px';
   radialMenu.classList.add('show');
+
+  // Position standalone pills
+  radialRing.querySelectorAll('.radial-item:not(.radial-panel-item)').forEach(el => {
+    const angle = parseFloat(el.dataset.angle);
+    const pw = el.offsetWidth, ph = el.offsetHeight;
+    const ix = Math.cos(angle) * BASE_R;
+    const iy = Math.sin(angle) * BASE_R;
+    const lx = Math.cos(angle) < -0.15 ? ix - pw : ix;
+    el.style.left = lx + 'px';
+    el.style.top  = (iy - ph / 2) + 'px';
+  });
+
+  // Position bookmark panel
+  const panel = radialRing.querySelector('.radial-panel');
+  if (panel) {
+    const pw = panel.offsetWidth, ph = panel.offsetHeight;
+    const ix = Math.cos(BK_ANGLE) * BASE_R;
+    const iy = Math.sin(BK_ANGLE) * BASE_R;
+    panel.style.left = (ix - pw) + 'px';
+    panel.style.top  = (iy - ph / 2) + 'px';
+  }
 }
 
 function closeRadialMenu() {
@@ -1865,21 +1940,18 @@ document.addEventListener('mousemove', e => {
     radialDragged = true;
     openRadialMenu(radialStartX, radialStartY);
   }
-  // highlight by angle sector — whichever direction you drag, that item lights up
+  // highlight the item whose angle is nearest to the drag direction
   if (radialOpen && Math.sqrt(dx*dx+dy*dy) > DRAG_THRESHOLD) {
-    const angle = Math.atan2(dy, dx);
-    const count = _radialActiveItems.length || RADIAL_ITEMS.length;
-    const sectorSize = (Math.PI * 2) / count;
+    const dragAngle = Math.atan2(dy, dx);
     const items = radialRing.querySelectorAll('.radial-item');
+    let bestEl = null, bestDiff = Infinity;
     items.forEach(el => {
-      const i = parseInt(el.dataset.index);
-      const itemAngle = (i / count) * Math.PI * 2 - Math.PI / 2;
-      let diff = angle - itemAngle;
-      // normalize to [-π, π]
+      let diff = dragAngle - parseFloat(el.dataset.angle);
       while (diff > Math.PI) diff -= Math.PI * 2;
       while (diff < -Math.PI) diff += Math.PI * 2;
-      el.classList.toggle('hovered', Math.abs(diff) < sectorSize / 2 - 0.22);
+      if (Math.abs(diff) < bestDiff) { bestDiff = Math.abs(diff); bestEl = el; }
     });
+    items.forEach(el => el.classList.toggle('hovered', el === bestEl));
   }
 });
 
@@ -1893,8 +1965,9 @@ document.addEventListener('mouseup', e => {
     const ox = radialStartX, oy = radialStartY;
     if (hovered) {
       const idx = parseInt(hovered.dataset.index);
+      const action = _radialActiveItems[idx]?.action;
       closeRadialMenu();
-      _radialActiveItems[idx].action(ox, oy);
+      if (action) action(ox, oy);
     } else {
       closeRadialMenu();
     }

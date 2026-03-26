@@ -431,20 +431,7 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
         <div class="ps" data-s="6" onclick="setPen(this)"><span style="width:8px;height:8px"></span></div>
         <div class="ps" data-s="12" onclick="setPen(this)"><span style="width:11px;height:11px"></span></div>
       </div>
-      <div id="shape-row">
-        <select id="shape-stroke-w" onchange="setShapeStrokeWidth(this.value)" title="Stroke width">
-          <option value="1">1px</option>
-          <option value="2" selected>2px</option>
-          <option value="3">3px</option>
-          <option value="5">5px</option>
-        </select>
-        <label class="shape-fill-label" title="Fill color">
-          fill <input type="color" id="shape-fill-color" value="#00000000" onchange="setShapeFill(this.value)">
-        </label>
-        <label class="shape-fill-label">
-          <input type="checkbox" id="shape-fill-on" onchange="setShapeFillEnabled(this.checked)"> filled
-        </label>
-      </div>
+      <div id="shape-row"></div>
     </div>
     <div class="st st-hint" id="canvas-hint">dbl-click to add · right-click note for options</div>
   </div>
@@ -623,6 +610,68 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
 </div>
 
 <div id="folder-browser"></div>
+
+<!-- ══════════════════════════════════════════
+     STROKE / SHAPE RIGHT-CLICK CONTEXT MENU
+══════════════════════════════════════════ -->
+<div id="stroke-ctx-menu">
+  <!-- Stroke color -->
+  <div class="sctx-section-label">Stroke</div>
+  <div class="sctx-row sctx-colors" id="sctx-stroke-colors">
+    <button class="sctx-color-dot" data-color="#000000" style="background:#000000" title="Black"></button>
+    <button class="sctx-color-dot" data-color="#e03131" style="background:#e03131" title="Red"></button>
+    <button class="sctx-color-dot" data-color="#2f9e44" style="background:#2f9e44" title="Green"></button>
+    <button class="sctx-color-dot" data-color="#1971c2" style="background:#1971c2" title="Blue"></button>
+    <button class="sctx-color-dot" data-color="#f08c00" style="background:#f08c00" title="Orange"></button>
+    <button class="sctx-color-dot sctx-color-custom" id="sctx-stroke-custom" title="Custom color">
+      <input type="color" id="sctx-stroke-color-input">
+    </button>
+  </div>
+  <div class="ictx-sep"></div>
+  <!-- Background / fill color -->
+  <div class="sctx-section-label">Background</div>
+  <div class="sctx-row sctx-colors" id="sctx-fill-colors">
+    <button class="sctx-color-dot sctx-fill-none" data-fill="none" title="No fill">
+      <svg viewBox="0 0 14 14" fill="none"><line x1="1" y1="13" x2="13" y2="1" stroke="rgba(255,255,255,0.3)" stroke-width="1.5"/><rect x="1" y="1" width="12" height="12" rx="2" stroke="rgba(255,255,255,0.15)" stroke-width="1"/></svg>
+    </button>
+    <button class="sctx-color-dot" data-fill="rgba(255,182,182,0.4)" style="background:rgba(255,182,182,0.4)" title="Pink"></button>
+    <button class="sctx-color-dot" data-fill="rgba(180,242,180,0.4)" style="background:rgba(180,242,180,0.4)" title="Green"></button>
+    <button class="sctx-color-dot" data-fill="rgba(173,216,255,0.4)" style="background:rgba(173,216,255,0.4)" title="Blue"></button>
+    <button class="sctx-color-dot" data-fill="rgba(255,236,153,0.4)" style="background:rgba(255,236,153,0.4)" title="Yellow"></button>
+    <button class="sctx-color-dot sctx-color-custom" id="sctx-fill-custom" title="Custom fill color">
+      <input type="color" id="sctx-fill-color-input">
+    </button>
+  </div>
+  <div class="ictx-sep"></div>
+  <!-- Stroke width -->
+  <div class="sctx-section-label">Stroke width</div>
+  <div class="sctx-row sctx-option-row" id="sctx-stroke-widths">
+    <button class="sctx-opt-btn" data-sw="1" title="Thin"><span class="sctx-sw-preview" style="height:1px"></span></button>
+    <button class="sctx-opt-btn" data-sw="2" title="Medium"><span class="sctx-sw-preview" style="height:2px"></span></button>
+    <button class="sctx-opt-btn" data-sw="4" title="Bold"><span class="sctx-sw-preview" style="height:4px"></span></button>
+  </div>
+  <div class="ictx-sep"></div>
+  <!-- Stroke style -->
+  <div class="sctx-section-label">Stroke style</div>
+  <div class="sctx-row sctx-option-row" id="sctx-stroke-styles">
+    <button class="sctx-opt-btn" data-dash="none" title="Solid"><svg viewBox="0 0 36 10"><line x1="2" y1="5" x2="34" y2="5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+    <button class="sctx-opt-btn" data-dash="dashed" title="Dashed"><svg viewBox="0 0 36 10"><line x1="2" y1="5" x2="34" y2="5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="6 4"/></svg></button>
+    <button class="sctx-opt-btn" data-dash="dotted" title="Dotted"><svg viewBox="0 0 36 10"><line x1="2" y1="5" x2="34" y2="5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="1.5 5"/></svg></button>
+  </div>
+  <div class="ictx-sep"></div>
+  <!-- Opacity -->
+  <div class="sctx-section-label">Opacity</div>
+  <div class="sctx-row sctx-opacity-row">
+    <span class="sctx-opacity-val" id="sctx-opacity-val">100</span>
+    <input type="range" id="sctx-opacity" min="0" max="100" value="100" class="sctx-slider">
+  </div>
+  <div class="ictx-sep"></div>
+  <!-- Delete -->
+  <div class="ictx-item sctx-delete-item" id="sctx-delete">
+    <span class="ictx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><polyline points="2,4 12,4"/><path d="M5 4V3h4v1"/><path d="M3 4l1 8h6l1-8"/></svg></span>
+    Delete
+  </div>
+</div>
 
 <!-- ══════════════════════════════════════════
      BATCH RENAME MODAL
