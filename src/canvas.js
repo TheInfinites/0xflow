@@ -99,6 +99,8 @@ window.addEventListener('beforeunload',()=>{ if(activeProjectId) saveCanvasState
 // CANVAS LOGIC
 // ════════════════════════════════════════════
 let curTool='select', scale=1, px=0, py=0;
+let _mouseClientX = 0, _mouseClientY = 0;
+document.addEventListener('mousemove', e => { _mouseClientX = e.clientX; _mouseClientY = e.clientY; }, { passive: true });
 let snapEnabled=false;
 const SNAP_SIZE=20; // matches grid spacing
 function snap(v){ return snapEnabled ? Math.round(v/SNAP_SIZE)*SNAP_SIZE : v; }
@@ -286,6 +288,7 @@ const ink=document.getElementById('ink'), strokes=document.getElementById('strok
 const arrowsG=document.getElementById('arrows'), stTool=document.getElementById('st-tool');
 const stZoom=document.getElementById('st-zoom'), marqueeEl=document.getElementById('marquee');
 const selBar=document.getElementById('sel-bar'), selCount=document.getElementById('sel-count');
+const msScaleBox=document.getElementById('ms-scale-box');
 const dotGrid=document.getElementById('dot-grid'), noteMenu=document.getElementById('note-menu');
 
 function applyT(){
@@ -456,6 +459,7 @@ function selectEl(el){ el.classList.add('selected'); selected.add(el); updateSel
 function clearSelection(){ selected.forEach(el=>{el.classList.remove('selected');el.classList.remove('stroke-selected');}); selected.clear(); deselectRelation(); updateSelBar(); }
 function updateSelBar(){
   const n=selected.size; selCount.textContent=n+(n===1?' item':' items');
+  if(n>1){ const ae=document.activeElement; if(ae&&ae.closest('.block-editor,.be-todo-text,.todo-title')) ae.blur(); }
   if(n>0){
     selBar.classList.add('show');document.body.classList.add('has-sel-bar');positionSelBar();
     // show align buttons only when 2+ non-SVG items selected
@@ -500,6 +504,9 @@ function updateSelBar(){
     if(pinBtn) pinBtn.style.color=allPinned?'#E8440A':'';
     // hide pin button if no notes selected
     if(pinBtn) pinBtn.style.display=noteEls.length>0?'':'none';
+    // show ungroup button only when a frame is selected
+    const ungroupBtn=document.getElementById('sel-ungroup-btn');
+    if(ungroupBtn){ const hasFrame=els.some(e=>e.classList.contains('frame')); ungroupBtn.style.display=hasFrame?'':'none'; }
     // show font size control when notes are selected
     const fontRow=document.getElementById('sel-font-row');
     if(fontRow){
@@ -512,7 +519,7 @@ function updateSelBar(){
         if(fontSizeEl) fontSizeEl.value=sz;
       }
     }
-  }else{selBar.classList.remove('show');document.body.classList.remove('has-sel-bar');}
+  }else{selBar.classList.remove('show');document.body.classList.remove('has-sel-bar');msScaleBox.classList.remove('show');}
 }
 
 function changeSelectedFontSize(delta){
@@ -661,8 +668,7 @@ function toggleLockSelected(){
   els.forEach(el=>setElLocked(el,!allLocked));
   snapshot(); updateSelBar();
 }
-function positionSelBar(){
-  if(!selected.size) return;
+function getSelectionScreenBounds() {
   let mnX=Infinity,mnY=Infinity,mxX=-Infinity,mxY=-Infinity;
   selected.forEach(el=>{
     let r;
@@ -670,9 +676,96 @@ function positionSelBar(){
     else r=el.getBoundingClientRect();
     mnX=Math.min(mnX,r.left);mnY=Math.min(mnY,r.top);mxX=Math.max(mxX,r.right);mxY=Math.max(mxY,r.bottom);
   });
-  if(mnX===Infinity) return;
-  selBar.style.left=(mnX+mxX)/2+'px'; selBar.style.top=Math.max(50,mnY-52)+'px';
+  if(mnX===Infinity) return null;
+  return {mnX,mnY,mxX,mxY};
 }
+
+function positionSelBar(){
+  const b=getSelectionScreenBounds(); if(!b) return;
+  const {mnX,mnY,mxX,mxY}=b;
+  const barRect=selBar.getBoundingClientRect();
+  const barH=barRect.height||36, barW=barRect.width||300;
+  const topBarBottom=48, gap=8, vw=window.innerWidth;
+  const centerX=Math.min(Math.max((mnX+mxX)/2, barW/2+8), vw-barW/2-8);
+  const aboveY=mnY-barH-gap;
+  const belowY=mxY+gap;
+  const top=aboveY>=topBarBottom+gap ? aboveY : belowY;
+  selBar.style.left=centerX+'px'; selBar.style.top=top+'px';
+  // position scale box
+  const domEls=[...selected].filter(e=>!(e instanceof SVGElement));
+  if(domEls.length>=2){
+    msScaleBox.style.left=mnX+'px'; msScaleBox.style.top=mnY+'px';
+    msScaleBox.style.width=(mxX-mnX)+'px'; msScaleBox.style.height=(mxY-mnY)+'px';
+    msScaleBox.classList.add('show');
+  } else {
+    msScaleBox.classList.remove('show');
+  }
+}
+
+function startMultiScale(e, corner) {
+  e.stopPropagation(); e.preventDefault();
+  const domEls = [...selected].filter(el=>!(el instanceof SVGElement)&&!el.classList.contains('locked'));
+  if(!domEls.length) return;
+
+  // Capture origins in world coords
+  const origins = domEls.map(el=>({
+    el,
+    l: parseFloat(el.style.left)||0,
+    t: parseFloat(el.style.top)||0,
+    w: el.offsetWidth,
+    h: el.offsetHeight,
+  }));
+
+  // Selection bounding box in world coords
+  const mnX = Math.min(...origins.map(o=>o.l));
+  const mnY = Math.min(...origins.map(o=>o.t));
+  const mxX = Math.max(...origins.map(o=>o.l+o.w));
+  const mxY = Math.max(...origins.map(o=>o.t+o.h));
+  const selW = mxX - mnX, selH = mxY - mnY;
+
+  // Anchor is the opposite corner in world coords
+  const anchorX = corner.includes('e') ? mnX : mxX;
+  const anchorY = corner.includes('s') ? mnY : mxY;
+
+  const sx = e.clientX, sy = e.clientY;
+
+  function onMove(ev) {
+    const dx = (ev.clientX - sx) / scale;
+    const dy = (ev.clientY - sy) / scale;
+    // Uniform scale: use whichever axis implies the larger change, pick max magnitude
+    const rawW = corner.includes('e') ? selW+dx : selW-dx;
+    const rawH = corner.includes('s') ? selH+dy : selH-dy;
+    // Drive scale from both axes, pick the one with larger relative change
+    const scFromW = Math.max(0.05, rawW / selW);
+    const scFromH = Math.max(0.05, rawH / selH);
+    const sc = Math.abs(scFromW - 1) >= Math.abs(scFromH - 1) ? scFromW : scFromH;
+
+    origins.forEach(({el, l, t, w, h}) => {
+      const nw = Math.max(40, Math.round(w * sc));
+      const nh = Math.max(40, Math.round(h * sc));
+      // Position each element relative to the anchor corner, scaled uniformly
+      const relX = corner.includes('e') ? l - mnX : mxX - (l+w);
+      const relY = corner.includes('s') ? t - mnY : mxY - (t+h);
+      const nl = corner.includes('e') ? anchorX + relX*sc : anchorX - relX*sc - nw;
+      const nt = corner.includes('s') ? anchorY + relY*sc : anchorY - relY*sc - nh;
+      el.style.left = nl+'px'; el.style.top = nt+'px';
+      el.style.width = nw+'px'; el.style.height = nh+'px';
+    });
+    positionSelBar();
+  }
+  function onUp() {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    snapshot();
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
+// Bind scale corner handles
+msScaleBox.querySelectorAll('.ms-corner').forEach(h=>{
+  h.addEventListener('mousedown', e=>startMultiScale(e, h.dataset.corner));
+});
 function getElementsInsideFrame(frame, skipSelected) {
   const fl = parseFloat(frame.style.left) || 0;
   const ft = parseFloat(frame.style.top)  || 0;
@@ -736,12 +829,78 @@ function cleanupElConnections(el) {
   removeRelationsForEl(el);
 }
 function deleteSelected(){ snapshot(); selected.forEach(el=>{ cleanupElConnections(el); el.remove(); }); selected.clear(); updateSelBar(); }
+// Rebuild all event listeners lost by cloneNode(true).
+// blocks: pre-extracted block editor content from the original (notes only).
+function rebindElement(el, blocks) {
+  // Remove stale cloned handles that need to be recreated with fresh listeners
+  el.querySelectorAll('.rh').forEach(h => h.remove());
+  el.querySelectorAll('.rel-handle').forEach(h => h.remove());
+
+  if (el.classList.contains('draw-card')) {
+    makeResizeHandles(el, 160, 120, (e, nw, nh) => {
+      const c = e.querySelector('.dc-canvas'); if (!c) return;
+      const tmp = document.createElement('canvas');
+      tmp.width = c.width; tmp.height = c.height;
+      tmp.getContext('2d').drawImage(c, 0, 0);
+      c.width = Math.max(100, nw-12); c.height = Math.max(80, nh-38);
+      c.getContext('2d').drawImage(tmp, 0, 0);
+    });
+    addRelHandle(el);
+    bindNote(el);
+    bindDrawCard(el);
+  } else if (el.classList.contains('todo-card')) {
+    makeResizeHandles(el, 160, 80);
+    addRelHandle(el);
+    bindNote(el);
+    bindTodoCard(el);
+  } else if (el.classList.contains('ai-note')) {
+    makeResizeHandles(el, 240, 200);
+    addRelHandle(el);
+    bindNote(el);
+  } else if (el.classList.contains('note')) {
+    makeResizeHandles(el, 160, 80);
+    addRelHandle(el);
+    bindNote(el);
+    const oldEd = el.querySelector('.block-editor'); if (oldEd) oldEd.remove();
+    createBlockEditor(el);
+    if (blocks && blocks.length) setEditorBlocks(el, blocks);
+  } else if (el.classList.contains('video-card')) {
+    makeResizeHandles(el, 160, 100, (e, nw) => { e.style.width = nw+'px'; requestAnimationFrame(()=>{ e.style.height=''; }); });
+    addRelHandle(el);
+    bindImgCard(el);
+    bindVideoCard(el);
+  } else if (el.classList.contains('audio-card')) {
+    makeResizeHandles(el, 200, 80, (e, nw) => { const b=e.querySelector('.ac-body'); if(b) b.style.width=(nw-12)+'px'; });
+    addRelHandle(el);
+    bindImgCard(el);
+    bindAudioCard(el);
+  } else if (el.classList.contains('img-card')) {
+    makeResizeHandles(el, 60, 60, imgCardResizeFn, ['ne','e','se','sw','w','nw']);
+    addRelHandle(el);
+    bindImgCard(el);
+  } else if (el.classList.contains('frame')) {
+    makeResizeHandles(el, 80, 60);
+    addRelHandle(el);
+    bindFrame(el);
+  } else if (el.classList.contains('lbl')) {
+    bindLabel(el);
+  } else {
+    el.addEventListener('mousedown', onElemMouseDown);
+  }
+
+  // Rebind conn-port (lost on clone)
+  const cp = el.querySelector('.conn-port');
+  if (cp) { cp.addEventListener('mousedown', e => { e.stopPropagation(); startConnDrag(e, el); }); }
+}
+
 function duplicateSelected(){
   snapshot(); const newEls=[];
   selected.forEach(el=>{
     if(el instanceof SVGElement){const clone=el.cloneNode(true);clone.classList.remove('stroke-selected');const ex=clone.getAttribute('transform')||'';clone.setAttribute('transform',ex+' translate(24,24)');clone.addEventListener('mousedown',onStrokeMouseDown);strokes.appendChild(clone);newEls.push(clone);}
-    else{const clone=el.cloneNode(true);clone.style.left=(parseFloat(el.style.left)||0)+24+'px';clone.style.top=(parseFloat(el.style.top)||0)+24+'px';clone.classList.remove('selected');
-      if(clone.classList.contains('note'))bindNote(clone);else if(clone.classList.contains('frame'))bindFrame(clone);else clone.addEventListener('mousedown',onElemMouseDown);
+    else{
+      const blocks=el.classList.contains('note')&&!el.classList.contains('draw-card')&&!el.classList.contains('todo-card')&&!el.classList.contains('ai-note')?getEditorBlocks(el):null;
+      const clone=el.cloneNode(true);clone.style.left=(parseFloat(el.style.left)||0)+24+'px';clone.style.top=(parseFloat(el.style.top)||0)+24+'px';clone.classList.remove('selected');
+      rebindElement(clone, blocks);
       world.appendChild(clone);newEls.push(clone);}
   });
   clearSelection(); newEls.forEach(el=>{if(el instanceof SVGElement)el.classList.add('stroke-selected');else el.classList.add('selected');selected.add(el);}); updateSelBar();
@@ -814,16 +973,12 @@ async function pasteClipboard() {
       el.style.left = (parseFloat(el.style.left) || 0) + 24 + 'px';
       el.style.top  = (parseFloat(el.style.top)  || 0) + 24 + 'px';
       el.classList.remove('selected');
-      if (el.classList.contains('note')) bindNote(el);
-      else if (el.classList.contains('frame')) bindFrame(el);
-      else if (el.classList.contains('img-card')) {
-        if (item.imgId) {
-          // duplicate the blob under a new id so deleting the original doesn't orphan this copy
-          const newId = await duplicateImgBlob(item.imgId);
-          el.dataset.imgId = newId || item.imgId;
-        }
-        bindImgCard(el);
-      } else el.addEventListener('mousedown', onElemMouseDown);
+      if (el.classList.contains('img-card') && item.imgId) {
+        const newId = await duplicateImgBlob(item.imgId);
+        el.dataset.imgId = newId || item.imgId;
+      }
+      const blocks = el.classList.contains('note')&&!el.classList.contains('draw-card')&&!el.classList.contains('todo-card')&&!el.classList.contains('ai-note') ? getEditorBlocks(el) : null;
+      rebindElement(el, blocks);
       world.appendChild(el);
       newEls.push(el);
     }
@@ -853,6 +1008,20 @@ function groupSelected(){
   selected.forEach(el=>{if(el instanceof SVGElement)return;const l=parseFloat(el.style.left)||0,t=parseFloat(el.style.top)||0,w=el.offsetWidth,h=el.offsetHeight;mnX=Math.min(mnX,l);mnY=Math.min(mnY,t);mxX=Math.max(mxX,l+w);mxY=Math.max(mxY,t+h);});
   const pad=20; makeFrame(mnX-pad,mnY-pad,(mxX-mnX)+pad*2,(mxY-mnY)+pad*2,'group');
   clearSelection(); updateSelBar();
+}
+
+function ungroupSelected(){
+  const frames=[...selected].filter(e=>e.classList&&e.classList.contains('frame'));
+  if(!frames.length) return; snapshot();
+  const newSel=[];
+  frames.forEach(frame=>{
+    const children=getElementsInsideFrame(frame, false);
+    children.forEach(el=>newSel.push(el));
+    removeRelationsForEl(frame); frame.remove();
+  });
+  clearSelection();
+  newSel.forEach(el=>{ el.classList.add('selected'); selected.add(el); });
+  updateSelBar();
 }
 
 cv.addEventListener('wheel',e=>{ e.preventDefault(); if(e.ctrlKey||e.metaKey){ const factor=Math.pow(0.998,e.deltaY); doZoom(factor,e.clientX,e.clientY); } else{px-=e.deltaX*0.7;py-=e.deltaY*0.7;if(_zoomTarget){_zoomTarget.px=px;_zoomTarget.py=py;}applyT();positionSelBar();} },{passive:false});
@@ -902,12 +1071,14 @@ function onElemMouseDown(e){
   if(e.button===0 && imgCtxMenu.classList.contains('show')) closeAllFolderUI();
   if(e.target.tagName==='TEXTAREA'||e.target.tagName==='BUTTON') return;
   if(curTool==='arrow') return;
-  if(e.currentTarget.classList.contains('pinned')){e.stopPropagation();return;}
+  if(e.currentTarget.classList.contains('pinned')){if(!e.target.closest('.block-editor')){e.stopPropagation();return;}}
   if(e.currentTarget.classList.contains('locked')){e.stopPropagation();return;}
   if(curTool!=='select'){startSingleDrag(e,e.currentTarget);return;}
   const el=e.currentTarget;
-  if(e.shiftKey){if(selected.has(el)){el.classList.remove('selected');selected.delete(el);updateSelBar();}else{el.classList.add('selected');selected.add(el);updateSelBar();}}
-  else if(!selected.has(el)){clearSelection();selectEl(el);}
+  if(e.shiftKey){
+    if(selected.has(el)){el.classList.remove('selected');selected.delete(el);updateSelBar();e.stopPropagation();e.preventDefault();return;}
+    else{el.classList.add('selected');selected.add(el);updateSelBar();}
+  } else if(!selected.has(el)){clearSelection();selectEl(el);}
   dragSel=true;dragSelStartW=c2w(e.clientX,e.clientY);dragSelMoved=false;buildDragOrigins();
   e.stopPropagation();e.preventDefault();
 }
@@ -976,12 +1147,10 @@ document.addEventListener('mousedown', e => {
 const NOTE_COLORS=[null,'#c62a2a','#b85c00','#7a6800','#1a6b2e','#135e96','#5c2a8a','#8a1a4a','#2a5a5a'];
 const COLOR_LABELS=['none','red','orange','yellow','green','blue','purple','pink','teal'];
 
-function addNote(){ const r=cv.getBoundingClientRect(),p=c2w(r.left+r.width/2+(Math.random()-.5)*320,r.top+r.height/2+(Math.random()-.5)*220); snapshot();makeNote(p.x-100,p.y-64); }
-function addTodo(){ const r=cv.getBoundingClientRect(),p=c2w(r.left+r.width/2+(Math.random()-.5)*320,r.top+r.height/2+(Math.random()-.5)*220); snapshot();makeTodo(p.x-110,p.y-70); }
-function addAiNote(){
-  const r=cv.getBoundingClientRect(),p=c2w(r.left+r.width/2+(Math.random()-.5)*320,r.top+r.height/2+(Math.random()-.5)*220);
-  snapshot(); makeAiNote(p.x-130,p.y-90);
-}
+function _spawnPos(offX=100, offY=64){ const r=cv.getBoundingClientRect(); const cx=r.left+r.width/2, cy=r.top+r.height/2; const mx=(_mouseClientX>=r.left&&_mouseClientX<=r.right&&_mouseClientY>=r.top&&_mouseClientY<=r.bottom)?_mouseClientX:cx; const my=(_mouseClientX>=r.left&&_mouseClientX<=r.right&&_mouseClientY>=r.top&&_mouseClientY<=r.bottom)?_mouseClientY:cy; const p=c2w(mx,my); return{x:p.x-offX,y:p.y-offY}; }
+function addNote(){ const p=_spawnPos(100,64); snapshot();makeNote(p.x,p.y); }
+function addTodo(){ const p=_spawnPos(110,70); snapshot();makeTodo(p.x,p.y); }
+function addAiNote(){ const p=_spawnPos(130,90); snapshot();makeAiNote(p.x,p.y); }
 
 function makeAiNote(x,y){
   noteN++;
@@ -1565,7 +1734,7 @@ function makeNote(x,y,color=null){
   const connPort=document.createElement('div');connPort.className='conn-port';
   connPort.addEventListener('mousedown',e=>{e.stopPropagation();startConnDrag(e,d);});
   d.appendChild(strip);d.appendChild(idx);d.appendChild(collapseBtn);d.appendChild(bottom);d.appendChild(connPort);
-  makeResizeHandles(d,160,80,(el,nw,nh)=>{ const be=el.querySelector('.block-editor'); if(be) be.style.height=Math.max(40,nh-90)+'px'; });
+  makeResizeHandles(d,160,80);
   addRelHandle(d);
   bindNote(d); world.appendChild(d);
   createBlockEditor(d);
@@ -1827,9 +1996,8 @@ function restoreDrawCardData(d, dataURL) {
 }
 
 function addDrawCard(x, y) {
-  const r = cv.getBoundingClientRect();
-  const p = c2w(r.left+r.width/2, r.top+r.height/2);
-  makeDrawCard(x!==undefined?x:p.x-160, y!==undefined?y:p.y-120);
+  if(x!==undefined&&y!==undefined){makeDrawCard(x,y);return;}
+  const p=_spawnPos(160,120); makeDrawCard(p.x,p.y);
 }
 
 function bindTodoCard(card) {
@@ -1870,9 +2038,8 @@ function bindTodoCard(card) {
 }
 
 // ── All-edge resize ─────────────────────────────────────────────
-function makeResizeHandles(el, minW, minH, onResizeFn) {
-  const dirs = ['n','ne','e','se','s','sw','w','nw'];
-  dirs.forEach(dir => {
+function makeResizeHandles(el, minW, minH, onResizeFn, dirs) {
+  (dirs || ['n','ne','e','se','s','sw','w','nw']).forEach(dir => {
     const h = document.createElement('div');
     h.className = 'rh rh-'+dir;
     h.addEventListener('mousedown', e => startEdgeResize(e, el, dir, minW, minH, onResizeFn));

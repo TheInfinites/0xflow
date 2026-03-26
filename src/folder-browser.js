@@ -363,8 +363,8 @@ imgCtxMenu.addEventListener('mouseover', e => {
   if (!item) return;
   if (item.dataset.action === 'move-copy') {
     openFolderBrowser(item);
-  } else {
-    // Hovering another item collapses the folder browser
+  } else if (item.dataset.action !== 'export') {
+    // Hovering another item collapses the folder browser (but not export — it has its own submenu)
     folderBrowser.classList.remove('show');
     folderBrowser.innerHTML = '';
   }

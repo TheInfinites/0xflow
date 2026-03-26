@@ -799,8 +799,9 @@ body.dash-light #toast { background: #1a1a1a; }
 .note {
   position: absolute; width: 200px; min-height: 100px;
   background: var(--note-bg, #1a1a1b); border: 1px solid var(--note-border, rgba(255,255,255,0.08)); border-radius: 8px;
-  padding: 12px 12px 30px; cursor: grab; z-index: 10;
+  padding: 12px 12px 0; cursor: grab; z-index: 10;
   transition: border-color 0.12s; overflow: visible;
+  display: flex; flex-direction: column;
 }
 .note:hover { border-color: rgba(255,255,255,0.18);  }
 .note.drag { cursor: grabbing; z-index: 200; }
@@ -817,7 +818,8 @@ body.dash-light #toast { background: #1a1a1a; }
 .block-editor {
   flex: 1;
   min-height: 40px;
-  padding: 2px 0;
+  min-width: 0;
+  padding: 2px 0 30px;
   overflow-y: auto;
   font-family: 'Geist', sans-serif;
   font-size: 13px;
@@ -1590,6 +1592,21 @@ body.on-canvas.light .todo-progress { background: rgba(255,255,255,0.06); }
 #marquee { position: absolute; border: 1px solid rgba(232,68,10,0.5); background: rgba(232,68,10,0.04); pointer-events: none; z-index: 500; display: none; border-radius: 0; }
 
 /* selection bar */
+#ms-scale-box {
+  position: fixed; pointer-events: none; z-index: 1500;
+  border: 1px dashed rgba(255,255,255,0.2); display: none;
+}
+#ms-scale-box.show { display: block; }
+.ms-corner {
+  position: absolute; width: 8px; height: 8px;
+  background: #fff; border: 1px solid rgba(0,0,0,0.4); border-radius: 1px;
+  pointer-events: all; cursor: nwse-resize;
+}
+.ms-corner[data-corner="nw"] { top: -4px; left: -4px; cursor: nwse-resize; }
+.ms-corner[data-corner="ne"] { top: -4px; right: -4px; cursor: nesw-resize; }
+.ms-corner[data-corner="se"] { bottom: -4px; right: -4px; cursor: nwse-resize; }
+.ms-corner[data-corner="sw"] { bottom: -4px; left: -4px; cursor: nesw-resize; }
+
 #sel-bar {
   position: fixed; z-index: 2000; display: none; align-items: center; gap: 0;
   background: rgba(10,10,10,0.95); backdrop-filter: blur(20px);
@@ -1626,8 +1643,60 @@ body.on-canvas.light .todo-progress { background: rgba(255,255,255,0.06); }
 /* ── Video card ──────────────────────────── */
 /* ── Video Card ─────────────────────────────────────────── */
 .video-card { padding: 0 !important; overflow: hidden; display: flex; flex-direction: column; background: #0c0c0c; }
-.vc-video { display: block; width: 100%; height: auto; flex-shrink: 0; cursor: grab; }
+.vc-video { display: block; width: 100%; height: auto; flex-shrink: 0; cursor: grab; will-change: transform; transform: translateZ(0); }
+/* ── Custom video fullscreen overlay ── */
+#vc-fs-overlay {
+  display: none;
+  position: fixed; inset: 0; z-index: 99999;
+  background: #000;
+  cursor: pointer;
+}
+#vc-fs-overlay.active { display: flex; align-items: center; justify-content: center; }
+#vc-fs-video {
+  width: 100%; height: 100%; object-fit: contain; display: block;
+  will-change: transform; transform: translateZ(0);
+}
+#vc-fs-ui {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  opacity: 0; transition: opacity 0.2s; pointer-events: none;
+  background: linear-gradient(transparent, rgba(0,0,0,0.72));
+  padding: 32px 0 0;
+}
+#vc-fs-overlay.show-ui #vc-fs-ui { opacity: 1; pointer-events: auto; }
+#vc-fs-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 18px 16px;
+}
+#vc-fs-bar button {
+  background: none; border: none; color: rgba(255,255,255,0.85);
+  cursor: pointer; padding: 4px; display: flex; align-items: center; flex-shrink: 0;
+}
+#vc-fs-bar button:hover { color: #fff; }
+#vc-fs-bar button svg { width: 18px; height: 18px; display: block; }
+#vc-fs-play svg { width: 20px; height: 20px; }
+#vc-fs-time, #vc-fs-dur {
+  font-size: 12px; color: rgba(255,255,255,0.7); white-space: nowrap;
+  font-variant-numeric: tabular-nums; flex-shrink: 0;
+  font-family: 'Geist Mono', monospace;
+}
+#vc-fs-seek {
+  flex: 1; height: 3px; appearance: none; -webkit-appearance: none;
+  background: linear-gradient(to right, rgba(255,255,255,0.85) var(--pct, 0%), rgba(255,255,255,0.25) var(--pct, 0%));
+  border-radius: 2px; cursor: pointer; outline: none;
+}
+#vc-fs-seek::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 13px; height: 13px;
+  border-radius: 50%; background: #fff; cursor: pointer;
+}
+#vc-fs-seek::-moz-range-thumb {
+  width: 13px; height: 13px; border-radius: 50%; background: #fff;
+  border: none; cursor: pointer;
+}
+#vc-fs-mute .vc-fs-wave { transition: opacity 0.15s; }
+#vc-fs-mute.muted .vc-fs-wave { opacity: 0; }
 .vc-video:active { cursor: grabbing; }
+.vc-video.scrubbing { cursor: ew-resize; }
+.vc-frame-step { font-family: 'Geist Mono', monospace; font-size: 9px; letter-spacing: 0.04em; }
 .vc-footer { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-top: 1px solid rgba(255,255,255,0.06); background: #0f0f0f; flex-shrink: 0; cursor: grab; }
 .vc-footer:active { cursor: grabbing; }
 /* icon buttons */
@@ -1947,14 +2016,16 @@ body.on-canvas.light .collapse-btn svg { stroke: rgba(0,0,0,0.5); }
   cursor: pointer; opacity: 0; transition: opacity 0.15s;
   display: flex; align-items: center; justify-content: center;
 }
-.note:hover .collapse-btn, .note.selected .collapse-btn,
+.note:hover .collapse-btn, .note.selected .collapse-btn, .note.pinned:hover .collapse-btn,
 .img-card:hover .collapse-btn, .img-card.selected .collapse-btn { opacity: 0.5; }
+.note.collapsed .collapse-btn, .img-card.collapsed .collapse-btn { opacity: 0.5; }
 .collapse-btn:hover { opacity: 1 !important; }
 .collapse-btn svg { width: 8px; height: 8px; stroke: rgba(255,255,255,0.7); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
 /* ── Collapsed state ──────────────────────────────────────── */
 .note.collapsed { height: 32px !important; min-height: 32px !important; overflow: hidden; }
 .note.collapsed textarea,
+.note.collapsed .block-editor,
 .note.collapsed .note-bottom,
 .note.collapsed .note-reactions,
 .note.collapsed .note-fit-btn,
@@ -1965,6 +2036,7 @@ body.on-canvas.light .collapse-btn svg { stroke: rgba(0,0,0,0.5); }
 .note.collapsed .ai-key-prompt,
 .note.collapsed .todo-items,
 .note.collapsed .todo-add,
+.note.collapsed .todo-title,
 .note.collapsed .todo-progress { display: none !important; }
 .img-card.collapsed img { display: none; }
 .img-card.collapsed { height: 32px !important; overflow: hidden; }

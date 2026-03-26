@@ -24,11 +24,12 @@ function createBlockEditor(noteEl) {
   editor.className = 'block-editor';
 
   editor.addEventListener('mousedown', e => {
-    if (noteEl.classList.contains('selected')) {
-      // Note already selected — allow focus, stop drag from starting
+    const multiSelected = typeof selected !== 'undefined' && selected.size > 1;
+    if (noteEl.classList.contains('selected') && !multiSelected) {
+      // Sole selected note — allow focus, stop drag from starting
       e.stopPropagation();
     } else {
-      // First click — prevent focus so the note selects/drags normally
+      // Multi-selection or first click — prevent focus so dragging works normally
       e.preventDefault();
     }
   });

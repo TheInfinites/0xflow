@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.7.3**
+> Current version: **v0.7.4**
 
 ---
 
@@ -147,7 +147,8 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 | `isLight` | `boolean` | Canvas light/dark mode |
 | `minimapVisible` | `boolean` | Whether minimap overlay is shown |
 | `brainstormHistory` | `{role,content}[]` | AI brainstorm conversation |
-| `blobURLCache` | `{[id]: url}` | In-memory cache of blob URLs keyed by imgId |
+| `blobURLCache` | `{[id]: url}` | In-memory cache of media URLs keyed by imgId (object URLs for video/audio, data URLs for images) |
+| `_mediaBlobs` | `{[id]: Blob}` | In-memory blob cache for media so object URLs can be recreated after undo/redo/restore |
 | `window._relations` | `Relation[]` | Semantic connection lines between elements |
 | `selectedRelId` | `number\|null` | Currently selected relation line (click to select, Delete to remove) |
 | `CULL_BUFFER` | `number` | Off-screen culling margin in screen pixels (300) |
@@ -290,17 +291,21 @@ Typing `/` (or `/query`) opens a floating menu filtered by block type label. Cli
 | `startEdgeResize(e, el, dir, minW, minH, onResizeFn?)` | Handle mousedown for a specific resize direction (`n/ne/e/se/s/sw/w/nw`) |
 | `makeCollapseBtn(el, getLabel)` | Create collapse/expand chevron button for a card |
 | `toggleCollapse(el, getLabel)` | Toggle `.collapsed` class, save/restore dimensions in `dataset.expandedW/H` |
-| `placeImagesGrid(blobs, sourcePaths)` | Resolve all image dimensions, compute √n column grid, centre on viewport, place all in one snapshot |
+| `placeImagesGrid(blobs, sourcePaths, anchor?)` | Resolve all image dimensions, compute √n column grid, centre on `anchor` world-pos (drop point) or viewport centre, place all in one snapshot |
 | `placeImageBlob(blob, wx?, wy?)` | Full pipeline: save blob → place on canvas. Used by both image and PDF import. |
-| `placeMediaBlob(blob, mediaType, wx?, wy?)` | Same pipeline for video/audio blobs; uses `makeVideoCard` / `makeAudioCard` based on `mediaType`. Passes `blob.name` to `makeAudioCard` for title/format display. |
-| `makeVideoCard(id, url, x, y, w)` | Create a video card. Video fills top (no native controls). Custom footer: seek bar, mute, fullscreen, grab-still, play/pause. Click video to play/pause; drag anywhere on card to move. `bindVideoCard(card)` rebinds controls after restore. |
+| `placeMediaBlob(blob, wx?, wy?, sourcePath?, mediaType)` | Same pipeline for video/audio blobs; uses object URL (not data URL) for smooth streaming. Uses `makeVideoCard` / `makeAudioCard` based on `mediaType`. |
+| `placeMediaFromPath(filePath, wx?, wy?, mediaType, mimeType)` | Tauri-only: places media using `convertFileSrc(filePath)` for direct streaming — no file read into memory. Used by Tauri drag-drop for video/audio. |
+| `makeVideoCard(id, url, x, y, w)` | Create a video card. Video fills top (no native controls). Custom footer: frame-step buttons (‹›), seek bar, mute, fullscreen, grab-still, play/pause. Click video to play/pause; shift+hover to scrub. Seek bar updates via rAF (60fps, not `timeupdate`). `bindVideoCard(card)` rebinds controls after restore. |
 | `makeAudioCard(id, url, x, y, filename)` | Create an audio card with custom player controls. Single horizontal row: art square (44×44px) left, title + format label (e.g. "MP3") right, play button far right. Title extracted from `filename` (underscores/hyphens→spaces), extension shown as format label. |
 | `bindAudioCard(card)` | Rebind custom audio player controls (scrubber, play button, timestamps) after canvas restore. Called in `restoreCanvas` for `img-card[data-media-type=audio]` elements. |
 | `buildShapePath(type, x1, y1, x2, y2)` | Returns SVG path `d` string for rect/ellipse/diamond/triangle/line given two corner points. |
 | `makeShapeEl(d, stroke, fill, sw)` | Create a `stroke-wrap` SVG `<g>` with visible path + transparent hit-zone path — same structure as pen strokes. |
 | `saveImgBlob(blob)` | Save image (Tauri: filesystem, Browser: IndexedDB) |
 | `loadImgBlob(id)` | Load image by ID from storage |
-| `placePdf(file, sourcePath?)` | Render each PDF page to a canvas at 2× scale, convert to PNG blob, place via `placeImageBlob()` in a vertical column with 24px gap. Each page card gets `dataset.pdfPage` and `dataset.pdfName`. |
+| `placePdf(file, sourcePath?, wx?, wy?)` | Render each PDF page to a canvas at 2× scale, convert to PNG blob, place via `placeImageBlob()` in a vertical column with 24px gap. Centres column on drop position when `wx/wy` provided. Each page card gets `dataset.pdfPage` and `dataset.pdfName`. |
+| `placeExrBlob(blob, wx?, wy?, sourcePath?)` | Parse EXR binary, tone-map to SDR PNG, place as img-card. Sets `dataset.isExr = '1'`. |
+| `parseExr(buf)` | Async EXR parser. Reads header (channels, dataWindow, compression), decodes uncompressed or ZIP scanlines, half-float→float32, Reinhard tone map, sRGB gamma encode → PNG data URL. |
+| `openVideoFullscreen(video)` | Opens the custom fullscreen overlay (`#vc-fs-overlay`) synced to a card's video element. Bypasses browser native fullscreen (no chrome, no frame shift). |
 
 ### Selection & Drag
 | Function | Description |
@@ -743,6 +748,12 @@ gh release create v{version} \
 ---
 
 ## Changes in v0.7.x
+
+### v0.7.4
+- **EXR import** — `.exr` files can now be dropped or imported via the import panel. `parseExr()` decodes uncompressed and ZIP-compressed OpenEXR files (half-float or float channels), applies Reinhard tone mapping + sRGB gamma encode, and places as a standard img-card. EXR row added to import panel. `dataset.isExr = '1'` marks EXR-sourced cards.
+- **Smooth video playback** — video/audio elements now use `URL.createObjectURL(blob)` instead of data URLs, enabling native streaming and range-request support. In Tauri, dropped video/audio files use `convertFileSrc(filePath)` for zero-copy direct streaming. Seek bar updates via `requestAnimationFrame` (60fps) instead of `timeupdate` (~4Hz). Seek input throttled to one seek per rAF frame to prevent queue build-up. Added `preload="auto"` and `playsinline`. Video element promoted to own compositor layer (`will-change: transform`).
+- **Custom video fullscreen** — fullscreen button opens a custom `#vc-fs-overlay` (fixed div) instead of native browser fullscreen. Eliminates frame shift on play/pause (caused by browser chrome appearing/disappearing). Overlay has: seek bar with filled progress track, current time / duration, play/pause, mute, exit button. Tap/click anywhere toggles play/pause. Space bar play/pause, Escape exits. UI auto-hides after 2.5s while playing.
+- **Drop at cursor position** — files dropped on canvas are placed centered on the drop cursor position (not viewport center). Multiple files still arrange in a non-overlapping grid centered on the drop point. `placeImagesGrid` accepts optional `anchor` world-pos. `placePdf` accepts optional `wx/wy`. All browser and Tauri drop handlers pass `dropPos` through.
 
 ### v0.7.3
 - **Shape right-click context menu** — right-clicking any drawn shape (rect, ellipse, line) opens a floating panel matching the image context menu style. Controls: stroke color swatches + custom picker, fill color swatches + custom picker, stroke width (thin/medium/bold), stroke style (solid/dashed/dotted), opacity slider, delete. All changes apply live. Bottom toolbar for shapes removed.

@@ -138,6 +138,222 @@ async function getBlobURL(id) {
   return url;
 }
 
+// ── EXR parser: ArrayBuffer → { dataURL, nw, nh } ──
+// Handles uncompressed (ZIP_SINGLE, ZIP_SCANLINE, or NO_COMPRESSION) flat EXR files.
+// Channels decoded as half-float, tone-mapped to SDR, written to PNG data URL.
+function f16toF32(h) {
+  const s = (h >> 15) & 1, e = (h >> 10) & 0x1f, m = h & 0x3ff;
+  if (e === 0) return (m === 0) ? 0 : (s ? -1 : 1) * m / 1024 * Math.pow(2, -14);
+  if (e === 31) return m ? NaN : (s ? -Infinity : Infinity);
+  return (s ? -1 : 1) * (1 + m / 1024) * Math.pow(2, e - 15);
+}
+async function parseExr(buf) {
+  const dv = new DataView(buf);
+  let off = 0;
+  function u8()  { return dv.getUint8(off++); }
+  function u32() { const v = dv.getUint32(off, true); off += 4; return v; }
+  function i32() { const v = dv.getInt32(off, true); off += 4; return v; }
+  function str()  {
+    let s = ''; let c;
+    while ((c = u8()) !== 0) s += String.fromCharCode(c);
+    return s;
+  }
+
+  // Magic + version
+  const magic = u32();
+  if (magic !== 20000630) throw new Error('Not an EXR file');
+  u32(); // version flags
+
+  // Header attributes
+  let channels = null, dataWindow = null, compression = 0;
+  for (;;) {
+    const name = str();
+    if (name === '') break;
+    const type = str();
+    const size = u32();
+    if (name === 'channels') {
+      // chlist: null-terminated list of channel entries
+      channels = {};
+      const end = off + size;
+      while (off < end) {
+        const cname = str();
+        if (cname === '') { off = end; break; }
+        const pixType = u32(); // 0=UINT, 1=HALF, 2=FLOAT
+        u8(); u8(); u8(); u8(); // pLinear + reserved
+        u32(); u32(); // xSampling, ySampling
+        channels[cname] = { pixType };
+      }
+    } else if (name === 'dataWindow') {
+      const xMin = i32(), yMin = i32(), xMax = i32(), yMax = i32();
+      dataWindow = { xMin, yMin, xMax, yMax };
+    } else if (name === 'compression') {
+      compression = u8(); off += size - 1;
+    } else {
+      off += size;
+    }
+  }
+
+  if (!channels || !dataWindow) throw new Error('EXR: missing required attributes');
+  const nw = dataWindow.xMax - dataWindow.xMin + 1;
+  const nh = dataWindow.yMax - dataWindow.yMin + 1;
+  const chNames = Object.keys(channels).sort(); // alphabetical: A,B,G,R
+  const hasA = chNames.includes('A');
+
+  // Build pixel buffer
+  const pixels = new Float32Array(nw * nh * 4); // RGBA float
+  pixels.fill(1);
+
+  // Only support uncompressed (0), ZIP per-scanline (2), ZIP per-block (3)
+  // For compressed, we'll attempt to handle if pako is available, otherwise error
+  if (compression !== 0 && compression !== 2 && compression !== 3) {
+    throw new Error(`EXR: unsupported compression type ${compression}`);
+  }
+
+  const numScanlines = (compression === 3) ? 16 : 1; // ZIP_SCANLINE blocks 16 lines
+
+  // Offset table: one entry per chunk
+  const numChunks = Math.ceil(nh / numScanlines);
+  const offsets = [];
+  for (let i = 0; i < numChunks; i++) {
+    const lo = u32(), hi = u32();
+    offsets.push(lo + hi * 4294967296);
+  }
+
+  // Decode chunks
+  for (let chunk = 0; chunk < numChunks; chunk++) {
+    off = Number(offsets[chunk]);
+    const scanY = i32();
+    const dataSize = u32();
+    const row = scanY - dataWindow.yMin;
+    const linesInChunk = Math.min(numScanlines, nh - row);
+
+    let scanData;
+    if (compression === 0) {
+      scanData = new Uint8Array(buf, off, dataSize);
+      off += dataSize;
+    } else {
+      // ZIP compression — use DecompressionStream if available, else pako
+      const compressed = new Uint8Array(buf, off, dataSize);
+      off += dataSize;
+      if (typeof DecompressionStream !== 'undefined') {
+        const ds = new DecompressionStream('deflate-raw');
+        const writer = ds.writable.getWriter();
+        const reader = ds.readable.getReader();
+        writer.write(compressed);
+        writer.close();
+        const chunks = [];
+        let totalLen = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value); totalLen += value.length;
+        }
+        scanData = new Uint8Array(totalLen);
+        let p2 = 0;
+        for (const ch of chunks) { scanData.set(ch, p2); p2 += ch.length; }
+        // EXR ZIP: predictor reorder (interleaved byte reorder)
+        const reord = new Uint8Array(scanData.length);
+        const half2 = Math.ceil(scanData.length / 2);
+        for (let i2 = 0; i2 < scanData.length; i2++) {
+          const src = (i2 < half2) ? i2 * 2 : (i2 - half2) * 2 + 1;
+          reord[src] = scanData[i2];
+        }
+        // Delta decode
+        for (let i2 = 1; i2 < reord.length; i2++) reord[i2] = (reord[i2] + reord[i2-1]) & 0xff;
+        scanData = reord;
+      } else {
+        throw new Error('EXR: ZIP compression requires DecompressionStream');
+      }
+    }
+
+    // scanData layout: for each scanline in chunk, each channel sequentially
+    // channel order = sorted alphabetical
+    let sdOff = 0;
+    for (let li = 0; li < linesInChunk; li++) {
+      const yr = row + li;
+      for (const cname of chNames) {
+        const pixType = channels[cname].pixType;
+        const bytesPerPix = pixType === 1 ? 2 : 4;
+        const rowBytes = nw * bytesPerPix;
+        for (let xi = 0; xi < nw; xi++) {
+          const pi = (yr * nw + xi) * 4;
+          let val;
+          if (pixType === 1) { // HALF
+            const h = scanData[sdOff + xi*2] | (scanData[sdOff + xi*2+1] << 8);
+            val = f16toF32(h);
+          } else { // FLOAT
+            const view = new DataView(scanData.buffer, scanData.byteOffset + sdOff + xi*4, 4);
+            val = view.getFloat32(0, true);
+          }
+          if (cname === 'R') pixels[pi]   = val;
+          else if (cname === 'G') pixels[pi+1] = val;
+          else if (cname === 'B') pixels[pi+2] = val;
+          else if (cname === 'A') pixels[pi+3] = val;
+        }
+        sdOff += rowBytes;
+      }
+    }
+  }
+
+  // Tone map: simple Reinhard per-channel + gamma encode
+  function linearToSrgb(v) {
+    if (v <= 0) return 0;
+    if (v >= 1) return 255;
+    return Math.round((v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1/2.4) - 0.055) * 255);
+  }
+  const imgData = new Uint8ClampedArray(nw * nh * 4);
+  for (let i = 0; i < nw * nh; i++) {
+    const r = pixels[i*4], g = pixels[i*4+1], b = pixels[i*4+2], a = pixels[i*4+3];
+    // Reinhard tone map (guards against NaN/Inf from degenerate EXR values)
+    const tm = v => isFinite(v) && v > 0 ? v / (1 + v) : (v <= 0 ? 0 : 1);
+    imgData[i*4]   = linearToSrgb(tm(r));
+    imgData[i*4+1] = linearToSrgb(tm(g));
+    imgData[i*4+2] = linearToSrgb(tm(b));
+    imgData[i*4+3] = hasA ? Math.round(Math.min(1, Math.max(0, a)) * 255) : 255;
+  }
+
+  const oc = document.createElement('canvas');
+  oc.width = nw; oc.height = nh;
+  oc.getContext('2d').putImageData(new ImageData(imgData, nw, nh), 0, 0);
+  return { dataURL: oc.toDataURL('image/png'), nw, nh };
+}
+
+// ── place an EXR file on the canvas ──
+async function placeExrBlob(blob, wx, wy, sourcePath) {
+  const buf = await blob.arrayBuffer();
+  let parsed;
+  try {
+    parsed = await parseExr(buf);
+  } catch (err) {
+    console.error('EXR parse error:', err);
+    showToast('Could not read EXR file');
+    return;
+  }
+  const { dataURL, nw, nh } = parsed;
+
+  const id = await saveImgBlob(blob);
+  blobURLCache[id] = dataURL;
+
+  const dispW = Math.min(nw, 600);
+  const dispH = Math.round(nh * (dispW / nw));
+
+  if (wx === undefined) {
+    const r = cv.getBoundingClientRect();
+    const p = c2w(r.left + r.width / 2, r.top + r.height / 2);
+    wx = p.x - dispW / 2; wy = p.y - dispH / 2;
+  }
+
+  let resolvedSourcePath = sourcePath;
+  if (!resolvedSourcePath && IS_TAURI && typeof _projectDir !== 'undefined' && _projectDir) {
+    resolvedSourcePath = await saveImgToProjectDir(blob, id);
+  }
+
+  snapshot();
+  const card = makeImgCard(id, dataURL, wx, wy, dispW, dispH, nw, nh);
+  if (resolvedSourcePath) card.dataset.sourcePath = resolvedSourcePath;
+  card.dataset.isExr = '1';
+}
+
 // ── place image from File/Blob at canvas centre (or given world coords) ──
 async function placeImageBlob(blob, wx, wy, sourcePath) {
   // First convert to a stable data URL so it always works (no blob URL expiry issues)
@@ -182,6 +398,21 @@ async function placeImageBlob(blob, wx, wy, sourcePath) {
   else if (!IS_TAURI) card.dataset.sourcePath = 'D:\\art\\test\\' + (blob.name || id + '.png');
 }
 
+function imgCardResizeFn(el, nw) {
+  const imgEl = el.querySelector('img');
+  const nwMax = parseInt(el.dataset.nw)||99999;
+  const actualW = Math.min(nw - 12, nwMax);
+  if(imgEl){ imgEl.style.width = actualW+'px'; imgEl.style.height = 'auto'; }
+  el.style.width = (actualW + 12) + 'px';
+  el.style.height = 'auto';
+}
+
+function rebindImgCard(card) {
+  card.querySelectorAll('.rh').forEach(h => h.remove());
+  makeResizeHandles(card, 60, 60, imgCardResizeFn, ['ne','e','se','sw','w','nw']);
+  bindImgCard(card);
+}
+
 function makeImgCard(id, url, x, y, w, h, nw, nh) {
   const card = document.createElement('div');
   card.className = 'img-card';
@@ -214,12 +445,7 @@ function makeImgCard(id, url, x, y, w, h, nw, nh) {
   card.appendChild(collapseBtn);
 
   // all-edge resize handles
-  makeResizeHandles(card, 60, 60, (el, nw) => {
-    const imgEl = el.querySelector('img');
-    const nwMax = parseInt(el.dataset.nw)||99999;
-    const actualW = Math.min(nw-12, nwMax);
-    if(imgEl) imgEl.style.width = actualW+'px';
-  });
+  makeResizeHandles(card, 60, 60, imgCardResizeFn, ['ne','e','se','sw','w','nw']);
 
   // connector output port
   const connPort = document.createElement('div');
@@ -287,6 +513,215 @@ function imgScale(card, factor) {
   card.style.width = (newW + 12) + 'px';
   snapshot();
 }
+async function imgExport(card, fmt) {
+  if (!card) return;
+  closeImgCtxMenu();
+  const imgEl = card.querySelector('img');
+  if (!imgEl) return;
+
+  // Draw to canvas at native resolution
+  const nw = parseInt(card.dataset.nw) || imgEl.naturalWidth || imgEl.width;
+  const nh = parseInt(card.dataset.nh) || imgEl.naturalHeight || imgEl.height;
+  const c = document.createElement('canvas');
+  c.width = nw; c.height = nh;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(imgEl, 0, 0, nw, nh);
+
+  const baseName = (card.dataset.sourcePath || card.dataset.imgId || 'image').split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+
+  if (fmt === 'exr') {
+    const imageData = ctx.getImageData(0, 0, nw, nh);
+    const px = imageData.data; // Uint8ClampedArray RGBA 0-255
+
+    // Convert uint8 [0-255] to float32 linear (approx sRGB→linear)
+    function toLinear(v) { const f=v/255; return f<=0.04045?f/12.92:Math.pow((f+0.055)/1.055,2.4); }
+
+    // float32 to float16 (half) as uint16
+    function f32toF16(v) {
+      const f = new Float32Array(1); f[0] = v;
+      const b = new Uint32Array(f.buffer)[0];
+      const s = (b>>>31)&1, e = (b>>>23)&0xff, m = b&0x7fffff;
+      if (e===0xff) return (s<<15)|0x7c00|(m?1:0); // inf/nan
+      const ne = e-127+15;
+      if (ne>=31) return (s<<15)|0x7c00; // overflow→inf
+      if (ne<=0) { // denorm or underflow
+        if (ne<-10) return s<<15;
+        return (s<<15)|((m|0x800000)>>(1-ne+13));
+      }
+      return (s<<15)|(ne<<10)|(m>>13);
+    }
+
+    // EXR uses alphabetical channel order: A, B, G, R
+    const channels = ['A','B','G','R'];
+    const chanIdx  = { A:3, B:2, G:1, R:0 }; // index into RGBA px
+
+    // Build header as a sequence of null-terminated attribute strings
+    function encStr(s) {
+      const b = new TextEncoder().encode(s+'\0'); return b;
+    }
+    function encAttr(name, type, data) {
+      return [...encStr(name), ...encStr(type),
+        ...new Uint8Array(new Uint32Array([data.length]).buffer), ...data];
+    }
+
+    // channels attribute: list of channel records
+    function buildChannels() {
+      const bytes = [];
+      for (const ch of channels) {
+        bytes.push(...new TextEncoder().encode(ch+'\0')); // name + null
+        const rec = new ArrayBuffer(16);
+        const dv2 = new DataView(rec);
+        dv2.setUint32(0,1,true);  // HALF=1
+        dv2.setUint32(4,1,true);  // pLinear
+        dv2.setUint32(8,1,true);  // xSampling
+        dv2.setUint32(12,1,true); // ySampling
+        bytes.push(...new Uint8Array(rec));
+      }
+      bytes.push(0); // end of channel list
+      return new Uint8Array(bytes);
+    }
+
+    function int32LE(v){ const b=new ArrayBuffer(4);new DataView(b).setInt32(0,v,true);return new Uint8Array(b); }
+    function uint32LE(v){ const b=new ArrayBuffer(4);new DataView(b).setUint32(0,v,true);return new Uint8Array(b); }
+
+    // compression: NO_COMPRESSION=0
+    const compBuf = new Uint8Array([0]);
+    // dataWindow and displayWindow: box2i = xMin,yMin,xMax,yMax (int32 LE each)
+    function box2i(x0,y0,x1,y1){ const b=new ArrayBuffer(16);const d=new DataView(b);[x0,y0,x1,y1].forEach((v,i)=>d.setInt32(i*4,v,true));return new Uint8Array(b); }
+    // lineOrder: INCREASING_Y=0
+    const lineOrderBuf = new Uint8Array([0]);
+    // pixelAspectRatio: float32 1.0
+    const parBuf = new Uint8Array(new Float32Array([1.0]).buffer);
+    // screenWindowCenter: v2f 0,0
+    const swcBuf = new Uint8Array(new Float32Array([0,0]).buffer);
+    // screenWindowWidth: float32 1.0
+    const swwBuf = new Uint8Array(new Float32Array([1.0]).buffer);
+
+    const headerBytes = [
+      ...encAttr('channels','chlist',buildChannels()),
+      ...encAttr('compression','compression',compBuf),
+      ...encAttr('dataWindow','box2i',box2i(0,0,nw-1,nh-1)),
+      ...encAttr('displayWindow','box2i',box2i(0,0,nw-1,nh-1)),
+      ...encAttr('lineOrder','lineOrder',lineOrderBuf),
+      ...encAttr('pixelAspectRatio','float',parBuf),
+      ...encAttr('screenWindowCenter','v2f',swcBuf),
+      ...encAttr('screenWindowWidth','float',swwBuf),
+      0, // end of header
+    ];
+
+    // Offset table: one offset per scanline (uint64 LE)
+    // We'll compute offsets after knowing header+table size
+    const MAGIC = new Uint8Array([0x76,0x2f,0x31,0x01]);
+    const VERSION = new Uint8Array([0x02,0x00,0x00,0x00]); // version 2, single-part scanline
+    const headerArr = new Uint8Array(headerBytes);
+    const offsetTableSize = nh * 8; // nh uint64s
+    const dataStart = 8 + headerArr.length + offsetTableSize;
+
+    // Build scanline data
+    const scanlineSize = channels.length * nw * 2; // 4 channels * nw * 2 bytes (HALF)
+    const scanlines = []; // array of Uint8Array per scanline
+    for (let y = 0; y < nh; y++) {
+      const sl = new Uint8Array(scanlineSize);
+      const sdv = new DataView(sl.buffer);
+      for (let ci = 0; ci < channels.length; ci++) {
+        const srcCh = chanIdx[channels[ci]];
+        for (let x = 0; x < nw; x++) {
+          const i = (y*nw+x)*4 + srcCh;
+          const lin = srcCh===3 ? px[i]/255 : toLinear(px[i]); // alpha stays linear
+          sdv.setUint16((ci*nw+x)*2, f32toF16(lin), true);
+        }
+      }
+      scanlines.push(sl);
+    }
+
+    // Build offset table
+    const offsets = new BigUint64Array(nh);
+    let off = BigInt(dataStart);
+    for (let y = 0; y < nh; y++) {
+      offsets[y] = off;
+      off += BigInt(4+4+scanlineSize); // y-coord + byteCount + data
+    }
+
+    // Assemble final buffer
+    const totalSize = dataStart + nh*(4+4+scanlineSize);
+    const out = new Uint8Array(totalSize);
+    let pos = 0;
+    function write(arr){ out.set(arr,pos); pos+=arr.length; }
+
+    write(MAGIC); write(VERSION); write(headerArr);
+    write(new Uint8Array(offsets.buffer));
+    for (let y = 0; y < nh; y++) {
+      write(int32LE(y));
+      write(uint32LE(scanlineSize));
+      write(scanlines[y]);
+    }
+
+    const blob = new Blob([out], { type: 'image/x-exr' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href=url; a.download=baseName+'.exr';
+    a.click(); URL.revokeObjectURL(url);
+    return;
+  }
+
+  if (fmt === 'tiff') {
+    // Write minimal uncompressed TIFF (RGBA, little-endian)
+    const imageData = ctx.getImageData(0, 0, nw, nh);
+    const pixels = imageData.data; // Uint8ClampedArray RGBA
+    const IFD_ENTRIES = 11;
+    const IFD_SIZE = 2 + IFD_ENTRIES * 12 + 4;
+    const headerSize = 8;
+    const ifdOffset = headerSize;
+    const pixelOffset = headerSize + IFD_SIZE;
+    const pixelBytes = pixels.length; // nw*nh*4
+    const buf = new ArrayBuffer(pixelOffset + pixelBytes);
+    const dv = new DataView(buf);
+    const LE = true;
+    // TIFF header
+    dv.setUint16(0, 0x4949, LE); // little-endian
+    dv.setUint16(2, 42, LE);     // magic
+    dv.setUint32(4, ifdOffset, LE); // offset to first IFD
+    // IFD
+    let p = ifdOffset;
+    dv.setUint16(p, IFD_ENTRIES, LE); p += 2;
+    function ifdEntry(tag, type, count, value) {
+      dv.setUint16(p, tag, LE); dv.setUint16(p+2, type, LE);
+      dv.setUint32(p+4, count, LE); dv.setUint32(p+8, value, LE);
+      p += 12;
+    }
+    ifdEntry(0x0100, 3, 1, nw);          // ImageWidth SHORT
+    ifdEntry(0x0101, 3, 1, nh);          // ImageLength SHORT
+    ifdEntry(0x0102, 3, 1, 8);           // BitsPerSample (8 per channel)
+    ifdEntry(0x0103, 3, 1, 1);           // Compression: none
+    ifdEntry(0x0106, 3, 1, 2);           // PhotometricInterpretation: RGB
+    ifdEntry(0x0111, 4, 1, pixelOffset); // StripOffsets
+    ifdEntry(0x0115, 3, 1, 4);           // SamplesPerPixel: 4 (RGBA)
+    ifdEntry(0x0116, 3, 1, nh);          // RowsPerStrip
+    ifdEntry(0x0117, 4, 1, pixelBytes);  // StripByteCounts
+    ifdEntry(0x011C, 3, 1, 1);           // PlanarConfiguration: chunky
+    ifdEntry(0x0152, 3, 1, 2);           // ExtraSamples: unassociated alpha
+    dv.setUint32(p, 0, LE); // next IFD offset = 0
+    // Pixel data
+    new Uint8Array(buf, pixelOffset).set(pixels);
+    const blob = new Blob([buf], { type: 'image/tiff' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = baseName + '.tiff';
+    a.click(); URL.revokeObjectURL(url);
+    return;
+  }
+
+  const mimeMap = { png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp' };
+  const extMap  = { png: '.png', jpeg: '.jpg', webp: '.webp' };
+  const mime = mimeMap[fmt] || 'image/png';
+  const ext  = extMap[fmt]  || '.png';
+  const quality = fmt === 'jpeg' ? 0.95 : undefined;
+
+  c.toBlob(blob => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = baseName + ext;
+    a.click(); URL.revokeObjectURL(url);
+  }, mime, quality);
+}
+
 function imgDelete(card) {
   const imgId = card.dataset.imgId;
   deleteImgBlob(imgId);
@@ -380,6 +815,148 @@ function findStillSlot(card, w, h) {
   return pos;
 }
 
+// ── Custom fullscreen overlay — no browser native chrome, no frame shift ──
+(function() {
+  const overlay  = document.getElementById('vc-fs-overlay');
+  const fsVideo  = document.getElementById('vc-fs-video');
+  const fsUI     = document.getElementById('vc-fs-ui');
+  const exitBtn  = document.getElementById('vc-fs-exit');
+  const playBtn  = document.getElementById('vc-fs-play');
+  const muteBtn  = document.getElementById('vc-fs-mute');
+  const seekBar  = document.getElementById('vc-fs-seek');
+  const timeEl   = document.getElementById('vc-fs-time');
+  const durEl    = document.getElementById('vc-fs-dur');
+  const iconPlay  = playBtn.querySelector('.vc-fs-icon-play');
+  const iconPause = playBtn.querySelector('.vc-fs-icon-pause');
+  let _srcVideo  = null;
+  let _uiTimer   = null;
+  let _rafId     = null;
+  let _seekPending = false;
+
+  function fmtTime(s) {
+    if (!isFinite(s)) return '0:00';
+    const m = Math.floor(s / 60), sec = Math.floor(s % 60);
+    return m + ':' + String(sec).padStart(2, '0');
+  }
+
+  function syncPlayIcon() {
+    const playing = !fsVideo.paused && !fsVideo.ended;
+    iconPlay.style.display  = playing ? 'none' : '';
+    iconPause.style.display = playing ? '' : 'none';
+  }
+
+  function startRAF() {
+    if (_rafId) return;
+    function tick() {
+      if (!fsVideo.paused && !fsVideo.ended && fsVideo.duration) {
+        const pct = (fsVideo.currentTime / fsVideo.duration) * 100;
+        seekBar.value = pct * 10;
+        seekBar.style.setProperty('--pct', pct.toFixed(2) + '%');
+        timeEl.textContent = fmtTime(fsVideo.currentTime);
+        _rafId = requestAnimationFrame(tick);
+      } else {
+        _rafId = null;
+      }
+    }
+    _rafId = requestAnimationFrame(tick);
+  }
+
+  function showUI() {
+    overlay.classList.add('show-ui');
+    clearTimeout(_uiTimer);
+    _uiTimer = setTimeout(() => { if (!fsVideo.paused) overlay.classList.remove('show-ui'); }, 2500);
+  }
+
+  function closeOverlay() {
+    if (!_srcVideo) return;
+    _srcVideo.currentTime = fsVideo.currentTime;
+    if (!fsVideo.paused) { _srcVideo.play(); } else { _srcVideo.pause(); }
+    fsVideo.pause();
+    fsVideo.src = '';
+    if (_rafId) { cancelAnimationFrame(_rafId); _rafId = null; }
+    overlay.classList.remove('active', 'show-ui');
+    clearTimeout(_uiTimer);
+    _srcVideo = null;
+  }
+
+  window.openVideoFullscreen = function(video) {
+    _srcVideo = video;
+    fsVideo.src = video.src;
+    fsVideo.currentTime = video.currentTime;
+    fsVideo.muted = video.muted;
+    fsVideo.loop = video.loop;
+    muteBtn.classList.toggle('muted', video.muted);
+    seekBar.value = 0;
+    timeEl.textContent = fmtTime(video.currentTime);
+    durEl.textContent  = fmtTime(video.duration);
+    overlay.classList.add('active');
+    showUI();
+    if (!video.paused) {
+      fsVideo.play().catch(() => {});
+      video.pause();
+    }
+    syncPlayIcon();
+  };
+
+  // Click on overlay background = play/pause
+  overlay.addEventListener('click', e => {
+    if (fsUI.contains(e.target)) return;
+    fsVideo.paused ? fsVideo.play() : fsVideo.pause();
+    showUI();
+  });
+
+  playBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    fsVideo.paused ? fsVideo.play() : fsVideo.pause();
+  });
+
+  muteBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    fsVideo.muted = !fsVideo.muted;
+    muteBtn.classList.toggle('muted', fsVideo.muted);
+  });
+
+  seekBar.addEventListener('mousedown', e => e.stopPropagation());
+  seekBar.addEventListener('input', () => {
+    if (!fsVideo.duration) return;
+    seekBar.style.setProperty('--pct', (seekBar.value / 10).toFixed(2) + '%');
+    if (!_seekPending) {
+      _seekPending = true;
+      requestAnimationFrame(() => {
+        fsVideo.currentTime = (seekBar.value / 1000) * fsVideo.duration;
+        timeEl.textContent = fmtTime(fsVideo.currentTime);
+        _seekPending = false;
+      });
+    }
+  });
+
+  exitBtn.addEventListener('click', e => { e.stopPropagation(); closeOverlay(); });
+
+  fsVideo.addEventListener('play',  () => { syncPlayIcon(); startRAF(); });
+  fsVideo.addEventListener('pause', () => { syncPlayIcon(); });
+  fsVideo.addEventListener('ended', () => { syncPlayIcon(); overlay.classList.add('show-ui'); });
+  fsVideo.addEventListener('seeked', () => {
+    if (fsVideo.duration) {
+      const pct = (fsVideo.currentTime / fsVideo.duration) * 100;
+      seekBar.value = pct * 10;
+      seekBar.style.setProperty('--pct', pct.toFixed(2) + '%');
+    }
+    timeEl.textContent = fmtTime(fsVideo.currentTime);
+  });
+  fsVideo.addEventListener('loadedmetadata', () => {
+    durEl.textContent = fmtTime(fsVideo.duration);
+    seekBar.value = fsVideo.duration ? (fsVideo.currentTime / fsVideo.duration) * 1000 : 0;
+  });
+
+  document.addEventListener('keydown', e => {
+    if (!overlay.classList.contains('active')) return;
+    if (e.key === 'Escape') closeOverlay();
+    if (e.key === ' ') { e.preventDefault(); fsVideo.paused ? fsVideo.play() : fsVideo.pause(); }
+  });
+
+  overlay.addEventListener('mousemove', showUI);
+})();
+
 // ── video card ──
 function makeVideoCard(id, url, x, y, w) {
   const card = document.createElement('div');
@@ -394,6 +971,8 @@ function makeVideoCard(id, url, x, y, w) {
   video.controls = false;
   video.draggable = false;
   video.loop = false;
+  video.preload = 'auto';
+  video.setAttribute('playsinline', '');
   video.className = 'vc-video';
   card.appendChild(video);
 
@@ -413,7 +992,18 @@ function makeVideoCard(id, url, x, y, w) {
   const seekBar = document.createElement('input');
   seekBar.type = 'range'; seekBar.className = 'vc-seek'; seekBar.min = 0; seekBar.max = 1000; seekBar.value = 0; seekBar.step = 1;
   seekBar.addEventListener('mousedown', e => e.stopPropagation());
-  seekBar.addEventListener('input', () => { if (video.duration) video.currentTime = (seekBar.value / 1000) * video.duration; });
+  // Throttle seeks to one per animation frame — prevents seek queue build-up and stutter
+  let _seekPending = false;
+  seekBar.addEventListener('input', () => {
+    if (!video.duration) return;
+    if (!_seekPending) {
+      _seekPending = true;
+      requestAnimationFrame(() => {
+        video.currentTime = (seekBar.value / 1000) * video.duration;
+        _seekPending = false;
+      });
+    }
+  });
 
   // Volume button (toggle mute)
   const volBtn = document.createElement('button');
@@ -429,7 +1019,7 @@ function makeVideoCard(id, url, x, y, w) {
   fsBtn.title = 'Fullscreen';
   fsBtn.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6V3h3M10.5 3h3v3M13.5 10v3h-3M5.5 13h-3v-3"/></svg>';
   fsBtn.addEventListener('mousedown', e => e.stopPropagation());
-  fsBtn.addEventListener('click', e => { e.stopPropagation(); video.requestFullscreen && video.requestFullscreen(); });
+  fsBtn.addEventListener('click', e => { e.stopPropagation(); openVideoFullscreen(video); });
 
   // Grab-still button
   const stillBtn = document.createElement('button');
@@ -460,24 +1050,86 @@ function makeVideoCard(id, url, x, y, w) {
     } catch(err) { console.error('still grab error', err); showToast('Could not grab still'); }
   });
 
-  // Click on video body to toggle play/pause — but not if it was a drag
+  // Frame step buttons
+  const framePrev = document.createElement('button');
+  framePrev.className = 'vc-btn vc-frame-step';
+  framePrev.title = 'Previous frame (hold to repeat)';
+  framePrev.textContent = '‹';
+  const frameNext = document.createElement('button');
+  frameNext.className = 'vc-btn vc-frame-step';
+  frameNext.title = 'Next frame (hold to repeat)';
+  frameNext.textContent = '›';
+
+  function getFrameDur() { return 1 / (video._fps || 30); }
+  function stepFrame(dir) {
+    video.pause();
+    video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + dir * getFrameDur()));
+  }
+  function bindFrameBtn(btn, dir) {
+    let _hold = null;
+    btn.addEventListener('mousedown', e => { e.stopPropagation(); stepFrame(dir); _hold = setTimeout(function repeat(){ stepFrame(dir); _hold = setTimeout(repeat, 60); }, 350); });
+    btn.addEventListener('mouseup',   () => { clearTimeout(_hold); });
+    btn.addEventListener('mouseleave',() => { clearTimeout(_hold); });
+  }
+  bindFrameBtn(framePrev, -1);
+  bindFrameBtn(frameNext,  1);
+
+  // Shift+hover to scrub frame by frame
+  let _scrubLastX = null;
+  video.addEventListener('mousemove', e => {
+    if (!e.shiftKey) {
+      if (_scrubLastX !== null) { _scrubLastX = null; video.classList.remove('scrubbing'); }
+      return;
+    }
+    video.classList.add('scrubbing');
+    if (_scrubLastX === null) { _scrubLastX = e.clientX; return; }
+    const dx = e.clientX - _scrubLastX;
+    _scrubLastX = e.clientX;
+    if (Math.abs(dx) < 1) return;
+    video.pause();
+    video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + (dx / 4) * getFrameDur()));
+  });
+  video.addEventListener('mouseleave', () => { _scrubLastX = null; video.classList.remove('scrubbing'); });
+
+  // Click on video to toggle play/pause
   video.addEventListener('mousedown', e => {
     if (e.button !== 0) return;
+    if (e.shiftKey) { e.stopPropagation(); e.preventDefault(); return; }
     const sx = e.clientX, sy = e.clientY;
     let moved = false;
     const onMove = m => { if (Math.abs(m.clientX-sx) > 3 || Math.abs(m.clientY-sy) > 3) moved = true; };
     document.addEventListener('mousemove', onMove);
-    video.addEventListener('click', ce => { if (moved) { ce.stopPropagation(); ce.preventDefault(); } else { video.paused ? video.play() : video.pause(); } document.removeEventListener('mousemove', onMove); }, { once: true });
+    video.addEventListener('click', ce => {
+      document.removeEventListener('mousemove', onMove);
+      if (moved) { ce.stopPropagation(); ce.preventDefault(); }
+      else { video.paused ? video.play() : video.pause(); }
+    }, { once: true });
   });
 
-  // Sync play/pause icon and seek bar
-  video.addEventListener('play',  () => { playBtn.querySelector('.vc-icon-play').style.display='none'; playBtn.querySelector('.vc-icon-pause').style.display=''; });
+  // Sync play/pause icon
+  video.addEventListener('play',  () => { playBtn.querySelector('.vc-icon-play').style.display='none'; playBtn.querySelector('.vc-icon-pause').style.display=''; startSeekRAF(); });
   video.addEventListener('pause', () => { playBtn.querySelector('.vc-icon-play').style.display=''; playBtn.querySelector('.vc-icon-pause').style.display='none'; });
   video.addEventListener('ended', () => { playBtn.querySelector('.vc-icon-play').style.display=''; playBtn.querySelector('.vc-icon-pause').style.display='none'; });
-  video.addEventListener('timeupdate', () => { if (video.duration) seekBar.value = (video.currentTime / video.duration) * 1000; });
   video.addEventListener('loadedmetadata', () => { seekBar.value = 0; });
+  // Update seek bar via rAF while playing — smoother than timeupdate (which fires ~4Hz)
+  video.addEventListener('seeked', () => { if (video.duration) seekBar.value = (video.currentTime / video.duration) * 1000; });
+  let _rafId = null;
+  function startSeekRAF() {
+    if (_rafId) return;
+    function tick() {
+      if (!video.paused && !video.ended && video.duration) {
+        seekBar.value = (video.currentTime / video.duration) * 1000;
+        _rafId = requestAnimationFrame(tick);
+      } else {
+        _rafId = null;
+      }
+    }
+    _rafId = requestAnimationFrame(tick);
+  }
 
+  footer.appendChild(framePrev);
   footer.appendChild(seekBar);
+  footer.appendChild(frameNext);
   footer.appendChild(volBtn);
   footer.appendChild(fsBtn);
   footer.appendChild(stillBtn);
@@ -626,13 +1278,45 @@ function bindAudioCard(card) {
   });
 }
 
+// In-memory blob cache so we can recreate object URLs after undo/redo/restore
+const _mediaBlobs = {};
+
+// Tauri-only: place media directly from a filesystem path using convertFileSrc (no file read into memory)
+async function placeMediaFromPath(filePath, wx, wy, mediaType, mimeType) {
+  const { convertFileSrc } = window.__TAURI__.tauri;
+  const assetURL = convertFileSrc(filePath);
+  const id = 'media_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
+
+  // Save a reference in IDB by writing the file there too (for persistence/restore)
+  try {
+    const ext = mediaType === 'video' ? '.mp4' : '.mp3';
+    const { writeFile, readFile } = window.__TAURI__.fs;
+    const { join } = window.__TAURI__.path;
+    const dir = await getTauriImagesDir();
+    const destPath = await join(dir, id + ext);
+    // Copy file only if source is not already in our images dir
+    if (!filePath.startsWith(dir)) {
+      const data = await readFile(filePath);
+      await writeFile(destPath, data);
+    }
+  } catch (e) { console.warn('placeMediaFromPath: copy failed', e); }
+
+  blobURLCache[id] = assetURL;
+
+  if (wx === undefined) {
+    const r = cv.getBoundingClientRect();
+    const p = c2w(r.left + r.width/2, r.top + r.height/2);
+    wx = p.x - 150; wy = p.y - 80;
+  }
+
+  snapshot();
+  const card = mediaType === 'video'
+    ? makeVideoCard(id, assetURL, wx, wy, 300)
+    : makeAudioCard(id, assetURL, wx, wy, filePath.split(/[\\/]/).pop());
+  card.dataset.sourcePath = filePath;
+}
+
 async function placeMediaBlob(blob, wx, wy, sourcePath, mediaType) {
-  const dataURL = await new Promise((res, rej) => {
-    const reader = new FileReader();
-    reader.onload = e => res(e.target.result);
-    reader.onerror = rej;
-    reader.readAsDataURL(blob);
-  });
   const id = 'media_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
   // store blob in same IDB store (key doesn't need .png extension in IDB)
   if (!IS_TAURI) {
@@ -652,7 +1336,13 @@ async function placeMediaBlob(blob, wx, wy, sourcePath, mediaType) {
     const arrayBuffer = await blob.arrayBuffer();
     await writeFile(path, new Uint8Array(arrayBuffer));
   }
-  blobURLCache[id] = dataURL;
+
+  // Use object URL for media — supports streaming, range requests, and smooth seeking.
+  // Data URLs force the whole file into memory as base64 and can't be range-requested.
+  const objURL = URL.createObjectURL(blob);
+  blobURLCache[id] = objURL;
+  // Keep the blob itself so we can recreate the object URL after page restore
+  _mediaBlobs[id] = blob;
 
   if (wx === undefined) {
     const r = cv.getBoundingClientRect();
@@ -663,9 +1353,9 @@ async function placeMediaBlob(blob, wx, wy, sourcePath, mediaType) {
   snapshot();
   let card;
   if (mediaType === 'video') {
-    card = makeVideoCard(id, dataURL, wx, wy, 300);
+    card = makeVideoCard(id, objURL, wx, wy, 300);
   } else {
-    card = makeAudioCard(id, dataURL, wx, wy, blob.name || '');
+    card = makeAudioCard(id, objURL, wx, wy, blob.name || '');
   }
   if (sourcePath) card.dataset.sourcePath = sourcePath;
   else if (!IS_TAURI) card.dataset.sourcePath = 'D:\\art\\test\\' + (blob.name || id);
@@ -679,27 +1369,99 @@ function bindVideoCard(card) {
   const fsBtn   = card.querySelector('.vc-fs');
   const stillBtn = card.querySelector('.vc-still');
   if (!video) return;
+  // Ensure smooth playback attributes are set even on restored cards
+  video.preload = 'auto';
+  video.setAttribute('playsinline', '');
 
+  function getFrameDurV() { return 1 / (video._fps || 30); }
+  function stepFrameV(dir) {
+    video.pause();
+    video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + dir * getFrameDurV()));
+  }
+
+  // Shift+hover to scrub frame by frame
+  let _scrubLastXV = null;
+  video.addEventListener('mousemove', e => {
+    if (!e.shiftKey) {
+      if (_scrubLastXV !== null) { _scrubLastXV = null; video.classList.remove('scrubbing'); }
+      return;
+    }
+    video.classList.add('scrubbing');
+    if (_scrubLastXV === null) { _scrubLastXV = e.clientX; return; }
+    const dx = e.clientX - _scrubLastXV;
+    _scrubLastXV = e.clientX;
+    if (Math.abs(dx) < 1) return;
+    video.pause();
+    video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + (dx / 4) * getFrameDurV()));
+  });
+  video.addEventListener('mouseleave', () => { _scrubLastXV = null; video.classList.remove('scrubbing'); });
+
+  // Click on video to toggle play/pause (non-shift)
   video.addEventListener('mousedown', e => {
     if (e.button !== 0) return;
+    if (e.shiftKey) { e.stopPropagation(); e.preventDefault(); return; }
     const sx = e.clientX, sy = e.clientY;
     let moved = false;
     const onMove = m => { if (Math.abs(m.clientX-sx) > 3 || Math.abs(m.clientY-sy) > 3) moved = true; };
     document.addEventListener('mousemove', onMove);
-    video.addEventListener('click', ce => { if (moved) { ce.stopPropagation(); ce.preventDefault(); } else { video.paused ? video.play() : video.pause(); } document.removeEventListener('mousemove', onMove); }, { once: true });
+    video.addEventListener('click', ce => {
+      document.removeEventListener('mousemove', onMove);
+      if (moved) { ce.stopPropagation(); ce.preventDefault(); }
+      else { video.paused ? video.play() : video.pause(); }
+    }, { once: true });
   });
+
+  // Frame step buttons
+  const frameStepBtns = card.querySelectorAll('.vc-frame-step');
+  const framePrevB = frameStepBtns[0];
+  const frameNextB = frameStepBtns[1];
+  function bindFrameBtnV(btn, dir) {
+    if (!btn) return;
+    let _hold = null;
+    btn.addEventListener('mousedown', e => { e.stopPropagation(); stepFrameV(dir); _hold = setTimeout(function repeat(){ stepFrameV(dir); _hold = setTimeout(repeat, 60); }, 350); });
+    btn.addEventListener('mouseup',   () => clearTimeout(_hold));
+    btn.addEventListener('mouseleave',() => clearTimeout(_hold));
+  }
+  bindFrameBtnV(framePrevB, -1);
+  bindFrameBtnV(frameNextB,  1);
+
+  // rAF loop for seek bar — runs only while playing, 60fps updates
+  let _rafIdV = null;
+  function startSeekRAFV() {
+    if (_rafIdV) return;
+    function tick() {
+      if (!video.paused && !video.ended && video.duration) {
+        if (seekBar) seekBar.value = (video.currentTime / video.duration) * 1000;
+        _rafIdV = requestAnimationFrame(tick);
+      } else {
+        _rafIdV = null;
+      }
+    }
+    _rafIdV = requestAnimationFrame(tick);
+  }
 
   if (playBtn) {
     playBtn.addEventListener('mousedown', e => e.stopPropagation());
     playBtn.addEventListener('click', e => { e.stopPropagation(); video.paused ? video.play() : video.pause(); });
-    video.addEventListener('play',  () => { playBtn.querySelector('.vc-icon-play').style.display='none'; playBtn.querySelector('.vc-icon-pause').style.display=''; });
+    video.addEventListener('play',  () => { playBtn.querySelector('.vc-icon-play').style.display='none'; playBtn.querySelector('.vc-icon-pause').style.display=''; startSeekRAFV(); });
     video.addEventListener('pause', () => { playBtn.querySelector('.vc-icon-play').style.display=''; playBtn.querySelector('.vc-icon-pause').style.display='none'; });
     video.addEventListener('ended', () => { playBtn.querySelector('.vc-icon-play').style.display=''; playBtn.querySelector('.vc-icon-pause').style.display='none'; });
   }
   if (seekBar) {
     seekBar.addEventListener('mousedown', e => e.stopPropagation());
-    seekBar.addEventListener('input', () => { if (video.duration) video.currentTime = (seekBar.value / 1000) * video.duration; });
-    video.addEventListener('timeupdate', () => { if (video.duration) seekBar.value = (video.currentTime / video.duration) * 1000; });
+    // Throttle seeks to one per animation frame — prevents seek queue build-up
+    let _seekPendingV = false;
+    seekBar.addEventListener('input', () => {
+      if (!video.duration) return;
+      if (!_seekPendingV) {
+        _seekPendingV = true;
+        requestAnimationFrame(() => {
+          video.currentTime = (seekBar.value / 1000) * video.duration;
+          _seekPendingV = false;
+        });
+      }
+    });
+    video.addEventListener('seeked', () => { if (video.duration && seekBar) seekBar.value = (video.currentTime / video.duration) * 1000; });
   }
   if (volBtn) {
     volBtn.addEventListener('mousedown', e => e.stopPropagation());
@@ -707,7 +1469,7 @@ function bindVideoCard(card) {
   }
   if (fsBtn) {
     fsBtn.addEventListener('mousedown', e => e.stopPropagation());
-    fsBtn.addEventListener('click', e => { e.stopPropagation(); video.requestFullscreen && video.requestFullscreen(); });
+    fsBtn.addEventListener('click', e => { e.stopPropagation(); openVideoFullscreen(video); });
   }
   if (stillBtn) {
     stillBtn.addEventListener('mousedown', e => e.stopPropagation());
@@ -747,17 +1509,47 @@ async function restoreImgCards() {
     if (!mediaEl) continue;
     if (blobURLCache[id]) {
       mediaEl.src = blobURLCache[id];
+    } else if (IS_TAURI && (mediaType === 'video' || mediaType === 'audio')) {
+      // In Tauri: resolve path in images dir and use convertFileSrc for direct streaming
+      try {
+        const { join } = window.__TAURI__.path;
+        const { convertFileSrc } = window.__TAURI__.tauri;
+        const dir = await getTauriImagesDir();
+        const exts = mediaType === 'video' ? ['.mp4', '.webm', '.mov', '.mkv'] : ['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a', '.opus'];
+        let assetURL = null;
+        for (const ext of exts) {
+          try {
+            const p = await join(dir, id + ext);
+            // Check file exists by attempting to read 1 byte (stat not always available)
+            await window.__TAURI__.fs.readFile(p, { length: 1 });
+            assetURL = convertFileSrc(p);
+            break;
+          } catch { /* try next ext */ }
+        }
+        if (assetURL) {
+          blobURLCache[id] = assetURL;
+          mediaEl.src = assetURL;
+        }
+      } catch (e) { console.warn('restoreImgCards Tauri media restore failed', e); }
     } else {
       const blob = await loadImgBlob(id);
       if (blob) {
-        const dataURL = await new Promise((res, rej) => {
-          const reader = new FileReader();
-          reader.onload = e => res(e.target.result);
-          reader.onerror = rej;
-          reader.readAsDataURL(blob);
-        });
-        blobURLCache[id] = dataURL;
-        mediaEl.src = dataURL;
+        if (mediaType === 'video' || mediaType === 'audio') {
+          // Use object URL for media — streaming-capable, no base64 overhead
+          const objURL = URL.createObjectURL(blob);
+          blobURLCache[id] = objURL;
+          _mediaBlobs[id] = blob;
+          mediaEl.src = objURL;
+        } else {
+          const dataURL = await new Promise((res, rej) => {
+            const reader = new FileReader();
+            reader.onload = e => res(e.target.result);
+            reader.onerror = rej;
+            reader.readAsDataURL(blob);
+          });
+          blobURLCache[id] = dataURL;
+          mediaEl.src = dataURL;
+        }
       } else {
         if (mediaType !== 'video' && mediaType !== 'audio') {
           mediaEl.style.opacity = '0.3';
@@ -811,16 +1603,19 @@ async function onImportFiles(e) {
   e.target.value = '';
   if (!files.length) return;
 
-  const imgFiles = files.filter(f => f.type.startsWith('image/') && !f.name.toLowerCase().endsWith('.pdf'));
-  const pdfFiles = files.filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+  const exrFiles   = files.filter(f => f.name.toLowerCase().endsWith('.exr'));
+  const imgFiles   = files.filter(f => !f.name.toLowerCase().endsWith('.exr') && f.type.startsWith('image/') && !f.name.toLowerCase().endsWith('.pdf'));
+  const pdfFiles   = files.filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
   const videoFiles = files.filter(f => f.type.startsWith('video/'));
   const audioFiles = files.filter(f => f.type.startsWith('audio/'));
   // anything else: attempt to treat as image, skip silently if it fails
   const otherFiles = files.filter(f =>
+    !f.name.toLowerCase().endsWith('.exr') &&
     !f.type.startsWith('image/') && !f.type.startsWith('video/') && !f.type.startsWith('audio/') &&
     f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')
   );
 
+  for (const f of exrFiles) await placeExrBlob(f);
   if (imgFiles.length) await placeImagesGrid(imgFiles);
   for (const f of pdfFiles) await placePdf(f);
   for (const f of videoFiles) await placeMediaBlob(f, undefined, undefined, undefined, 'video');
@@ -952,9 +1747,11 @@ async function _applySharedCanvas(raw) {
 
 // ── file upload ──
 function triggerImg() { document.getElementById('img-file').click(); }
-// Layout a batch of image blobs in a grid centred on the canvas viewport.
+// Layout a batch of image blobs in a grid.
+// anchor: optional {x,y} world coords — grid is centred on this point (drop position).
+//         Falls back to viewport centre when omitted (e.g. file-picker import).
 // sourcePaths is optional parallel array of file paths for Tauri mode.
-async function placeImagesGrid(blobs, sourcePaths) {
+async function placeImagesGrid(blobs, sourcePaths, anchor) {
   if (!blobs.length) return;
   const GAP = 24;
 
@@ -989,9 +1786,14 @@ async function placeImagesGrid(blobs, sourcePaths) {
   const totalW = colW.reduce((a, b) => a + b, 0) + GAP * (cols - 1);
   const totalH = rowH.reduce((a, b) => a + b, 0) + GAP * (rows - 1);
 
-  // Centre grid on viewport
-  const rv = cv.getBoundingClientRect();
-  const centre = c2w(rv.left + rv.width / 2, rv.top + rv.height / 2);
+  // Centre grid on anchor (drop point) or viewport centre
+  let centre;
+  if (anchor) {
+    centre = anchor;
+  } else {
+    const rv = cv.getBoundingClientRect();
+    centre = c2w(rv.left + rv.width / 2, rv.top + rv.height / 2);
+  }
   const originX = centre.x - totalW / 2;
   const originY = centre.y - totalH / 2;
 
@@ -1021,12 +1823,15 @@ async function placeImagesGrid(blobs, sourcePaths) {
 
 async function onImgFiles(e) {
   const files = [...e.target.files]; e.target.value = '';
+  const exrFiles = files.filter(f => f.name.toLowerCase().endsWith('.exr'));
   const imgFiles = files.filter(f =>
+    !f.name.toLowerCase().endsWith('.exr') &&
     f.type.startsWith('image/') && !(f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'))
   );
   const pdfFiles = files.filter(f =>
     f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')
   );
+  for (const f of exrFiles) await placeExrBlob(f);
   if (imgFiles.length) await placeImagesGrid(imgFiles);
   for (const f of pdfFiles) await placePdf(f);
 }
@@ -1037,7 +1842,7 @@ async function onPdfFiles(e) {
   for (const f of files) await placePdf(f);
 }
 
-async function placePdf(file, sourcePath) {
+async function placePdf(file, sourcePath, wx, wy) {
   try {
     const lib = await window._pdfJsReady;
     showToast('reading pdf…');
@@ -1045,8 +1850,13 @@ async function placePdf(file, sourcePath) {
     const pdf = await lib.getDocument({ data: arrayBuffer }).promise;
     const numPages = pdf.numPages;
 
-    const r = cv.getBoundingClientRect();
-    const center = c2w(r.left + r.width / 2, r.top + r.height / 2);
+    let center;
+    if (wx !== undefined && wy !== undefined) {
+      center = { x: wx, y: wy };
+    } else {
+      const r = cv.getBoundingClientRect();
+      center = c2w(r.left + r.width / 2, r.top + r.height / 2);
+    }
     // Place pages in a vertical column, centered
     const PAGE_SCALE = 2; // render at 2x for sharpness
     const DISP_MAX_W = 700;
@@ -1116,13 +1926,14 @@ if (IS_TAURI) {
   const IMG_EXTS = ['.png','.jpg','.jpeg','.gif','.bmp','.webp','.svg','.ico','.tiff','.avif'];
   const PDF_EXT = '.pdf';
   function isImagePath(p) { const l = p.toLowerCase(); return IMG_EXTS.some(ext => l.endsWith(ext)); }
+  function isExrPath(p) { return p.toLowerCase().endsWith('.exr'); }
   function isPdfPath(p) { return p.toLowerCase().endsWith(PDF_EXT); }
 
   const listen = window.__TAURI__.event.listen;
   listen('tauri://drag-enter', (event) => {
     if (!document.body.classList.contains('on-canvas')) return;
     const paths = event.payload.paths || [];
-    if (paths.some(p => isImagePath(p) || isPdfPath(p))) document.getElementById('paste-hint').classList.add('show');
+    if (paths.some(p => isImagePath(p) || isPdfPath(p) || isExrPath(p))) document.getElementById('paste-hint').classList.add('show');
   });
   listen('tauri://drag-over', () => {});
   listen('tauri://drag-leave', () => {
@@ -1152,31 +1963,44 @@ if (IS_TAURI) {
     const imgBlobs = [], imgPaths = [];
     for (const filePath of allPaths) {
       try {
-        const data = await readFile(filePath);
         const ext = filePath.split('.').pop().toLowerCase();
+        // Video/audio: use convertFileSrc — skip expensive readFile into memory
+        if (isVideoPath(filePath)) {
+          await placeMediaFromPath(filePath, dropPos.x, dropPos.y, 'video', videoMime[ext] || 'video/mp4');
+          continue;
+        }
+        if (isAudioPath(filePath)) {
+          await placeMediaFromPath(filePath, dropPos.x, dropPos.y, 'audio', audioMime[ext] || 'audio/mpeg');
+          continue;
+        }
+        // Everything else needs the raw bytes
+        const data = await readFile(filePath);
         if (ext === 'pdf') {
           const blob = new Blob([data], { type: 'application/pdf' });
           blob.name = filePath.split(/[\\/]/).pop();
-          await placePdf(blob, filePath);
+          await placePdf(blob, filePath, dropPos.x, dropPos.y);
         } else if (isImagePath(filePath)) {
           const blob = new Blob([data], { type: mimeMap[ext] || 'image/png' });
           imgBlobs.push(blob); imgPaths.push(filePath);
-        } else if (isVideoPath(filePath)) {
-          const blob = new Blob([data], { type: videoMime[ext] || 'video/mp4' });
-          await placeMediaBlob(blob, dropPos.x, dropPos.y, filePath, 'video');
-        } else if (isAudioPath(filePath)) {
-          const blob = new Blob([data], { type: audioMime[ext] || 'audio/mpeg' });
-          await placeMediaBlob(blob, dropPos.x, dropPos.y, filePath, 'audio');
+        } else if (isExrPath(filePath)) {
+          const blob = new Blob([data], { type: 'image/x-exr' });
+          await placeExrBlob(blob, dropPos.x, dropPos.y, filePath);
         }
       } catch (e) { console.error('Failed to load dropped file:', filePath, e); }
     }
-    if (imgBlobs.length) await placeImagesGrid(imgBlobs, imgPaths);
+    if (imgBlobs.length) await placeImagesGrid(imgBlobs, imgPaths, dropPos);
   });
 } else {
   // Browser drag-and-drop (original)
   document.addEventListener('dragover', e => {
     if (!document.body.classList.contains('on-canvas')) return;
-    if ([...e.dataTransfer.items].some(i => i.type.startsWith('image/'))) {
+    const items = [...e.dataTransfer.items];
+    const hasMedia = items.some(i =>
+      i.type.startsWith('image/') || i.type.startsWith('video/') ||
+      i.type.startsWith('audio/') || i.type === 'application/pdf' ||
+      i.kind === 'file'
+    );
+    if (hasMedia) {
       e.preventDefault();
       document.getElementById('paste-hint').classList.add('show');
     }
@@ -1190,14 +2014,16 @@ if (IS_TAURI) {
     e.preventDefault();
     const dropPos = c2w(e.clientX, e.clientY);
     const dropped = [...e.dataTransfer.files];
-    const imgFiles = dropped.filter(f => f.type.startsWith('image/') && !f.name.toLowerCase().endsWith('.pdf'));
-    const pdfFiles = dropped.filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+    const exrFiles  = dropped.filter(f => f.name.toLowerCase().endsWith('.exr'));
+    const imgFiles  = dropped.filter(f => !f.name.toLowerCase().endsWith('.exr') && f.type.startsWith('image/') && !f.name.toLowerCase().endsWith('.pdf'));
+    const pdfFiles  = dropped.filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
     const videoFiles = dropped.filter(f => f.type.startsWith('video/'));
     const audioFiles = dropped.filter(f => f.type.startsWith('audio/'));
-    if (imgFiles.length) await placeImagesGrid(imgFiles);
-    for (const f of pdfFiles) await placePdf(f);
-    for (const f of videoFiles) await placeMediaBlob(f, undefined, undefined, undefined, 'video');
-    for (const f of audioFiles) await placeMediaBlob(f, undefined, undefined, undefined, 'audio');
+    for (const f of exrFiles) await placeExrBlob(f, dropPos.x, dropPos.y);
+    if (imgFiles.length) await placeImagesGrid(imgFiles, undefined, dropPos);
+    for (const f of pdfFiles) await placePdf(f, undefined, dropPos.x, dropPos.y);
+    for (const f of videoFiles) await placeMediaBlob(f, dropPos.x, dropPos.y, undefined, 'video');
+    for (const f of audioFiles) await placeMediaBlob(f, dropPos.x, dropPos.y, undefined, 'audio');
   });
 }
 
