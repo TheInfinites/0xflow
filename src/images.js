@@ -1985,7 +1985,10 @@ if (IS_TAURI) {
   listen('tauri://drag-enter', (event) => {
     if (!document.body.classList.contains('on-canvas')) return;
     const paths = event.payload.paths || [];
-    if (paths.some(p => isImagePath(p) || isPdfPath(p) || isExrPath(p))) document.getElementById('paste-hint').classList.add('show');
+    const _videoExts = ['.mp4','.webm','.mov','.avi','.mkv','.ogv'];
+    const _audioExts = ['.mp3','.wav','.ogg','.flac','.aac','.m4a','.opus'];
+    const isMedia = p => { const l = p.toLowerCase(); return _videoExts.some(e => l.endsWith(e)) || _audioExts.some(e => l.endsWith(e)); };
+    if (paths.some(p => isImagePath(p) || isPdfPath(p) || isExrPath(p) || isMedia(p))) document.getElementById('paste-hint').classList.add('show');
   });
   listen('tauri://drag-over', () => {});
   listen('tauri://drag-leave', () => {
@@ -2050,7 +2053,7 @@ if (IS_TAURI) {
     const hasMedia = items.some(i =>
       i.type.startsWith('image/') || i.type.startsWith('video/') ||
       i.type.startsWith('audio/') || i.type === 'application/pdf' ||
-      i.kind === 'file'
+      i.kind === 'file'  // accept any file — we'll filter by extension on drop
     );
     if (hasMedia) {
       e.preventDefault();
@@ -2066,11 +2069,14 @@ if (IS_TAURI) {
     e.preventDefault();
     const dropPos = c2w(e.clientX, e.clientY);
     const dropped = [...e.dataTransfer.files];
+    const audioExtSet = new Set(['.mp3','.wav','.ogg','.flac','.aac','.m4a','.opus','.wma']);
+    const videoExtSet = new Set(['.mp4','.webm','.mov','.avi','.mkv','.ogv']);
+    const getExt = f => { const i = f.name.lastIndexOf('.'); return i >= 0 ? f.name.slice(i).toLowerCase() : ''; };
     const exrFiles  = dropped.filter(f => f.name.toLowerCase().endsWith('.exr'));
     const imgFiles  = dropped.filter(f => !f.name.toLowerCase().endsWith('.exr') && f.type.startsWith('image/') && !f.name.toLowerCase().endsWith('.pdf'));
     const pdfFiles  = dropped.filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
-    const videoFiles = dropped.filter(f => f.type.startsWith('video/'));
-    const audioFiles = dropped.filter(f => f.type.startsWith('audio/'));
+    const videoFiles = dropped.filter(f => f.type.startsWith('video/') || videoExtSet.has(getExt(f)));
+    const audioFiles = dropped.filter(f => f.type.startsWith('audio/') || audioExtSet.has(getExt(f)));
     for (const f of exrFiles) await placeExrBlob(f, dropPos.x, dropPos.y);
     if (imgFiles.length) await placeImagesGrid(imgFiles, undefined, dropPos);
     for (const f of pdfFiles) await placePdf(f, undefined, dropPos.x, dropPos.y);
@@ -2744,17 +2750,22 @@ function openRadialMenu(cx, cy) {
     bkBaseEl.remove();
 
     const panel = document.createElement('div');
-    panel.className = 'radial-panel';
+    panel.className = 'radial-panel radial-panel-collapsed';
     panel.dataset.angle = BK_ANGLE;
 
-    // Bookmark header row (not clickable — just a label)
+    // Bookmark header row (hover trigger — just a label)
     const bkRow = document.createElement('div');
-    bkRow.className = 'radial-item radial-panel-item';
+    bkRow.className = 'radial-item radial-panel-item radial-panel-header';
     bkRow.classList.add('radial-item-left');
     bkRow.innerHTML = baseEls[3].innerHTML;
     bkRow.style.pointerEvents = 'none';
     bkRow.style.opacity = '0.5';
     panel.appendChild(bkRow);
+
+    // Expandable content — hidden until hover
+    const expandable = document.createElement('div');
+    expandable.className = 'radial-panel-body';
+    expandable.style.display = 'none';
 
     // "+ Add" button — creates bookmark with inline rename
     const addRow = document.createElement('div');
@@ -2788,31 +2799,76 @@ function openRadialMenu(cx, cy) {
       });
       input.addEventListener('blur', () => commit(), { once: true });
     });
-    panel.appendChild(addRow);
+    expandable.appendChild(addRow);
 
     // Separator
     const sep = document.createElement('div');
     sep.className = 'radial-panel-sep';
-    panel.appendChild(sep);
+    expandable.appendChild(sep);
 
-    // Jump items
+    // Jump items with delete buttons
     bkmarks.forEach((bk, bi) => {
       const globalIdx = RADIAL_ITEMS.length + bi;
       const row = document.createElement('div');
       row.className = 'radial-item radial-panel-item';
       row.classList.add('radial-item-left');
       row.innerHTML = `<span class="radial-item-icon" style="color:rgba(255,200,60,0.85)"><svg viewBox="0 0 15 15"><path d="M3 2h9v11l-4.5-3L3 13z" fill="currentColor" stroke="none"/></svg></span><span>${bk.name}</span>`;
+      // Delete button
+      const delBtn = document.createElement('button');
+      delBtn.className = 'radial-bk-delete';
+      delBtn.innerHTML = `<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><line x1="3" y1="3" x2="9" y2="9"/><line x1="9" y1="3" x2="3" y2="9"/></svg>`;
+      delBtn.addEventListener('mouseup', e => {
+        e.stopPropagation();
+        deleteBookmark(bi);
+        closeRadialMenu();
+      });
+      row.appendChild(delBtn);
       row.dataset.index = globalIdx;
       row.dataset.angle = BK_ANGLE;
       row.addEventListener('mouseup', e => {
+        if (e.target.closest('.radial-bk-delete')) return;
         e.stopPropagation();
-        const ox = radialOrigin ? radialOrigin.x : radialStartX;
-        const oy = radialOrigin ? radialOrigin.y : radialStartY;
         closeRadialMenu();
         jumpToBookmark(bi);
       });
-      panel.appendChild(row);
+      expandable.appendChild(row);
       _radialActiveItems[globalIdx] = { action: () => jumpToBookmark(bi) };
+    });
+
+    panel.appendChild(expandable);
+
+    // Expand on hover, collapse on leave — armed after a delay so it doesn't
+    // instantly expand when the radial menu opens under the cursor
+    let _bkHoverArmed = false;
+    setTimeout(() => { _bkHoverArmed = true; }, 300);
+
+    // Store the anchored top position (set during initial positioning)
+    let _bkAnchorTop = null;
+
+    panel._setAnchorTop = (top) => { _bkAnchorTop = top; };
+
+    panel.addEventListener('mouseenter', () => {
+      if (!_bkHoverArmed) return;
+      expandable.style.display = '';
+      panel.classList.remove('radial-panel-collapsed');
+      // Keep left anchored to right edge, top stays fixed
+      requestAnimationFrame(() => {
+        const pw = panel.offsetWidth;
+        const ix = Math.cos(BK_ANGLE) * BASE_R;
+        panel.style.left = (ix - pw) + 'px';
+        if (_bkAnchorTop !== null) panel.style.top = _bkAnchorTop + 'px';
+      });
+    });
+    panel.addEventListener('mouseleave', () => {
+      if (panel.querySelector('.bk-inline-input')) return;
+      expandable.style.display = 'none';
+      panel.classList.add('radial-panel-collapsed');
+      requestAnimationFrame(() => {
+        const pw = panel.offsetWidth;
+        const ix = Math.cos(BK_ANGLE) * BASE_R;
+        panel.style.left = (ix - pw) + 'px';
+        if (_bkAnchorTop !== null) panel.style.top = _bkAnchorTop + 'px';
+      });
     });
 
     radialRing.appendChild(panel);
@@ -2834,14 +2890,16 @@ function openRadialMenu(cx, cy) {
     el.style.top  = (iy - ph / 2) + 'px';
   });
 
-  // Position bookmark panel
-  const panel = radialRing.querySelector('.radial-panel');
-  if (panel) {
-    const pw = panel.offsetWidth, ph = panel.offsetHeight;
+  // Position bookmark panel — anchor at top, grows downward on expand
+  const bkPanel = radialRing.querySelector('.radial-panel');
+  if (bkPanel) {
+    const pw = bkPanel.offsetWidth, ph = bkPanel.offsetHeight;
     const ix = Math.cos(BK_ANGLE) * BASE_R;
     const iy = Math.sin(BK_ANGLE) * BASE_R;
-    panel.style.left = (ix - pw) + 'px';
-    panel.style.top  = (iy - ph / 2) + 'px';
+    const anchorTop = iy - ph / 2;
+    bkPanel.style.left = (ix - pw) + 'px';
+    bkPanel.style.top  = anchorTop + 'px';
+    if (bkPanel._setAnchorTop) bkPanel._setAnchorTop(anchorTop);
   }
 }
 

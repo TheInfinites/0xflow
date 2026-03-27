@@ -1359,9 +1359,20 @@ function elToWorld(el) {
 }
 
 function relCurve(ax, ay, bx, by) {
-  const dist = Math.sqrt((bx-ax)**2+(by-ay)**2);
-  const cpStr = Math.max(dist*0.45, 60);
-  return `M ${ax} ${ay} C ${ax+cpStr} ${ay}, ${bx-cpStr} ${by}, ${bx} ${by}`;
+  const dx = bx - ax, dy = by - ay;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+  if (dist < 1) return `M ${ax} ${ay} L ${bx} ${by}`;
+  const cpStr = Math.max(dist * 0.35, 40);
+  // Control points perpendicular to the line for a clean arc
+  const nx = dx / dist, ny = dy / dist; // unit direction A→B
+  // Offset perpendicular to create a gentle arc (cross product direction)
+  const px = -ny, py = nx;
+  const bulge = cpStr * 0.25;
+  const cp1x = ax + nx * cpStr + px * bulge;
+  const cp1y = ay + ny * cpStr + py * bulge;
+  const cp2x = bx - nx * cpStr + px * bulge;
+  const cp2y = by - ny * cpStr + py * bulge;
+  return `M ${ax} ${ay} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${bx} ${by}`;
 }
 
 function updateRelLine(rel) {

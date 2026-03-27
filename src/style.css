@@ -1167,11 +1167,41 @@ body.light .be-slash-item:hover, body.light .be-slash-item.active { background: 
   border-radius: 6px !important;
   position: static !important;
 }
+.radial-panel-body {
+  display: flex;
+  flex-direction: column;
+}
+.radial-panel-collapsed .radial-panel-body {
+  display: none !important;
+}
+.radial-panel-collapsed .radial-panel-header {
+  opacity: 0.7 !important;
+}
 .radial-panel-sep {
   height: 1px;
   background: rgba(255,255,255,0.06);
   margin: 2px 6px;
 }
+.radial-bk-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: auto;
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s;
+}
+.radial-bk-delete svg { width: 10px; height: 10px; color: rgba(255,255,255,0.35); }
+.radial-panel-item:hover .radial-bk-delete { opacity: 1; }
+.radial-bk-delete:hover { background: rgba(255,80,60,0.2); }
+.radial-bk-delete:hover svg { color: rgba(255,100,80,0.9); }
 .radial-item-icon {
   width: 14px; height: 14px;
   flex-shrink: 0;
