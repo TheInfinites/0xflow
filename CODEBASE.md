@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.7.4**
+> Current version: **v0.7.6**
 
 ---
 
@@ -317,6 +317,7 @@ Typing `/` (or `/query`) opens a floating menu filtered by block type label. Cli
 | `startSingleDrag(e, el)` | Non-select-tool single element drag |
 | `alignSelected(dir)` | Align: left/right/centerH/top/bottom/centerV |
 | `distributeSelected(axis)` | Distribute evenly: H or V (needs 3+) |
+| `gridSelected()` | Arrange selected elements in a grid layout (needs 2+). Sorts in reading order, computes √n columns, sizes each column/row to its widest/tallest item with 20px gaps. |
 | `alignSelFrame(dir)` | Align children inside the selected frame (shown in sel-bar when frame selected) |
 | `distributeSelFrame(axis)` | Distribute children inside the selected frame evenly |
 | `getElementsInsideFrame(frame, skipSelected?)` | Returns elements whose center is inside frame bounds; `skipSelected=false` includes selected elements |
@@ -340,6 +341,7 @@ Typing `/` (or `/query`) opens a floating menu filtered by block type label. Cli
 | `exportPNG()` | Render canvas to PNG via Canvas 2D API |
 | `exportJSON()` | Export notes/frames/labels as structured JSON |
 | `exportMarkdown()` | Export as readable Markdown document |
+| `imgExport(card, fmt, destDir?)` | Export image card to PNG/JPEG/WebP/TIFF/EXR. If `destDir` is provided (from folder browser), saves via Tauri fs; otherwise browser download. |
 | `downloadBlob(blob, filename)` | Trigger browser download |
 | `exportSharedCanvas()` | Export self-contained canvas JSON with all media blobs base64-encoded inline under `blobs` key and `shared: true` flag. Saves via Tauri dialog or browser download. |
 | `importSharedCanvas()` | Open a shared canvas JSON, inject bundled blobs into `blobURLCache`, create a new project, restore canvas, then persist each blob to local storage in the background. |
@@ -359,7 +361,7 @@ Two separate systems:
 - `removeRelation(id)` — remove by id
 - `selectRelation(id)` / `deselectRelation()` — click a relation line to select it (`.selected-rel` glow), then Delete/Backspace removes it; double-click also removes instantly
 - `updateAllRelations()` — RAF loop keeping lines attached; also updates line color from source element's `dataset.color`
-- `relCurve(ax, ay, bx, by)` — generates cubic bezier path with minimum control point distance of 60px for smooth S-curves at any angle
+- `relCurve(ax, ay, bx, by)` — generates cubic bezier path with control points along the A→B direction (slight perpendicular bulge for overlapping line disambiguation)
 
 **Right-Click Drag Connections** (any element → any element):
 - `startNoteRightDrag(e, note)` — right-click drag from notes/todos to create relations
@@ -634,7 +636,9 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 - `position:fixed; inset:0; pointer-events:none` container — only `.fb-panel` children get `pointer-events:auto` (so clicks pass through to canvas)
 - Each panel is `position:absolute`, smart-positioned: opens to the right by default, flips left when viewport overflows, shifts up when bottom overflows
 - Hovering a folder item (80ms debounce) builds the next panel via `buildFolderPanel(path, depth)`
-- Top of each panel: folder name header + **Move here** / **Copy here** buttons
+- Top of each panel: folder name header + **Move here** / **Copy here** buttons (or **Export here** in export mode)
+- `_fbMode` — `'move-copy'` (default) or `'export'`; `_fbExportFmt` stores the chosen format (png/jpeg/webp/tiff/exr)
+- `openFolderBrowserForExport(fmt)` — opens folder browser in export mode from the Export submenu
 - `_fileOpCard` stores the target img-card for the duration of the operation
 
 ### File Operation (`execFileOp`)
@@ -748,6 +752,20 @@ gh release create v{version} \
 ---
 
 ## Changes in v0.7.x
+
+### v0.7.6
+- **Bookmark panel hover-to-expand** — the bookmark panel in the radial menu now starts collapsed (showing only the "Bookmark" header). Hovering over it expands to reveal the Add button and saved bookmarks. A 300ms arming delay prevents accidental expansion when the radial menu opens under the cursor.
+- **Bookmark delete buttons** — each bookmark in the radial panel now has an × delete button that appears on hover. Clicking it deletes the bookmark and closes the radial menu.
+- **Relation line routing fix** — `relCurve()` now generates control points along the actual A→B direction with a slight perpendicular bulge, instead of always pushing control points horizontally right/left. Eliminates tangled loops when elements are above, below, or to the left of each other.
+- **Audio/music drag-drop fix** — browser drop handler now matches audio and video files by file extension (`.mp3`, `.wav`, `.flac`, `.aac`, `.m4a`, `.opus`, `.wma`, `.ogg`) in addition to MIME type, fixing drops for files where the browser reports an empty MIME type. Tauri drag-enter hint now also shows for audio/video files.
+
+### v0.7.5
+- **Grid arrange** — select 2+ items and click the grid icon in the selection bar to arrange them in an auto-sized grid. Computes √n columns, sizes each column/row to its widest/tallest item (no wasted space), 20px gaps, respects snap-to-grid. Items sorted in reading order (top-to-bottom, left-to-right).
+- **Export to folder** — "Export as…" context menu now opens the cascading folder browser. User picks a format (PNG/JPEG/WebP/TIFF/EXR), then browses project directories and clicks "Export here" to save the file to that folder via Tauri fs. Falls back to browser download when no directory is selected. `_fbMode` / `_fbExportFmt` state variables control folder browser mode.
+- **Paste web images** — clipboard paste now handles HTML fragments (e.g. images copied from Pinterest/web pages) by extracting the `<img src>` URL and fetching it as a blob. Also handles plain-text image URLs. Uses `DataTransferItem.getAsString()` callback to avoid triggering browser clipboard permission prompts.
+- **Bookmark naming** — clicking "Bookmark" in the radial menu (or the "+ Add" button in the bookmark panel) now shows an inline text input for naming the bookmark before saving. Enter commits, Escape cancels. The bookmark panel header is non-interactive; the "+ Add" row sits below it, above the saved bookmark list.
+- **SVG overflow fix** — `#ink` SVG layer now has `overflow: visible`, fixing connection lines (relation curves) being clipped when elements are far apart on the canvas.
+- **Text selection fix** — `.note` elements now have `user-select: none` by default, preventing accidental blue text highlighting when dragging or marquee-selecting across notes. `.block-editor` retains `user-select: text` so editing still works normally.
 
 ### v0.7.4
 - **EXR import** — `.exr` files can now be dropped or imported via the import panel. `parseExr()` decodes uncompressed and ZIP-compressed OpenEXR files (half-float or float channels), applies Reinhard tone mapping + sRGB gamma encode, and places as a standard img-card. EXR row added to import panel. `dataset.isExr = '1'` marks EXR-sourced cards.
