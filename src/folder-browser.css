@@ -147,6 +147,14 @@
   background: rgba(255,255,255,0.1);
   color: rgba(255,255,255,0.9);
 }
+.fb-action-btn.export {
+  background: rgba(232,68,10,0.12);
+  color: rgba(255,255,255,0.65);
+}
+.fb-action-btn.export:hover {
+  background: rgba(232,68,10,0.28);
+  color: rgba(255,255,255,0.95);
+}
 
 .fb-folder-item {
   display: flex;

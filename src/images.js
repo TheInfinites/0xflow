@@ -513,7 +513,7 @@ function imgScale(card, factor) {
   card.style.width = (newW + 12) + 'px';
   snapshot();
 }
-async function imgExport(card, fmt) {
+async function imgExport(card, fmt, destDir) {
   if (!card) return;
   closeImgCtxMenu();
   const imgEl = card.querySelector('img');
@@ -528,6 +528,22 @@ async function imgExport(card, fmt) {
   ctx.drawImage(imgEl, 0, 0, nw, nh);
 
   const baseName = (card.dataset.sourcePath || card.dataset.imgId || 'image').split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+
+  // Save blob to destDir via Tauri fs, or fall back to browser download
+  async function saveBlob(blob, fileName) {
+    if (destDir && IS_TAURI) {
+      const sep = destDir.includes('\\') ? '\\' : '/';
+      const filePath = destDir.replace(/[\\/]$/, '') + sep + fileName;
+      const { writeFile } = window.__TAURI__.fs;
+      const buf = await blob.arrayBuffer();
+      await writeFile(filePath, new Uint8Array(buf));
+      showToast('Exported → ' + destDir.split(/[\\/]/).pop() + sep + fileName);
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = fileName;
+      a.click(); URL.revokeObjectURL(url);
+    }
+  }
 
   if (fmt === 'exr') {
     const imageData = ctx.getImageData(0, 0, nw, nh);
@@ -657,9 +673,7 @@ async function imgExport(card, fmt) {
     }
 
     const blob = new Blob([out], { type: 'image/x-exr' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href=url; a.download=baseName+'.exr';
-    a.click(); URL.revokeObjectURL(url);
+    await saveBlob(blob, baseName + '.exr');
     return;
   }
 
@@ -703,9 +717,7 @@ async function imgExport(card, fmt) {
     // Pixel data
     new Uint8Array(buf, pixelOffset).set(pixels);
     const blob = new Blob([buf], { type: 'image/tiff' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = baseName + '.tiff';
-    a.click(); URL.revokeObjectURL(url);
+    await saveBlob(blob, baseName + '.tiff');
     return;
   }
 
@@ -715,10 +727,8 @@ async function imgExport(card, fmt) {
   const ext  = extMap[fmt]  || '.png';
   const quality = fmt === 'jpeg' ? 0.95 : undefined;
 
-  c.toBlob(blob => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = baseName + ext;
-    a.click(); URL.revokeObjectURL(url);
+  c.toBlob(async blob => {
+    await saveBlob(blob, baseName + ext);
   }, mime, quality);
 }
 
@@ -1913,11 +1923,53 @@ document.addEventListener('paste', async e => {
   const isEditing = e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT' || e.target.isContentEditable;
   if (isEditing) return;
   const items = [...(e.clipboardData?.items || [])];
+
+  // 1. Direct image blob in clipboard (e.g. screenshot, copied file)
   const imgItem = items.find(i => i.type.startsWith('image/'));
-  if (!imgItem) return;
-  e.preventDefault();
-  const blob = imgItem.getAsFile();
-  if (blob) await placeImageBlob(blob);
+  if (imgItem) {
+    e.preventDefault();
+    const blob = imgItem.getAsFile();
+    if (blob) await placeImageBlob(blob);
+    return;
+  }
+
+  // 2. HTML with <img> tag (e.g. copied from Pinterest, web pages)
+  const htmlItem = items.find(i => i.type === 'text/html');
+  if (htmlItem) {
+    e.preventDefault();
+    htmlItem.getAsString(async html => {
+      const m = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+      if (!m || !m[1]) return;
+      try {
+        const resp = await fetch(m[1]);
+        if (!resp.ok) throw new Error(resp.status);
+        const blob = await resp.blob();
+        if (blob.type.startsWith('image/')) await placeImageBlob(blob);
+      } catch (err) {
+        console.warn('Paste image fetch failed:', err);
+      }
+    });
+    return;
+  }
+
+  // 3. Plain text URL that looks like an image
+  const textItem = items.find(i => i.type === 'text/plain');
+  if (textItem) {
+    e.preventDefault();
+    textItem.getAsString(async text => {
+      text = text.trim();
+      if (!/^https?:\/\/.+\.(png|jpe?g|gif|webp|bmp|svg|avif|tiff)(\?.*)?$/i.test(text)) return;
+      try {
+        const resp = await fetch(text);
+        if (!resp.ok) throw new Error(resp.status);
+        const blob = await resp.blob();
+        if (blob.type.startsWith('image/')) await placeImageBlob(blob);
+      } catch (err) {
+        console.warn('Paste image URL fetch failed:', err);
+      }
+    });
+    return;
+  }
 });
 
 // ── drag-and-drop images onto canvas ──
@@ -2593,7 +2645,7 @@ const RADIAL_ITEMS = [
   { label: 'Note',      icon: '<rect x="2" y="2" width="11" height="11" rx="1.5"/><line x1="4.5" y1="5.5" x2="10.5" y2="5.5"/><line x1="4.5" y1="7.5" x2="10.5" y2="7.5"/><line x1="4.5" y1="9.5" x2="8" y2="9.5"/>', action: (x,y)=>{ const p=c2w(x,y); snapshot(); makeNote(p.x-100,p.y-64); } },
   { label: 'Draw',      icon: '<path d="M3 12 Q5 8 8 7 Q11 6 12 3"/><circle cx="3" cy="12" r="1" fill="currentColor" stroke="none"/>', action: ()=>tool('pen') },
   { label: 'AI Note',   icon: '<circle cx="7.5" cy="7.5" r="5.5" stroke-width="1.2"/><circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/>', action: (x,y)=>{ const p=c2w(x,y); snapshot(); makeAiNote(p.x-130,p.y-90); }, color: '#E8440A' },
-  { label: 'Bookmark',  icon: '<path d="M3 2h9v11l-4.5-3L3 13z"/>', action: ()=>{ addViewBookmark(); } },
+  { label: 'Bookmark',  icon: '<path d="M3 2h9v11l-4.5-3L3 13z"/>', action: (x,y)=>{ addViewBookmark(x,y); } },
   { label: 'Dashboard', icon: '<rect x="1" y="1" width="5" height="5" rx="0.8"/><rect x="9" y="1" width="5" height="5" rx="0.8"/><rect x="1" y="9" width="5" height="5" rx="0.8"/><rect x="9" y="9" width="5" height="5" rx="0.8"/>', action: ()=>goToDashboard() },
 ];
 
@@ -2616,7 +2668,7 @@ function openRadialMenu(cx, cy) {
   radialRing.innerHTML = '';
 
   // Build dynamic items: base items + bookmark jump items (up to 4)
-  const bkmarks = typeof _viewBookmarks !== 'undefined' ? _viewBookmarks.slice(0, 4) : [];
+  const bkmarks = typeof _viewBookmarks !== 'undefined' ? _viewBookmarks : [];
   const dynamicItems = [
     ...RADIAL_ITEMS,
     ...bkmarks.map((bk, i) => ({
@@ -2648,6 +2700,34 @@ function openRadialMenu(cx, cy) {
       e.stopPropagation();
       const ox = radialOrigin ? radialOrigin.x : radialStartX;
       const oy = radialOrigin ? radialOrigin.y : radialStartY;
+      // Bookmark item: inline rename
+      if (i === 3) {
+        if (el.querySelector('.bk-inline-input')) return;
+        const defaultName = 'View ' + (_viewBookmarks.length + 1);
+        const labelSpan = el.querySelector('span:last-child');
+        labelSpan.textContent = '';
+        const input = document.createElement('input');
+        input.className = 'bk-inline-input';
+        input.type = 'text';
+        input.value = defaultName;
+        input.style.cssText = 'background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:5px;color:rgba(255,255,255,0.9);font-size:11px;font-family:inherit;padding:3px 8px;outline:none;width:100px;';
+        labelSpan.appendChild(input);
+        input.focus();
+        input.select();
+        function commitStandalone() {
+          if (input._done) return;
+          input._done = true;
+          addViewBookmark(ox, oy, input.value.trim() || defaultName);
+          closeRadialMenu();
+        }
+        input.addEventListener('keydown', ev => {
+          ev.stopPropagation();
+          if (ev.key === 'Enter') { ev.preventDefault(); commitStandalone(); }
+          if (ev.key === 'Escape') { ev.preventDefault(); closeRadialMenu(); }
+        });
+        input.addEventListener('blur', () => commitStandalone(), { once: true });
+        return;
+      }
       closeRadialMenu();
       item.action(ox, oy);
     });
@@ -2667,21 +2747,48 @@ function openRadialMenu(cx, cy) {
     panel.className = 'radial-panel';
     panel.dataset.angle = BK_ANGLE;
 
-    // Bookmark (add) row inside panel
+    // Bookmark header row (not clickable — just a label)
     const bkRow = document.createElement('div');
     bkRow.className = 'radial-item radial-panel-item';
     bkRow.classList.add('radial-item-left');
     bkRow.innerHTML = baseEls[3].innerHTML;
-    bkRow.dataset.index = 3;
-    bkRow.dataset.angle = BK_ANGLE;
-    bkRow.addEventListener('mouseup', e => {
-      e.stopPropagation();
-      const ox = radialOrigin ? radialOrigin.x : radialStartX;
-      const oy = radialOrigin ? radialOrigin.y : radialStartY;
-      closeRadialMenu();
-      RADIAL_ITEMS[3].action(ox, oy);
-    });
+    bkRow.style.pointerEvents = 'none';
+    bkRow.style.opacity = '0.5';
     panel.appendChild(bkRow);
+
+    // "+ Add" button — creates bookmark with inline rename
+    const addRow = document.createElement('div');
+    addRow.className = 'radial-item radial-panel-item';
+    addRow.classList.add('radial-item-left');
+    addRow.innerHTML = `<span class="radial-item-icon" style="color:rgba(255,255,255,0.3)"><svg viewBox="0 0 15 15"><line x1="7.5" y1="3" x2="7.5" y2="12"/><line x1="3" y1="7.5" x2="12" y2="7.5"/></svg></span><span style="color:rgba(255,255,255,0.4)">Add</span>`;
+    addRow.addEventListener('mouseup', e => {
+      e.stopPropagation();
+      if (addRow.querySelector('.bk-inline-input')) return;
+      const defaultName = 'View ' + (_viewBookmarks.length + 1);
+      // Replace the add row content with an input
+      addRow.innerHTML = '';
+      const input = document.createElement('input');
+      input.className = 'bk-inline-input';
+      input.type = 'text';
+      input.value = defaultName;
+      input.style.cssText = 'background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:5px;color:rgba(255,255,255,0.9);font-size:11px;font-family:inherit;padding:4px 8px;outline:none;width:100%;box-sizing:border-box;';
+      addRow.appendChild(input);
+      input.focus();
+      input.select();
+      function commit() {
+        if (input._done) return;
+        input._done = true;
+        addViewBookmark(null, null, input.value.trim() || defaultName);
+        closeRadialMenu();
+      }
+      input.addEventListener('keydown', ev => {
+        ev.stopPropagation();
+        if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+        if (ev.key === 'Escape') { ev.preventDefault(); closeRadialMenu(); }
+      });
+      input.addEventListener('blur', () => commit(), { once: true });
+    });
+    panel.appendChild(addRow);
 
     // Separator
     const sep = document.createElement('div');

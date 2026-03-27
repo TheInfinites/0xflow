@@ -329,15 +329,15 @@ function saveViewBookmarks(id) {
   if(!id) return;
   store.set('freeflow_bkmarks_'+id, JSON.stringify(_viewBookmarks));
 }
-function addViewBookmark() {
+function addViewBookmark(mx, my, name) {
   const r = cv.getBoundingClientRect();
   const worldCX = (-px+r.width/2)/scale+3000;
   const worldCY = (-py+r.height/2)/scale+3000;
-  const name = 'View '+ (_viewBookmarks.length+1);
-  _viewBookmarks.push({name, scale, worldCX, worldCY});
+  const finalName = name || 'View '+ (_viewBookmarks.length+1);
+  _viewBookmarks.push({name: finalName, scale, worldCX, worldCY});
   saveViewBookmarks(activeProjectId);
   renderBookmarkList();
-  showToast('Bookmark saved: '+name);
+  showToast('Bookmark saved: ' + finalName);
 }
 function jumpToBookmark(idx) {
   const bk = _viewBookmarks[idx]; if(!bk) return;
@@ -638,6 +638,60 @@ function distributeSelected(axis) {
   }
   positionSelBar();
 }
+
+function gridSelected() {
+  const els = [...selected].filter(e => !(e instanceof SVGElement) && !e.classList.contains('locked'));
+  if (els.length < 2) return;
+  snapshot();
+
+  const bounds = els.map(el => ({ el, b: getElBounds(el) }));
+
+  // Sort by position: top-to-bottom, then left-to-right (reading order)
+  bounds.sort((a, b) => {
+    const rowDiff = a.b.t - b.b.t;
+    // Treat items within 40px vertical distance as same row
+    if (Math.abs(rowDiff) < 40) return a.b.l - b.b.l;
+    return rowDiff;
+  });
+
+  // Calculate optimal columns: try to make it as square as possible
+  const n = bounds.length;
+  const cols = Math.ceil(Math.sqrt(n));
+  const rows = Math.ceil(n / cols);
+  const gap = 20;
+
+  // Start position: top-left of the bounding box of all selected items
+  const startX = Math.min(...bounds.map(({ b }) => b.l));
+  const startY = Math.min(...bounds.map(({ b }) => b.t));
+
+  // Compute max width per column and max height per row
+  const colW = new Array(cols).fill(0);
+  const rowH = new Array(rows).fill(0);
+  bounds.forEach(({ b }, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    if (b.w > colW[col]) colW[col] = b.w;
+    if (b.h > rowH[row]) rowH[row] = b.h;
+  });
+
+  // Prefix sums for column x-offsets and row y-offsets
+  const colX = [0];
+  for (let c = 1; c < cols; c++) colX[c] = colX[c - 1] + colW[c - 1] + gap;
+  const rowY = [0];
+  for (let r = 1; r < rows; r++) rowY[r] = rowY[r - 1] + rowH[r - 1] + gap;
+
+  bounds.forEach(({ el, b }, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    // Center each item within its cell
+    const cellX = startX + colX[col] + (colW[col] - b.w) / 2;
+    const cellY = startY + rowY[row] + (rowH[row] - b.h) / 2;
+    el.style.left = snap(cellX) + 'px';
+    el.style.top = snap(cellY) + 'px';
+  });
+  positionSelBar();
+}
+
 function togglePinSelected(){
   const els=[...selected].filter(e=>e.classList && e.classList.contains('note'));
   if(!els.length) return;

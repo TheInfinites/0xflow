@@ -362,9 +362,16 @@ imgCtxMenu.addEventListener('mouseover', e => {
   const item = e.target.closest('.ictx-item');
   if (!item) return;
   if (item.dataset.action === 'move-copy') {
+    if (_fbMode === 'export') { closeAllFolderUI(); return; }
     openFolderBrowser(item);
-  } else if (item.dataset.action !== 'export') {
-    // Hovering another item collapses the folder browser (but not export — it has its own submenu)
+  } else if (item.dataset.action === 'export') {
+    // Don't collapse folder browser if it's open for export
+    if (_fbMode !== 'export') {
+      folderBrowser.classList.remove('show');
+      folderBrowser.innerHTML = '';
+    }
+  } else {
+    // Hovering another item collapses the folder browser
     folderBrowser.classList.remove('show');
     folderBrowser.innerHTML = '';
   }
@@ -395,7 +402,13 @@ let _activeFolderPath = null;
 let _hoverTimer = null;
 const folderBrowser = document.getElementById('folder-browser');
 
+// Mode: 'move-copy' (default) or 'export'
+let _fbMode = 'move-copy';
+let _fbExportFmt = null; // e.g. 'png', 'jpeg', etc. when in export mode
+
 async function openFolderBrowser(anchorItem) {
+  _fbMode = 'move-copy';
+  _fbExportFmt = null;
   if (!_projectDir) {
     showToast('Set a project directory first (📁 project dir button)');
     closeImgCtxMenu();
@@ -409,6 +422,27 @@ async function openFolderBrowser(anchorItem) {
   const menuRect = imgCtxMenu.getBoundingClientRect();
   const x = menuRect.right + 6;
   const y = menuRect.top;
+  await buildFolderPanel(_projectDir, 0, x, y);
+}
+
+async function openFolderBrowserForExport(fmt) {
+  _fbMode = 'export';
+  _fbExportFmt = fmt;
+  _fileOpCard = _ctxCard;
+  if (!_projectDir) {
+    showToast('Set a project directory first (📁 project dir button)');
+    closeImgCtxMenu();
+    return;
+  }
+
+  folderBrowser.innerHTML = '';
+  folderBrowser.classList.add('show');
+
+  // Position to the right of the export submenu
+  const submenu = document.getElementById('ictx-export-submenu');
+  const rect = submenu ? submenu.getBoundingClientRect() : imgCtxMenu.getBoundingClientRect();
+  const x = rect.right + 6;
+  const y = rect.top;
   await buildFolderPanel(_projectDir, 0, x, y);
 }
 
@@ -641,19 +675,32 @@ async function buildFolderPanel(dirPath, depth, x, y) {
   `;
   panel.appendChild(header);
 
-  // Move / Copy buttons
+  // Action buttons — depend on mode
   const actionRow = document.createElement('div');
   actionRow.className = 'fb-action-row';
-  const moveBtn = document.createElement('button');
-  moveBtn.className = 'fb-action-btn move';
-  moveBtn.textContent = 'Move here';
-  moveBtn.addEventListener('click', () => execFileOp('move', _fileOpCard, dirPath));
-  const copyBtn = document.createElement('button');
-  copyBtn.className = 'fb-action-btn copy';
-  copyBtn.textContent = 'Copy here';
-  copyBtn.addEventListener('click', () => execFileOp('copy', _fileOpCard, dirPath));
-  actionRow.appendChild(moveBtn);
-  actionRow.appendChild(copyBtn);
+  if (_fbMode === 'export') {
+    const exportBtn = document.createElement('button');
+    exportBtn.className = 'fb-action-btn export';
+    exportBtn.textContent = 'Export here';
+    exportBtn.addEventListener('click', () => {
+      const fmt = _fbExportFmt;
+      const card = _fileOpCard;
+      closeAllFolderUI();
+      imgExport(card, fmt, dirPath);
+    });
+    actionRow.appendChild(exportBtn);
+  } else {
+    const moveBtn = document.createElement('button');
+    moveBtn.className = 'fb-action-btn move';
+    moveBtn.textContent = 'Move here';
+    moveBtn.addEventListener('click', () => execFileOp('move', _fileOpCard, dirPath));
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'fb-action-btn copy';
+    copyBtn.textContent = 'Copy here';
+    copyBtn.addEventListener('click', () => execFileOp('copy', _fileOpCard, dirPath));
+    actionRow.appendChild(moveBtn);
+    actionRow.appendChild(copyBtn);
+  }
   panel.appendChild(actionRow);
 
   // Load subdirs
