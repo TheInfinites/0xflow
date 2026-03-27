@@ -16,13 +16,14 @@ function saveCanvasState(id){
     });
   }
   saveViewBookmarks(id);
-  // update note count in project
-  const p=projects.find(x=>x.id===id);
+  // update note count in project (id might be canvas ID or project ID)
+  const p=projects.find(x=>x.id===id) || projects.find(x=>(x.children||[]).some(c=>c.id===id));
   if(p){ p.noteCount=document.querySelectorAll('.note').length; p.updatedAt=Date.now(); saveProjects(projects); }
 }
 
 async function saveCanvasToFile(){
-  if(!activeProjectId) return;
+  const saveId=activeCanvasId||activeProjectId;
+  if(!saveId) return;
   if(!IS_TAURI){ showToast('File saving requires the desktop app'); return; }
   try{
     const { save } = window.__TAURI__.dialog;
@@ -30,9 +31,9 @@ async function saveCanvasToFile(){
     const defaultName=(p?p.name.replace(/[^a-z0-9_\-]/gi,'_'):'canvas')+'.json';
     const filePath=await save({ filters:[{name:'Canvas',extensions:['json']}], defaultPath:defaultName });
     if(!filePath) return;
-    store.set('freeflow_filepath_'+activeProjectId, filePath);
+    store.set('freeflow_filepath_'+saveId, filePath);
     // trigger a save immediately
-    saveCanvasState(activeProjectId);
+    saveCanvasState(saveId);
     // update button to show the filename
     const btn=document.getElementById('save-file-btn');
     if(btn) btn.title='Saving to: '+filePath;
@@ -70,7 +71,7 @@ async function loadCanvasState(id){
   }
   if(!raw) raw=store.get('freeflow_canvas_'+id);
   loadViewBookmarks(id);
-  loadProjectDir();
+  if(typeof loadProjectDir==='function') loadProjectDir();
   if(!raw) return;
   try{
     const parsed = JSON.parse(raw);
@@ -87,10 +88,12 @@ async function loadCanvasState(id){
     console.warn('canvas load error, resetting',e);
     store.remove('freeflow_canvas_'+id);
   }
+  // render tag pills on elements (defined in project-hub.js, no-op if not loaded yet)
+  try{ if(typeof renderAllElementTags==='function') renderAllElementTags(); }catch(e){ console.warn('renderAllElementTags error:',e); }
 }
 
 // Auto-save every 30s while on canvas
-setInterval(()=>{ if(document.body.classList.contains('on-canvas')&&activeProjectId) saveCanvasState(activeProjectId); }, 30000);
+setInterval(()=>{ if(document.body.classList.contains('on-canvas')&&(activeCanvasId||activeProjectId)) saveCanvasState(activeCanvasId||activeProjectId); }, 30000);
 
 // Save on page unload
 window.addEventListener('beforeunload',()=>{ if(activeProjectId) saveCanvasState(activeProjectId); });
@@ -198,6 +201,8 @@ function restoreCanvas(state){
   const restoredEls = [];
   const tmp=document.createElement('div'); tmp.innerHTML=items.map(i=>(i&&i.html)||'').join('');
   [...tmp.children].forEach((el, i)=>{
+    // assign entity ID if missing (migration)
+    if(!el.dataset.entityId) el.dataset.entityId=genId('el');
     world.appendChild(el);
     if(el.classList.contains('draw-card')) {
       bindNote(el);
@@ -1155,7 +1160,7 @@ function addAiNote(){ const p=_spawnPos(130,90); snapshot();makeAiNote(p.x,p.y);
 function makeAiNote(x,y){
   noteN++;
   const d=document.createElement('div');
-  d.className='note ai-note';
+  d.className='note ai-note'; d.dataset.entityId=genId('el');
   d.style.left=x+'px';d.style.top=y+'px';
   d.dataset.color='';d.dataset.votes='0';d.dataset.link='';d.dataset.aiNote='1';
   d._aiHistory=[]; // conversation history [{role,content}]
@@ -1715,7 +1720,7 @@ async function runAiNote(noteEl){
 
 function makeNote(x,y,color=null){
   noteN++;
-  const d=document.createElement('div');d.className='note';d.style.left=x+'px';d.style.top=y+'px';d.dataset.color=color||'';d.dataset.votes='0';d.dataset.link='';
+  const d=document.createElement('div');d.className='note';d.style.left=x+'px';d.style.top=y+'px';d.dataset.color=color||'';d.dataset.votes='0';d.dataset.link='';d.dataset.entityId=genId('el');
   const strip=document.createElement('div');strip.className='note-color-strip';if(color)strip.style.background=color;
   const lockIcon=document.createElement('div');lockIcon.className='lock-icon';lockIcon.innerHTML='<svg viewBox="0 0 12 12"><rect x="2" y="5" width="8" height="6" rx="1"/><path d="M4 5V3.5a2 2 0 014 0V5"/></svg>';d.appendChild(lockIcon);
   const idx=document.createElement('div');idx.className='note-idx';idx.textContent=String(noteN).padStart(2,'0');
@@ -1749,7 +1754,7 @@ function makeTodo(x, y, title='') {
   noteN++;
   const d = document.createElement('div'); d.className = 'note todo-card';
   d.style.left = x + 'px'; d.style.top = y + 'px';
-  d.dataset.color = ''; d.dataset.votes = '0'; d.dataset.link = '';
+  d.dataset.color = ''; d.dataset.votes = '0'; d.dataset.link = ''; d.dataset.entityId=genId('el');
   d._todoItems = [];
 
   const strip = document.createElement('div'); strip.className = 'note-color-strip';
@@ -1850,7 +1855,7 @@ function updateTodoProgress(card) {
 function makeDrawCard(x, y, w, h) {
   w = w || 320; h = h || 240;
   const d = document.createElement('div');
-  d.className = 'note draw-card';
+  d.className = 'note draw-card'; d.dataset.entityId=genId('el');
   d.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px;`;
 
   // header / toolbar
@@ -2457,7 +2462,7 @@ function setupPinDrag(note) {
 function deleteMenuNote(){ if(menuNote){snapshot();cleanupElConnections(menuNote);menuNote.remove();closeMenu();} }
 
 function makeFrame(x,y,w,h,labelText='frame'){
-  const frame=document.createElement('div');frame.className='frame';
+  const frame=document.createElement('div');frame.className='frame'; frame.dataset.entityId=genId('el');
   frame.style.cssText=`left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
   const lbl=document.createElement('input');lbl.className='frame-label';lbl.type='text';lbl.value=labelText;lbl.placeholder='frame';
   lbl.addEventListener('mousedown',e=>e.stopPropagation());lbl.addEventListener('blur',()=>snapshot());
@@ -2524,7 +2529,7 @@ function startFrameRightDrag(e, frame) {
 }
 
 function makeLabel(x,y){
-  const div=document.createElement('div');div.className='lbl';div.contentEditable='true';div.dataset.placeholder='type...';div.style.left=x+'px';div.style.top=y+'px';
+  const div=document.createElement('div');div.className='lbl';div.contentEditable='true';div.dataset.placeholder='type...';div.style.left=x+'px';div.style.top=y+'px';div.dataset.entityId=genId('el');
   bindLabel(div); world.appendChild(div);
   setTimeout(()=>{ enterLabelEdit(div); },20);
 }

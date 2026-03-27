@@ -14,10 +14,11 @@
 │   ├── index.html            App shell (HTML structure + all views)
 │   ├── style.css             All styles and @font-face declarations
 │   ├── folder-browser.css    Folder browser + context menu styles
-│   ├── storage.js            Dashboard logic + localStorage store
-│   ├── canvas.js             Canvas, zoom, pan, selection, undo/redo, notes
+│   ├── storage.js            Dashboard logic + localStorage store + project schema + navigation
+│   ├── canvas.js             Canvas, zoom, pan, selection, undo/redo, notes, entity IDs
 │   ├── editor.js             Block editor engine (contentEditable note editor)
 │   ├── images.js             Image/PDF/video/audio handling, AI features, updater
+│   ├── project-hub.js        Project hub view, tag system, canvas tab switcher
 │   ├── folder-browser.js     File ops context menu + cascading folder browser
 │   ├── tauri-mock.js         Browser dev mode — stubs window.__TAURI__ APIs
 │   └── fonts/                14 bundled TTF files (Geist, Geist Mono, Barlow Condensed, DM Mono)
@@ -40,8 +41,11 @@
 index.html (app shell)
 └── <body>
     ├── #view-dashboard   Dashboard overlay (panel, not full page)
+    ├── #view-project-hub Project hub (tags, settings, canvas grid)
     └── #view-canvas      Infinite canvas
-        ├── #bar           Top bar (title, undo/redo, search, actions)
+        ├── #bar           Top bar (hub btn, breadcrumb, undo/redo, search, actions)
+        ├── #canvas-switcher Chrome-style canvas tab bar (shown when 2+ canvases)
+        ├── #tag-picker    Tag picker dropdown (shown from selection bar)
         ├── #cv            Canvas viewport (overflow hidden)
         │   ├── #drag-line-svg   Temporary SVG line (right-drag gesture)
         │   ├── #world     8000×8000px absolute positioned world
@@ -60,10 +64,11 @@ index.html (app shell)
         └── #status        Bottom status bar
 
 style.css            All CSS + @font-face declarations
-storage.js           Dashboard, projects, folders (nested), localStorage
-canvas.js            Pan/zoom, notes, selection, undo/redo, AI features
+storage.js           Dashboard, projects, folders, multi-canvas navigation, localStorage
+canvas.js            Pan/zoom, notes, selection, undo/redo, entity IDs
 editor.js            Block editor (paragraph, headings, lists, todo, code, divider)
 images.js            Image/PDF/video/audio handling, auto-updater, window controls
+project-hub.js       Project hub, tag system, canvas tab switcher
 folder-browser.js    Right-click context menu, cascading folder browser
 ```
 
@@ -125,9 +130,10 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 
 | Variable | Type | Purpose |
 |---|---|---|
-| `projects` | `Project[]` | All canvas projects (name, id, timestamps) |
+| `projects` | `Project[]` | All projects (name, id, children[], tags[], timestamps, dates) |
 | `folders` | `Folder[]` | Dashboard folder structure |
-| `activeProjectId` | `string` | Currently open canvas |
+| `activeProjectId` | `string` | Currently open project |
+| `activeCanvasId` | `string` | Currently open canvas within a project |
 | `scale` | `number` | Canvas zoom (0.1–5, default 1) |
 | `px`, `py` | `number` | Canvas pan offset in pixels |
 | `selected` | `Set<Element>` | Currently selected DOM elements |
@@ -215,9 +221,9 @@ Typing `/` (or `/query`) opens a floating menu filtered by block type label. Cli
 
 | Key | Content |
 |---|---|
-| `freeflow_projects` | JSON array of project metadata |
+| `freeflow_projects` | JSON array of project metadata (includes children[], tags[], dates) |
 | `freeflow_folders` | JSON array of folder metadata (each folder has `parentId` for nesting) |
-| `freeflow_canvas_{id}` | Serialized canvas state for each project |
+| `freeflow_canvas_{id}` | Serialized canvas state (id = canvas ID, not project ID for multi-canvas) |
 | `freeflow_dash_theme` | `'light'` or `'dark'` for dashboard |
 | `freeflow_key_gpt` | OpenAI API key (user-provided) |
 | `freeflow_key_gemini` | Google Gemini API key (user-provided) |
@@ -238,6 +244,65 @@ Typing `/` (or `/query`) opens a floating menu filtered by block type label. Cli
 - `svgToScreen(wx, wy)` → converts world coords to screen coords
 - Transform applied: `world.style.transform = translate(${px}px, ${py}px) scale(${scale})`
 - SVG layer shares the same coordinate space as `#world`
+
+---
+
+## Project Management (Phase 1)
+
+### Project Schema
+```js
+{
+  id: "proj_...", name: "...", accent: "...", folderId: "...",
+  createdAt: ..., updatedAt: ..., noteCount: ...,
+  startDate: "2026-04-01",       // ISO string or null
+  deadline: "2026-06-30",        // ISO string or null
+  children: [
+    { id: "cv_...", type: "canvas", name: "main board", createdAt: ..., updatedAt: ... }
+  ],
+  defaultCanvasId: "cv_...",
+  tags: [
+    { id: "tag_...", name: "final", color: "#10B981" }
+  ]
+}
+```
+**Migration:** Existing projects get `children: [{id: proj.id, type: 'canvas', ...}]` so canvas storage key `freeflow_canvas_{proj.id}` is preserved.
+
+### Multi-Canvas Navigation
+- `openProject(id)` → always opens default canvas, tab bar handles switching
+- `openCanvas(projId, canvasId)` → loads specific canvas, renders tab bar + breadcrumb
+- Chrome-style `#canvas-switcher` tab bar shows when project has 2+ canvases
+- `Ctrl+Tab` / `Ctrl+Shift+Tab` cycles canvases; double-click tab to rename; ✕ to delete
+- Hub button (⊞) in top bar → project hub for tag management and settings
+
+### Tag System
+- Tags defined at project level (`project.tags[]`), shared across all canvases
+- Tag picker in selection bar → apply/remove tags on selected elements
+- Tags stored as `data-tags` attribute (comma-separated tag IDs) on elements
+- Rendered as colored pills (`.el-tag-pills`) on element top-right corner
+- Tag manager in project hub: create, delete project-level tags
+
+### Entity IDs
+- Every element gets `data-entity-id` on creation via `genId('el')`
+- Old elements get entity IDs assigned during `restoreCanvas()` migration
+- `genId(prefix)` → `{prefix}_{timestamp}_{random5chars}` (defined in storage.js)
+
+### ID Prefixes
+`proj_`, `cv_`, `db_`, `row_`, `col_`, `view_`, `el_`, `opt_`, `tag_`, `tab_`, `pg_`, `blk_`
+
+### Project Hub (`project-hub.js`)
+| Function | Description |
+|---|---|
+| `showProjectHub(proj)` | Show hub view with canvas grid, tag/settings buttons |
+| `renderHubGrid(proj)` | Render child items as cards |
+| `hubAddCanvas()` | Add new canvas to project |
+| `hubManageTags()` | Open tag manager modal |
+| `hubProjectSettings()` | Open project settings (name, dates) |
+| `renderCanvasTabs(projId, canvasId)` | Render Chrome-style canvas tab bar |
+| `addCanvasFromTab()` | Add new canvas via tab bar + button |
+| `toggleTagPicker(e)` | Show/hide tag picker dropdown |
+| `renderElementTags(el, proj)` | Render tag pills on a single element |
+| `renderAllElementTags()` | Render tag pills on all canvas elements |
+| `openHubFromCanvas()` | Save canvas state and open hub |
 
 ---
 

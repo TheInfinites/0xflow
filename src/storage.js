@@ -27,6 +27,11 @@ const store = {
 };
 
 // ════════════════════════════════════════════
+// ID GENERATION
+// ════════════════════════════════════════════
+function genId(prefix){ return prefix+'_'+Date.now()+'_'+Math.random().toString(36).slice(2,7); }
+
+// ════════════════════════════════════════════
 // DASHBOARD LOGIC
 // ════════════════════════════════════════════
 const STORAGE_KEY = 'freeflow_projects';
@@ -55,6 +60,19 @@ if(projects.length===0){
 projects.forEach(p=>{ if(!('folderId' in p)) p.folderId=null; });
 // migrate old folders without parentId
 folders.forEach(f=>{ if(!('parentId' in f)) f.parentId=null; });
+// migrate projects to multi-canvas hub schema (Phase 1)
+let _projMigrated=false;
+projects.forEach(p=>{
+  if(!p.children){
+    p.children=[{id:p.id, type:'canvas', name:p.name, createdAt:p.createdAt, updatedAt:p.updatedAt}];
+    p.defaultCanvasId=p.id;
+    _projMigrated=true;
+  }
+  if(!p.tags) p.tags=[];
+  if(!('startDate' in p)) p.startDate=null;
+  if(!('deadline' in p)) p.deadline=null;
+});
+if(_projMigrated) saveProjects(projects);
 
 // ── folder helpers ──────────────────────────
 function getFolderProjects(fid){
@@ -284,9 +302,14 @@ function updateDashStats(){
 }
 
 function createProject(name){
-  const id='proj_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);
+  const id=genId('proj');
   const fid=currentFolderId==='__unfiled__'?null:(currentFolderId||null);
-  const p={id,name:name.trim()||'untitled canvas',createdAt:Date.now(),updatedAt:Date.now(),noteCount:0,accent:ACCENT_COLORS[Math.floor(Math.random()*ACCENT_COLORS.length)],folderId:fid};
+  const cvId=genId('cv');
+  const now=Date.now();
+  const pName=name.trim()||'untitled canvas';
+  const p={id,name:pName,createdAt:now,updatedAt:now,noteCount:0,accent:ACCENT_COLORS[Math.floor(Math.random()*ACCENT_COLORS.length)],folderId:fid,
+    children:[{id:cvId,type:'canvas',name:pName,createdAt:now,updatedAt:now}],
+    defaultCanvasId:cvId,tags:[],startDate:null,deadline:null};
   projects.unshift(p); saveProjects(projects); dashRender(); showToast(`"${p.name}" created`); return p;
 }
 
@@ -323,29 +346,63 @@ function startInlineRename(id){
   });
 }
 
+// track which canvas within a project is open
+let activeCanvasId = null;
+
 async function openProject(id,e){
   if(e) e.stopPropagation();
   const p=projects.find(x=>x.id===id); if(!p) return;
   p.updatedAt=Date.now(); saveProjects(projects);
   activeProjectId=id;
-  document.getElementById('project-title').textContent=p.name;
+
+  // always open the default canvas — tab bar handles multi-canvas switching
+  const cvId = p.defaultCanvasId || (p.children&&p.children[0]?p.children[0].id:p.id);
+  await openCanvas(id, cvId);
+}
+
+async function openCanvas(projId, canvasId, e){
+  if(e) e.stopPropagation();
+  const p=projects.find(x=>x.id===projId); if(!p) return;
+  activeProjectId=projId;
+  activeCanvasId=canvasId;
+  p.updatedAt=Date.now(); saveProjects(projects);
+
+  // find child name for breadcrumb
+  const child=p.children?p.children.find(c=>c.id===canvasId):null;
+  const hasHub=p.children&&p.children.length>1;
+
+  // breadcrumb: project > canvas (if hub)
+  const titleEl=document.getElementById('project-title');
+  if(hasHub && child){
+    titleEl.innerHTML=`<span class="breadcrumb-proj" onclick="showProjectHub(projects.find(x=>x.id==='${projId}'))">${escHtml(p.name)}</span> <span class="breadcrumb-sep">›</span> ${escHtml(child.name)}`;
+  } else {
+    titleEl.textContent=p.name;
+  }
+
+  // hide hub, show canvas
+  document.getElementById('view-project-hub').style.display='none';
   document.body.classList.add('on-canvas');
-  await loadCanvasState(id);
+  document.body.classList.remove('on-hub');
+  await loadCanvasState(canvasId);
+  if(typeof renderCanvasTabs==='function') renderCanvasTabs(projId, canvasId);
   applyT(); syncInkPointerEvents(); syncUndoButtons();
   const bd = document.getElementById('dash-backdrop');
   if(bd){ bd.style.opacity='0'; bd.style.pointerEvents='none'; }
 }
 
 function goToDashboard(){
-  saveCanvasState(activeProjectId);
+  saveCanvasState(activeCanvasId||activeProjectId);
   document.body.classList.remove('on-canvas');
+  document.body.classList.remove('on-hub');
+  document.getElementById('view-project-hub').style.display='none';
+  activeCanvasId=null;
   dashRender();
   const bd = document.getElementById('dash-backdrop');
   if(bd){ bd.style.opacity='1'; bd.style.pointerEvents='all'; }
 }
 
 function toggleDashboard(){
-  if(document.body.classList.contains('on-canvas')){
+  if(document.body.classList.contains('on-canvas') || document.body.classList.contains('on-hub')){
     goToDashboard();
   } else {
     // ensure a project exists
@@ -360,7 +417,24 @@ function toggleDashboard(){
 function dupProject(id,e){
   if(e) e.stopPropagation();
   const p=projects.find(x=>x.id===id); if(!p) return;
-  const copy={...p,id:'proj_'+Date.now()+'_'+Math.random().toString(36).slice(2,7),name:p.name+' (copy)',createdAt:Date.now(),updatedAt:Date.now()};
+  const newId=genId('proj');
+  const now=Date.now();
+  // deep-clone children with new IDs, copy canvas data
+  const childMap={};
+  const newChildren=(p.children||[]).map(c=>{
+    const nid=genId(c.type==='canvas'?'cv':c.type==='database'?'db':'pg');
+    childMap[c.id]=nid;
+    // copy canvas storage
+    const raw=store.get('freeflow_canvas_'+c.id);
+    if(raw) store.set('freeflow_canvas_'+nid, raw);
+    return {...c, id:nid, createdAt:now, updatedAt:now};
+  });
+  const copy={...p, id:newId, name:p.name+' (copy)', createdAt:now, updatedAt:now,
+    children:newChildren, defaultCanvasId:childMap[p.defaultCanvasId]||newChildren[0]?.id||newId,
+    tags:JSON.parse(JSON.stringify(p.tags||[]))};
+  // also copy legacy canvas if it exists
+  const legacyRaw=store.get('freeflow_canvas_'+id);
+  if(legacyRaw && !store.get('freeflow_canvas_'+newId)) store.set('freeflow_canvas_'+newId, legacyRaw);
   const idx=projects.findIndex(x=>x.id===id); projects.splice(idx+1,0,copy);
   saveProjects(projects); dashRender(); showToast(`"${copy.name}" created`);
 }
@@ -396,6 +470,8 @@ function showInlineDelete(id){
   };
   overlay.querySelector('.card-del-confirm').onclick = e => {
     e.stopPropagation();
+    // remove all child canvas storage
+    (p.children||[]).forEach(c=>store.remove('freeflow_canvas_'+c.id));
     projects = projects.filter(x=>x.id!==id);
     store.remove('freeflow_canvas_'+id);
     saveProjects(projects); dashRender();
@@ -409,6 +485,7 @@ function handleDeleteOverlayClick(e){ if(e.target===document.getElementById('del
 function confirmDelete(){
   if(!pendingDeleteId) return;
   const p=projects.find(x=>x.id===pendingDeleteId);
+  if(p)(p.children||[]).forEach(c=>store.remove('freeflow_canvas_'+c.id));
   projects=projects.filter(x=>x.id!==pendingDeleteId);
   store.remove('freeflow_canvas_'+pendingDeleteId);
   saveProjects(projects); closeDeleteModal(); dashRender();

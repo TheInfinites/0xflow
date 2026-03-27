@@ -417,7 +417,7 @@ function makeImgCard(id, url, x, y, w, h, nw, nh) {
   const card = document.createElement('div');
   card.className = 'img-card';
   card.style.cssText = `left:${x}px;top:${y}px;width:${w + 12}px`;
-  card.dataset.imgId = id;
+  card.dataset.imgId = id; card.dataset.entityId=genId('el');
   card.dataset.nw = nw; // native width
   card.dataset.nh = nh; // native height
 
@@ -962,7 +962,7 @@ function makeVideoCard(id, url, x, y, w) {
   const card = document.createElement('div');
   card.className = 'img-card video-card';
   card.style.cssText = `left:${x}px;top:${y}px;width:${w}px`;
-  card.dataset.imgId = id;
+  card.dataset.imgId = id; card.dataset.entityId=genId('el');
   card.dataset.mediaType = 'video';
 
   // Video — no native controls, fills card width
@@ -1160,7 +1160,7 @@ function makeAudioCard(id, url, x, y, filename) {
   const card = document.createElement('div');
   card.className = 'img-card audio-card';
   card.style.cssText = `left:${x}px;top:${y}px;width:320px`;
-  card.dataset.imgId = id;
+  card.dataset.imgId = id; card.dataset.entityId=genId('el');
   card.dataset.mediaType = 'audio';
 
   const fname = filename || '';
@@ -2141,6 +2141,7 @@ const CMD_ACTIONS = [
   { id: 'open-folder',    label: 'Open Project Folder', shortcut: '', section: 'view', icon: '<path d="M2 4.5A1.5 1.5 0 013.5 3h3l1.5 2H12A1.5 1.5 0 0113.5 6.5v6A1.5 1.5 0 0112 14H3.5A1.5 1.5 0 012 12.5z"/>', fn: () => openProjectDirInExplorer() },
   { id: 'export-shared',  label: 'Export Shared Canvas', shortcut: '', section: 'view', icon: '<path d="M7.5 2v9M4 8l3.5 3.5L11 8"/><path d="M2 12v1.5A1.5 1.5 0 003.5 15h8a1.5 1.5 0 001.5-1.5V12"/>', fn: () => exportSharedCanvas() },
   { id: 'import-shared',  label: 'Import Shared Canvas', shortcut: '', section: 'view', icon: '<path d="M7.5 13V4M4 7l3.5-3.5L11 7"/><path d="M2 12v1.5A1.5 1.5 0 003.5 15h8a1.5 1.5 0 001.5-1.5V12"/>', fn: () => importSharedCanvas() },
+  { id: 'project-hub',  label: 'Project Hub', shortcut: '', section: 'view', icon: '<rect x="2" y="2" width="11" height="11" rx="2"/><line x1="2" y1="7" x2="13" y2="7"/><line x1="7" y1="2" x2="7" y2="13"/>', fn: () => { const p=projects.find(x=>x.id===activeProjectId); if(p&&typeof showProjectHub==='function') showProjectHub(p); } },
 ];
 
 const CMD_SECTIONS = { create: 'Create', tools: 'Tools', ai: 'AI', view: 'View', edit: 'Edit' };

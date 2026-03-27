@@ -177,6 +177,56 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
 <!-- ══════════════════════════════════════════
      CANVAS VIEW
 ══════════════════════════════════════════ -->
+<!-- ══════════════════════════════════════════
+     PROJECT HUB VIEW
+══════════════════════════════════════════ -->
+<div id="view-project-hub" style="display:none">
+  <div id="hub-bar">
+    <button class="hub-back-btn" onclick="goToDashboard()" title="back to dashboard">
+      <svg viewBox="0 0 13 13"><rect x="1" y="1" width="5" height="5" rx="1"/><rect x="7" y="1" width="5" height="5" rx="1"/><rect x="1" y="7" width="5" height="5" rx="1"/><rect x="7" y="7" width="5" height="5" rx="1"/></svg>
+    </button>
+    <h2 id="hub-title">project</h2>
+    <div id="hub-actions">
+      <button class="hub-btn" onclick="hubAddCanvas()"><svg viewBox="0 0 12 12"><line x1="6" y1="1" x2="6" y2="11"/><line x1="1" y1="6" x2="11" y2="6"/></svg> new canvas</button>
+      <button class="hub-btn" onclick="hubManageTags()"><svg viewBox="0 0 12 12"><circle cx="3" cy="6" r="2"/><line x1="5" y1="6" x2="11" y2="6"/></svg> tags</button>
+      <button class="hub-btn" onclick="hubProjectSettings()"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1="0.5" x2="6" y2="2"/><line x1="6" y1="10" x2="6" y2="11.5"/><line x1="0.5" y1="6" x2="2" y2="6"/><line x1="10" y1="6" x2="11.5" y2="6"/></svg> settings</button>
+    </div>
+  </div>
+  <div id="hub-grid"></div>
+  <!-- tag manager modal -->
+  <div id="tag-manager-overlay" class="hub-modal-overlay" onclick="if(event.target===this)closeTagManager()">
+    <div class="hub-modal">
+      <h3>Manage Tags</h3>
+      <div id="tag-manager-list"></div>
+      <div id="tag-manager-add">
+        <input id="tag-new-name" type="text" placeholder="new tag name" maxlength="32" />
+        <input id="tag-new-color" type="color" value="#10B981" />
+        <button onclick="addProjectTag()">add</button>
+      </div>
+      <button class="hub-modal-close" onclick="closeTagManager()">done</button>
+    </div>
+  </div>
+  <!-- project settings modal -->
+  <div id="hub-settings-overlay" class="hub-modal-overlay" onclick="if(event.target===this)closeHubSettings()">
+    <div class="hub-modal">
+      <h3>Project Settings</h3>
+      <div class="hub-settings-field">
+        <label>Name</label>
+        <input id="hub-set-name" type="text" maxlength="64" />
+      </div>
+      <div class="hub-settings-field">
+        <label>Start Date</label>
+        <input id="hub-set-start" type="date" />
+      </div>
+      <div class="hub-settings-field">
+        <label>Deadline</label>
+        <input id="hub-set-deadline" type="date" />
+      </div>
+      <button class="hub-modal-close" onclick="saveHubSettings()">save</button>
+    </div>
+  </div>
+</div>
+
 <div id="dash-backdrop" onclick="toggleDashboard()" style="
   position:fixed;inset:0;z-index:4999;
   background:rgba(0,0,0,0.5);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
@@ -191,6 +241,9 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
     <div id="bar-left">
       <button id="back-btn" onclick="goToDashboard()" title="dashboard  ⌘\">
         <svg viewBox="0 0 13 13"><rect x="1" y="1" width="5" height="5" rx="1"/><rect x="7" y="1" width="5" height="5" rx="1"/><rect x="1" y="7" width="5" height="5" rx="1"/><rect x="7" y="7" width="5" height="5" rx="1"/></svg>
+      </button>
+      <button id="hub-btn" onclick="openHubFromCanvas()" title="project hub">
+        <svg viewBox="0 0 13 13"><rect x="1" y="1" width="11" height="11" rx="2"/><line x1="1" y1="7" x2="12" y2="7"/><line x1="7" y1="1" x2="7" y2="12"/></svg>
       </button>
       <span id="project-title" title="double-click to rename">untitled</span>
       <input id="project-title-input" type="text" spellcheck="false" />
@@ -226,6 +279,12 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
         <button class="win-ctrl win-close" id="win-close" title="Close">✕</button>
       </div>
     </div>
+  </div>
+
+  <!-- canvas switcher (Chrome-style tabs) -->
+  <div id="canvas-switcher" style="display:none">
+    <div id="cv-tab-list"></div>
+    <button id="cv-tab-add" onclick="addCanvasFromTab()" title="new canvas">+</button>
   </div>
 
   <!-- search -->
@@ -347,7 +406,14 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
     <button class="sel-btn" id="sel-pin-btn" onclick="togglePinSelected()"><svg viewBox="0 0 12 12"><line x1="6" y1="7" x2="6" y2="11"/><path d="M3 7h6V5l-1-1V1H4v3L3 5z"/></svg><span id="sel-pin-label">pin</span></button>
     <button class="sel-btn" id="sel-lock-btn" onclick="toggleLockSelected()"><svg viewBox="0 0 12 12"><rect x="2" y="5" width="8" height="6" rx="1"/><path d="M4 5V3.5a2 2 0 014 0V5"/></svg><span id="sel-lock-label">lock</span></button>
     <div class="sel-divider"></div>
+    <button class="sel-btn" id="sel-tag-btn" onclick="toggleTagPicker(event)"><svg viewBox="0 0 12 12"><circle cx="3.5" cy="3.5" r="1.2" fill="currentColor"/><path d="M1 6V1h5l5 5-5 5z"/></svg>tag</button>
+    <div class="sel-divider"></div>
     <button class="sel-btn danger" onclick="deleteSelected()"><svg viewBox="0 0 12 12"><polyline points="1,3 11,3"/><path d="M2,3l1,8h6l1-8"/><line x1="4" y1="3" x2="4" y2="1"/><line x1="8" y1="3" x2="8" y2="1"/><line x1="4" y1="1" x2="8" y2="1"/></svg>del</button>
+  </div>
+
+  <!-- tag picker dropdown -->
+  <div id="tag-picker" style="display:none">
+    <div id="tag-picker-list"></div>
   </div>
 
   <!-- note context menu -->
@@ -607,6 +673,7 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
 <script src="./editor.js"></script>
 <script src="./canvas.js"></script>
 <script src="./images.js"></script>
+<script src="./project-hub.js"></script>
 
 <!-- ══════════════════════════════════════════
      IMG RIGHT-CLICK CONTEXT MENU + FOLDER BROWSER
