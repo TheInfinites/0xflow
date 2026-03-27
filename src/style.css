@@ -2402,3 +2402,192 @@ body.light #tag-picker {
   background:#fff; border-color:rgba(0,0,0,0.12);
 }
 
+/* ════════════════════════════════════════════
+   DATABASE TABLE VIEW
+════════════════════════════════════════════ */
+#view-database {
+  position:fixed; inset:0; z-index:5001;
+  background:var(--bg); color:var(--text);
+  display:flex; flex-direction:column;
+  font-family:'Geist',sans-serif; font-size:13px;
+}
+#db-bar {
+  display:flex; align-items:center; justify-content:space-between;
+  height:42px; padding:0 16px; border-bottom:1px solid var(--border);
+  flex-shrink:0; -webkit-app-region:drag;
+}
+#db-bar-left { display:flex; align-items:center; gap:10px; -webkit-app-region:no-drag; }
+#db-bar-right { display:flex; align-items:center; gap:6px; -webkit-app-region:no-drag; }
+#db-back-btn {
+  width:26px; height:26px; display:flex; align-items:center; justify-content:center;
+  background:none; border:1px solid var(--border); border-radius:6px;
+  cursor:pointer; color:var(--text-dim); flex-shrink:0;
+}
+#db-back-btn:hover { color:var(--text); border-color:var(--border-strong); }
+#db-title {
+  font-size:12px; font-weight:500; text-transform:uppercase;
+  letter-spacing:0.04em; color:var(--text);
+}
+.db-bar-btn {
+  background:none; border:1px solid var(--border); border-radius:5px;
+  color:var(--text-dim); font:inherit; font-size:11px;
+  padding:3px 10px; cursor:pointer; letter-spacing:0.02em;
+}
+.db-bar-btn:hover { color:var(--text); border-color:var(--border-strong); }
+
+/* filter / sort bars */
+#db-filter-bar, #db-sort-bar { padding:0 16px; }
+.db-filter-row, .db-sort-row {
+  display:flex; align-items:center; gap:6px; padding:4px 0;
+}
+.db-filter-select, .db-filter-input {
+  background:var(--surface); border:1px solid var(--border); border-radius:4px;
+  color:var(--text); font:inherit; font-size:11px; padding:3px 6px;
+  outline:none;
+}
+.db-filter-select:focus, .db-filter-input:focus { border-color:var(--border-strong); }
+.db-filter-del {
+  background:none; border:none; color:var(--text-dim); cursor:pointer;
+  font-size:12px; padding:2px 4px;
+}
+.db-filter-del:hover { color:var(--text); }
+
+/* table */
+#db-table-wrap {
+  flex:1; overflow:auto; padding:0 0 60px 0;
+}
+#db-table {
+  width:max-content; min-width:100%; border-collapse:collapse;
+}
+.db-th {
+  position:sticky; top:0; z-index:2;
+  background:var(--surface); border-bottom:1px solid var(--border);
+  padding:6px 10px; text-align:left; font-weight:500; font-size:11px;
+  text-transform:uppercase; letter-spacing:0.04em; color:var(--text-dim);
+  white-space:nowrap; user-select:none; cursor:default;
+}
+.db-th-name { margin-right:6px; }
+.db-th-type { font-size:9px; opacity:0.4; text-transform:lowercase; }
+.db-th-grip {
+  position:absolute; right:0; top:0; bottom:0; width:4px;
+  cursor:col-resize; background:transparent;
+}
+.db-th-grip:hover, .db-th-grip:active { background:var(--border-strong); }
+.db-th-handle { width:28px; background:var(--surface); border-bottom:1px solid var(--border); position:sticky; top:0; z-index:2; }
+.db-th-add {
+  position:sticky; top:0; z-index:2;
+  background:var(--surface); border-bottom:1px solid var(--border);
+  width:36px; text-align:center; color:var(--text-dim);
+  cursor:pointer; font-size:16px; font-weight:300;
+}
+.db-th-add:hover { color:var(--text); background:var(--surface-hover); }
+
+.db-th-rename-input {
+  background:none; border:none; border-bottom:1px solid var(--text-dim);
+  outline:none; color:var(--text); font:inherit; font-size:11px;
+  text-transform:uppercase; letter-spacing:0.04em; width:100%; padding:0;
+}
+
+/* rows */
+.db-row { border-bottom:1px solid var(--border); }
+.db-row:hover { background:var(--surface); }
+.db-row-dragging { opacity:0.4; }
+.db-row-dragover { box-shadow:inset 0 -2px 0 var(--border-strong); }
+.db-td-handle {
+  width:28px; text-align:center; color:var(--text-faint);
+  cursor:grab; font-size:10px; user-select:none;
+}
+.db-td-handle:active { cursor:grabbing; }
+.db-td {
+  padding:5px 10px; vertical-align:middle; white-space:nowrap;
+  border-right:1px solid var(--border);
+}
+.db-td-spacer { width:36px; }
+
+/* cells */
+.db-cell-text {
+  display:block; min-width:40px; outline:none; cursor:text;
+  padding:1px 0; white-space:pre-wrap; word-break:break-word;
+}
+.db-cell-text:focus { background:var(--surface-hover); border-radius:2px; }
+.db-cell-url { color:#6366F1; text-decoration:underline; }
+.db-cell-date {
+  background:none; border:none; color:var(--text); font:inherit;
+  font-size:12px; outline:none; cursor:pointer;
+}
+.db-cell-check {
+  cursor:pointer; font-size:16px; user-select:none; text-align:center;
+}
+.db-cell-check.checked { color:#10B981; }
+.db-cell-img { width:40px; height:40px; object-fit:cover; border-radius:3px; }
+.db-relation-chip {
+  display:inline-block; padding:1px 8px; background:var(--surface-hover);
+  border-radius:4px; cursor:pointer; font-size:11px;
+}
+.db-relation-chip:hover { background:var(--surface-active); }
+
+/* pills (select/multiselect) */
+.db-pill {
+  display:inline-block; padding:1px 8px; border-radius:10px;
+  font-size:11px; color:#fff; margin-right:3px; white-space:nowrap;
+}
+
+/* group rows */
+.db-group-row {
+  background:var(--surface); cursor:pointer; user-select:none;
+}
+.db-group-row td {
+  padding:6px 10px; font-weight:500; font-size:12px;
+  text-transform:uppercase; letter-spacing:0.03em; color:var(--text-dim);
+}
+.db-group-toggle { display:inline-block; width:14px; text-align:center; font-size:11px; }
+.db-group-count { font-size:10px; opacity:0.5; margin-left:6px; }
+
+/* add row */
+#db-add-row-bar { padding:6px 16px; }
+#db-add-row-btn {
+  background:none; border:1px dashed var(--border); border-radius:4px;
+  color:var(--text-dim); font:inherit; font-size:12px;
+  padding:6px 16px; cursor:pointer; width:100%; text-align:left;
+}
+#db-add-row-btn:hover { border-color:var(--border-strong); color:var(--text); }
+
+/* dropdowns */
+#db-col-type-picker, #db-select-picker, #db-col-ctx {
+  position:fixed; z-index:9999;
+  background:var(--bg); border:1px solid var(--border-strong);
+  border-radius:8px; padding:4px; min-width:140px;
+  box-shadow:0 8px 24px rgba(0,0,0,0.4);
+}
+.db-type-opt, .db-sel-opt, .db-ctx-item {
+  padding:6px 12px; cursor:pointer; font-size:12px;
+  border-radius:4px; white-space:nowrap;
+}
+.db-type-opt:hover, .db-sel-opt:hover, .db-ctx-item:hover {
+  background:var(--surface-hover);
+}
+.db-sel-opt.active { background:var(--surface-active); }
+.db-sel-add { color:var(--text-dim); font-style:italic; }
+.db-sel-check { margin-right:6px; }
+.db-sel-label { color:var(--text-dim); }
+.db-ctx-danger { color:#EF4444; }
+.db-ctx-danger:hover { background:rgba(239,68,68,0.12); }
+
+/* ════════════════════════════════════════════
+   LIGHT THEME OVERRIDES (database)
+════════════════════════════════════════════ */
+body.dash-light #view-database,
+body.light #view-database {
+  background:#f5f5f5; color:#1a1a1a;
+}
+body.dash-light .db-th, body.light .db-th,
+body.dash-light .db-th-handle, body.light .db-th-handle,
+body.dash-light .db-th-add, body.light .db-th-add {
+  background:#eee;
+}
+body.dash-light #db-col-type-picker, body.light #db-col-type-picker,
+body.dash-light #db-select-picker, body.light #db-select-picker,
+body.dash-light #db-col-ctx, body.light #db-col-ctx {
+  background:#fff; border-color:rgba(0,0,0,0.12);
+}
+

@@ -379,10 +379,13 @@ async function openCanvas(projId, canvasId, e){
     titleEl.textContent=p.name;
   }
 
-  // hide hub, show canvas
+  // hide hub/database, show canvas
   document.getElementById('view-project-hub').style.display='none';
+  document.getElementById('view-database').style.display='none';
   document.body.classList.add('on-canvas');
   document.body.classList.remove('on-hub');
+  document.body.classList.remove('on-db');
+  activeDbId=null;
   await loadCanvasState(canvasId);
   if(typeof renderCanvasTabs==='function') renderCanvasTabs(projId, canvasId);
   applyT(); syncInkPointerEvents(); syncUndoButtons();
@@ -394,15 +397,18 @@ function goToDashboard(){
   saveCanvasState(activeCanvasId||activeProjectId);
   document.body.classList.remove('on-canvas');
   document.body.classList.remove('on-hub');
+  document.body.classList.remove('on-db');
   document.getElementById('view-project-hub').style.display='none';
+  document.getElementById('view-database').style.display='none';
   activeCanvasId=null;
+  activeDbId=null;
   dashRender();
   const bd = document.getElementById('dash-backdrop');
   if(bd){ bd.style.opacity='1'; bd.style.pointerEvents='all'; }
 }
 
 function toggleDashboard(){
-  if(document.body.classList.contains('on-canvas') || document.body.classList.contains('on-hub')){
+  if(document.body.classList.contains('on-canvas') || document.body.classList.contains('on-hub') || document.body.classList.contains('on-db')){
     goToDashboard();
   } else {
     // ensure a project exists
@@ -470,8 +476,8 @@ function showInlineDelete(id){
   };
   overlay.querySelector('.card-del-confirm').onclick = e => {
     e.stopPropagation();
-    // remove all child canvas storage
-    (p.children||[]).forEach(c=>store.remove('freeflow_canvas_'+c.id));
+    // remove all child canvas/database storage
+    (p.children||[]).forEach(c=>{store.remove('freeflow_canvas_'+c.id);store.remove('freeflow_db_'+c.id);});
     projects = projects.filter(x=>x.id!==id);
     store.remove('freeflow_canvas_'+id);
     saveProjects(projects); dashRender();
@@ -485,7 +491,7 @@ function handleDeleteOverlayClick(e){ if(e.target===document.getElementById('del
 function confirmDelete(){
   if(!pendingDeleteId) return;
   const p=projects.find(x=>x.id===pendingDeleteId);
-  if(p)(p.children||[]).forEach(c=>store.remove('freeflow_canvas_'+c.id));
+  if(p)(p.children||[]).forEach(c=>{store.remove('freeflow_canvas_'+c.id);store.remove('freeflow_db_'+c.id);});
   projects=projects.filter(x=>x.id!==pendingDeleteId);
   store.remove('freeflow_canvas_'+pendingDeleteId);
   saveProjects(projects); closeDeleteModal(); dashRender();

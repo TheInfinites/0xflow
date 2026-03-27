@@ -19,6 +19,7 @@
 │   ├── editor.js             Block editor engine (contentEditable note editor)
 │   ├── images.js             Image/PDF/video/audio handling, AI features, updater
 │   ├── project-hub.js        Project hub view, tag system, canvas tab switcher
+│   ├── database.js           Database engine, table view, filter/sort, tag bridging
 │   ├── folder-browser.js     File ops context menu + cascading folder browser
 │   ├── tauri-mock.js         Browser dev mode — stubs window.__TAURI__ APIs
 │   └── fonts/                14 bundled TTF files (Geist, Geist Mono, Barlow Condensed, DM Mono)
@@ -42,6 +43,7 @@ index.html (app shell)
 └── <body>
     ├── #view-dashboard   Dashboard overlay (panel, not full page)
     ├── #view-project-hub Project hub (tags, settings, canvas grid)
+    ├── #view-database    Database table view (filter, sort, group, inline editing)
     └── #view-canvas      Infinite canvas
         ├── #bar           Top bar (hub btn, breadcrumb, undo/redo, search, actions)
         ├── #canvas-switcher Chrome-style canvas tab bar (shown when 2+ canvases)
@@ -69,6 +71,7 @@ canvas.js            Pan/zoom, notes, selection, undo/redo, entity IDs
 editor.js            Block editor (paragraph, headings, lists, todo, code, divider)
 images.js            Image/PDF/video/audio handling, auto-updater, window controls
 project-hub.js       Project hub, tag system, canvas tab switcher
+database.js          Database CRUD, table renderer, filter/sort/group, tag bridging
 folder-browser.js    Right-click context menu, cascading folder browser
 ```
 
@@ -134,6 +137,7 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 | `folders` | `Folder[]` | Dashboard folder structure |
 | `activeProjectId` | `string` | Currently open project |
 | `activeCanvasId` | `string` | Currently open canvas within a project |
+| `activeDbId` | `string` | Currently open database (null when not in db view) |
 | `scale` | `number` | Canvas zoom (0.1–5, default 1) |
 | `px`, `py` | `number` | Canvas pan offset in pixels |
 | `selected` | `Set<Element>` | Currently selected DOM elements |
@@ -224,6 +228,7 @@ Typing `/` (or `/query`) opens a floating menu filtered by block type label. Cli
 | `freeflow_projects` | JSON array of project metadata (includes children[], tags[], dates) |
 | `freeflow_folders` | JSON array of folder metadata (each folder has `parentId` for nesting) |
 | `freeflow_canvas_{id}` | Serialized canvas state (id = canvas ID, not project ID for multi-canvas) |
+| `freeflow_db_{id}` | Serialized database state (columns, rows, views, filters, sorts) |
 | `freeflow_dash_theme` | `'light'` or `'dark'` for dashboard |
 | `freeflow_key_gpt` | OpenAI API key (user-provided) |
 | `freeflow_key_gemini` | Google Gemini API key (user-provided) |
@@ -257,7 +262,8 @@ Typing `/` (or `/query`) opens a floating menu filtered by block type label. Cli
   startDate: "2026-04-01",       // ISO string or null
   deadline: "2026-06-30",        // ISO string or null
   children: [
-    { id: "cv_...", type: "canvas", name: "main board", createdAt: ..., updatedAt: ... }
+    { id: "cv_...", type: "canvas", name: "main board", createdAt: ..., updatedAt: ... },
+    { id: "db_...", type: "database", name: "shot tracker", createdAt: ..., updatedAt: ... }
   ],
   defaultCanvasId: "cv_...",
   tags: [
@@ -303,6 +309,116 @@ Typing `/` (or `/query`) opens a floating menu filtered by block type label. Cli
 | `renderElementTags(el, proj)` | Render tag pills on a single element |
 | `renderAllElementTags()` | Render tag pills on all canvas elements |
 | `openHubFromCanvas()` | Save canvas state and open hub |
+| `hubAddDatabase()` | Create new database child in project |
+
+---
+
+## Database Engine (Phase 2)
+
+### Database Schema
+```js
+// Stored in localStorage: freeflow_db_{dbId}
+{
+  id: "db_...", projectId: "proj_...",
+  columns: [
+    { id: "col_...", name: "Name", type: "text", width: 200 },
+    { id: "col_...", name: "Status", type: "select", width: 120,
+      options: [
+        { id: "opt_...", label: "Not Started", color: "#888" },
+        { id: "opt_...", label: "In Progress", color: "#F59E0B" }
+      ]},
+    { id: "col_...", name: "Tags", type: "multiselect", width: 140, options: [] },
+    { id: "col_...", name: "Due Date", type: "date", width: 120 }
+  ],
+  rows: [
+    { id: "row_...", cells: { col_1: "value", col_2: "opt_id" },
+      sourceElementId: null, sourceCanvasId: null,
+      createdAt: ..., updatedAt: ... }
+  ],
+  views: [
+    { id: "view_...", type: "table", filters: [], sorts: [],
+      groupBy: null, hiddenCols: [], colOrder: [...] }
+  ],
+  activeViewId: "view_..."
+}
+```
+
+**Column types:** `text`, `number`, `select`, `multiselect`, `date`, `checkbox`, `url`, `relation`, `image`
+
+### Database Navigation
+- Hub grid shows database cards with row count badge
+- Click database card → `openDatabaseView(dbId)` → shows `#view-database`
+- Back button or breadcrumb → `closeDatabaseView()` → returns to project hub
+- `body.on-db` class set when database view is active
+- `goToDashboard()` and `openCanvas()` both hide database view and clear `activeDbId`
+
+### Table Renderer
+- `renderDbTable(db)` — full table rebuild: thead (sticky headers), tbody (rows with inline editing)
+- Column headers: name + type badge, drag-to-resize grip, double-click rename, right-click context menu
+- Add column: `+` header cell → type picker dropdown → prompt for name
+- Cell types: contentEditable (text/number/url), select/multiselect dropdowns, date input, checkbox toggle, relation chip, image thumbnail
+
+### Column Operations
+| Operation | Trigger |
+|---|---|
+| Add | Click `+` column header → type picker |
+| Rename | Double-click header (inline input) or right-click → Rename |
+| Resize | Drag header right border |
+| Hide | Right-click header → Hide (per-view `hiddenCols`) |
+| Delete | Right-click header → Delete (with confirm) |
+
+### Row Operations
+| Operation | Trigger |
+|---|---|
+| Add | Click `+ new row` button at table bottom |
+| Delete | Right-click row → confirm delete |
+| Reorder | Drag handle (⠿) at left edge |
+
+### Filter System
+- `+ filter` button → adds filter row to `#db-filter-bar`
+- Each filter: column selector, operator selector, value input
+- Operators by type: text (contains, equals, empty), number (=, >, <, >=, <=), select (is, is_not), multiselect (contains, not_contains), date (equals, before, after), checkbox (is_checked, not_checked)
+- Filters stored per-view in `view.filters[]`
+
+### Sort System
+- `+ sort` button → adds sort row to `#db-sort-bar`
+- Each sort: column selector, direction (asc/desc)
+- Multi-column sort supported
+- Sorts stored per-view in `view.sorts[]`
+
+### Group By
+- `group` button → prompt to pick column
+- Rows grouped into collapsible sections with count badges
+- Click group header to collapse/expand
+- Stored per-view in `view.groupBy`
+
+### Tag-to-Database Bridging
+- `dbBus` event system: `dbBus.emit('element:tagged', {...})` / `dbBus.on('element:tagged', fn)`
+- When elements are tagged via the tag picker, `notifyElementTagged(el, proj)` fires
+- Handler auto-creates rows in project databases (if any exist) with element name, canvas relation, and tag IDs
+- Skips if row already exists for that `sourceElementId` + `sourceCanvasId`
+
+### Database Functions (`database.js`)
+| Function | Description |
+|---|---|
+| `createDatabase(projId, name)` | Create db with default columns (Name, Status, Tags, Due Date) |
+| `saveDatabase(db)` / `loadDatabase(dbId)` | Persist/load via `freeflow_db_{id}` |
+| `deleteDatabase(dbId)` | Remove from storage and cache |
+| `dbAddColumn(db, name, type)` | Add column, update view colOrder |
+| `dbRemoveColumn(db, colId)` | Remove column, clean up rows/views |
+| `dbRenameColumn(db, colId, name)` | Rename column |
+| `dbAddRowToDb(db, cells)` | Add row with cells |
+| `dbRemoveRow(db, rowId)` | Remove row |
+| `dbUpdateCell(db, rowId, colId, value)` | Update single cell |
+| `openDatabaseView(dbId)` | Open table view, render table |
+| `closeDatabaseView()` | Close table view, return to hub |
+| `renderDbTable(db)` | Full table render (thead + tbody) |
+| `renderDbFilterBar(db)` | Render filter controls |
+| `renderDbSortBar(db)` | Render sort controls |
+| `dbAddFilter()` / `dbAddSort()` | Add filter/sort rule |
+| `dbToggleGroupBy()` | Toggle group-by on a column |
+| `dbAddRow()` | Add empty row (UI handler) |
+| `notifyElementTagged(el, proj)` | Fire tag bridging event |
 
 ---
 

@@ -8,8 +8,11 @@ function showProjectHub(proj){
   activeProjectId=proj.id;
   activeCanvasId=null;
   document.body.classList.remove('on-canvas');
+  document.body.classList.remove('on-db');
   document.body.classList.add('on-hub');
   document.getElementById('view-project-hub').style.display='';
+  document.getElementById('view-database').style.display='none';
+  if(typeof activeDbId!=='undefined') activeDbId=null;
   document.getElementById('hub-title').textContent=proj.name;
   const bd=document.getElementById('dash-backdrop');
   if(bd){bd.style.opacity='0';bd.style.pointerEvents='none';}
@@ -28,17 +31,24 @@ function renderHubGrid(proj){
       :child.type==='database'?'<svg viewBox="0 0 20 20"><rect x="2" y="2" width="16" height="16" rx="2"/><line x1="2" y1="7" x2="18" y2="7"/><line x1="2" y1="12" x2="18" y2="12"/><line x1="8" y1="2" x2="8" y2="18"/></svg>'
       :'<svg viewBox="0 0 20 20"><rect x="3" y="1" width="14" height="18" rx="2"/><line x1="6" y1="5" x2="14" y2="5"/><line x1="6" y1="8" x2="14" y2="8"/><line x1="6" y1="11" x2="10" y2="11"/></svg>';
     const typeBadge=child.type==='canvas'?'CANVAS':child.type==='database'?'DATABASE':'PAGE';
+    let extraMeta='';
+    if(child.type==='database' && typeof loadDatabase==='function'){
+      const _db=loadDatabase(child.id);
+      if(_db) extraMeta=`<span>${_db.rows.length} row${_db.rows.length!==1?'s':''}</span>`;
+    }
     card.innerHTML=`
       <div class="hub-card-icon">${icon}</div>
       <div class="hub-card-info">
         <div class="hub-card-name">${escHtml(child.name)}</div>
         <div class="hub-card-meta">
           <span class="hub-card-type">${typeBadge}</span>
+          ${extraMeta}
           <span>${fmtDate(child.updatedAt||child.createdAt)}</span>
         </div>
       </div>`;
     card.addEventListener('click',()=>{
       if(child.type==='canvas') openCanvas(proj.id, child.id);
+      else if(child.type==='database' && typeof openDatabaseView==='function') openDatabaseView(child.id);
     });
     card.addEventListener('contextmenu',e=>{
       e.preventDefault();
@@ -62,9 +72,12 @@ function showHubCardCtx(proj, child, e){
       renderHubGrid(proj);
     }
   } else if(action.toLowerCase()==='delete'){
-    if(proj.children.length<=1){ showToast('Cannot delete the last canvas'); return; }
+    const canvasCount=(proj.children||[]).filter(c=>c.type==='canvas').length;
+    if(child.type==='canvas'&&canvasCount<=1){ showToast('Cannot delete the last canvas'); return; }
     if(!confirm(`Delete "${child.name}"? This cannot be undone.`)) return;
     store.remove('freeflow_canvas_'+child.id);
+    store.remove('freeflow_db_'+child.id);
+    if(typeof deleteDatabase==='function') deleteDatabase(child.id);
     proj.children=proj.children.filter(c=>c.id!==child.id);
     if(proj.defaultCanvasId===child.id) proj.defaultCanvasId=proj.children[0].id;
     proj.updatedAt=Date.now();
@@ -82,6 +95,21 @@ function hubAddCanvas(){
   const cvId=genId('cv');
   const now=Date.now();
   proj.children.push({id:cvId, type:'canvas', name:name.trim()||'new canvas', createdAt:now, updatedAt:now});
+  proj.updatedAt=now;
+  saveProjects(projects);
+  renderHubGrid(proj);
+  showToast(`"${name}" created`);
+}
+
+function hubAddDatabase(){
+  const proj=projects.find(x=>x.id===activeProjectId);
+  if(!proj) return;
+  const name=prompt('Database name:','new database');
+  if(!name) return;
+  if(typeof createDatabase!=='function'){ showToast('database engine not loaded'); return; }
+  const db=createDatabase(proj.id, name.trim());
+  const now=Date.now();
+  proj.children.push({id:db.id, type:'database', name:name.trim()||'new database', createdAt:now, updatedAt:now});
   proj.updatedAt=now;
   saveProjects(projects);
   renderHubGrid(proj);
@@ -203,6 +231,10 @@ function renderTagPicker(){
       item.classList.toggle('active');
       // mirror to tab canvases
       mirrorTaggedElements(proj);
+      // tag-to-database bridging
+      if(typeof notifyElementTagged==='function'){
+        selEls.forEach(el=>notifyElementTagged(el, proj));
+      }
     };
     list.appendChild(item);
   });

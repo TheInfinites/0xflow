@@ -188,6 +188,7 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
     <h2 id="hub-title">project</h2>
     <div id="hub-actions">
       <button class="hub-btn" onclick="hubAddCanvas()"><svg viewBox="0 0 12 12"><line x1="6" y1="1" x2="6" y2="11"/><line x1="1" y1="6" x2="11" y2="6"/></svg> new canvas</button>
+      <button class="hub-btn" onclick="hubAddDatabase()"><svg viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" rx="1.5"/><line x1="1" y1="4.5" x2="11" y2="4.5"/><line x1="1" y1="7.5" x2="11" y2="7.5"/><line x1="5" y1="1" x2="5" y2="11"/></svg> new database</button>
       <button class="hub-btn" onclick="hubManageTags()"><svg viewBox="0 0 12 12"><circle cx="3" cy="6" r="2"/><line x1="5" y1="6" x2="11" y2="6"/></svg> tags</button>
       <button class="hub-btn" onclick="hubProjectSettings()"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="2.5"/><line x1="6" y1="0.5" x2="6" y2="2"/><line x1="6" y1="10" x2="6" y2="11.5"/><line x1="0.5" y1="6" x2="2" y2="6"/><line x1="10" y1="6" x2="11.5" y2="6"/></svg> settings</button>
     </div>
@@ -225,6 +226,61 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
       <button class="hub-modal-close" onclick="saveHubSettings()">save</button>
     </div>
   </div>
+</div>
+
+<!-- ════════════════════════════════════════════
+     DATABASE TABLE VIEW
+════════════════════════════════════════════ -->
+<div id="view-database" style="display:none">
+  <div id="db-bar">
+    <div id="db-bar-left">
+      <button id="db-back-btn" onclick="closeDatabaseView()" title="back to hub">
+        <svg viewBox="0 0 13 13"><path d="M8 2L3 6.5L8 11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <span id="db-title">Database</span>
+    </div>
+    <div id="db-bar-right">
+      <button class="db-bar-btn" onclick="dbAddFilter()" title="add filter">+ filter</button>
+      <button class="db-bar-btn" onclick="dbAddSort()" title="add sort">+ sort</button>
+      <button class="db-bar-btn" onclick="dbToggleGroupBy()" title="group by">group</button>
+    </div>
+  </div>
+  <div id="db-filter-bar"></div>
+  <div id="db-sort-bar"></div>
+  <div id="db-table-wrap">
+    <table id="db-table">
+      <thead id="db-thead"></thead>
+      <tbody id="db-tbody"></tbody>
+    </table>
+    <div id="db-add-row-bar">
+      <button id="db-add-row-btn" onclick="dbAddRow()">+ new row</button>
+    </div>
+  </div>
+</div>
+
+<!-- column type picker dropdown -->
+<div id="db-col-type-picker" style="display:none">
+  <div class="db-type-opt" data-type="text">Aa Text</div>
+  <div class="db-type-opt" data-type="number"># Number</div>
+  <div class="db-type-opt" data-type="select">◉ Select</div>
+  <div class="db-type-opt" data-type="multiselect">◎ Multi-select</div>
+  <div class="db-type-opt" data-type="date">📅 Date</div>
+  <div class="db-type-opt" data-type="checkbox">☑ Checkbox</div>
+  <div class="db-type-opt" data-type="url">🔗 URL</div>
+  <div class="db-type-opt" data-type="relation">↗ Relation</div>
+  <div class="db-type-opt" data-type="image">🖼 Image</div>
+</div>
+
+<!-- select option picker dropdown -->
+<div id="db-select-picker" style="display:none">
+  <div id="db-select-picker-list"></div>
+</div>
+
+<!-- column header context menu -->
+<div id="db-col-ctx" style="display:none">
+  <div class="db-ctx-item" data-action="rename">Rename</div>
+  <div class="db-ctx-item" data-action="hide">Hide column</div>
+  <div class="db-ctx-item db-ctx-danger" data-action="delete">Delete column</div>
 </div>
 
 <div id="dash-backdrop" onclick="toggleDashboard()" style="
@@ -674,6 +730,7 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
 <script src="./canvas.js"></script>
 <script src="./images.js"></script>
 <script src="./project-hub.js"></script>
+<script src="./database.js"></script>
 
 <!-- ══════════════════════════════════════════
      IMG RIGHT-CLICK CONTEXT MENU + FOLDER BROWSER
