@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.7.8**
+> Current version: **v0.7.12**
 
 ---
 
@@ -594,6 +594,20 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 
 ## File Operations Feature
 
+### Changes in v0.7.12
+- **Open file location fix (complete)** — `plugins.shell.open: true` uses the default URL regex (`^((mailto:...)|(https?://...)).+`) which still rejects Windows file paths. Changed to `"open": ".*"` (a `Validate` regex matching any string) so `plugin:shell|open` accepts absolute file paths.
+
+### Changes in v0.7.11
+- **Grab still fix** — `video.crossOrigin = 'anonymous'` now set before `src` in `makeVideoCard` and in `bindVideoCard` for restored cards. Without it, drawing an `asset://` URL video onto a canvas taints it, causing `toBlob()` to throw a `SecurityError` ("Could not grab still").
+
+### Changes in v0.7.10
+- **Video playback fix** — added `app.security.assetProtocol: { enable: true, scope: ["**"] }` to `tauri.conf.json`. Without this, `convertFileSrc` generates `asset://` URLs that WebView2 refuses to load, leaving video cards black.
+- **Open file location fix (complete)** — `plugin:shell|open` with a filesystem path was failing because the shell plugin's `open` command validates paths against a URL regex by default. Added `"shell": { "open": true }` to `plugins` in `tauri.conf.json` to allow any path/URL. Reverted the intermediate `window.__TAURI__.shell.open` change back to `core.invoke('plugin:shell|open', { path })` since the shell plugin is not exposed on the global `window.__TAURI__` object.
+
+### Changes in v0.7.9
+- **Video drag-and-drop fix** — `placeMediaFromPath` and the media restore path were calling `window.__TAURI__.tauri.convertFileSrc` (Tauri v1 API). Fixed to `window.__TAURI__.core.convertFileSrc` (Tauri v2). Dragging video/audio files onto the canvas now works correctly.
+- **Open file location fix** — "Open file location" in the image context menu and `openProjectDirInExplorer` were invoking `plugin:shell|open` via `core.invoke`, which is not a valid invocation for the shell plugin. Fixed to use `window.__TAURI__.shell.open(path)` directly.
+
 ### Changes in v0.7.8
 - **Zoom to element** — all element context menus (note, frame, stroke, image) and the selection bar now have a "zoom to" action. Uses new `zoomToEl(el)` for single-element zoom; `zoomToMenuNote()` / `zoomToMenuFrame()` wrap it for menu context. SVG shapes use `getBBox()` for bounds.
 - **Paste priority fix** — `pasteClipboard()` now checks the system clipboard first, so images copied from a browser/internet are pasted immediately instead of being overridden by the internal canvas clipboard.
@@ -626,7 +640,7 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 - Stored in `_projectDir` (module-level variable) **and** persisted to localStorage per canvas via `saveProjectDir(dir)` / `loadProjectDir()`
 - Key: `freeflow_projdir_{canvasId}` — loaded inside `loadCanvasState()`
 - Uses `window.__TAURI__.dialog.open({ directory: true })` in Tauri; prompt() in browser mock
-- `openProjectDirInExplorer()` — opens `_projectDir` in the OS file explorer via `window.__TAURI__.shell.open`
+- `openProjectDirInExplorer()` — opens `_projectDir` in the OS file explorer via `core.invoke('plugin:shell|open', { path: _projectDir })`
 - `loadProjectDir()` resets `_projectDir = null` and restores the button label to "📁 project dir" when no saved value exists for the current canvas — prevents one canvas's project dir leaking into a new canvas
 
 ### Right-Click Drag Gesture (`startImgRightDrag`)
@@ -641,7 +655,7 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 - **"Rename file"** (`#ictx-rename-file`) — shown when a single img-card is right-dragged; renames on disk via `window.__TAURI__.fs.rename`; updates `card.dataset.sourcePath`. Browser mock: toast only.
 - **"Batch rename"** (`#ictx-batch-rename`) — shown instead of "rename file" when 2+ img-cards are selected; opens the batch rename modal.
 - **"Zoom to"** (`#ictx-zoom-to`) — zooms canvas to fit the target img-card
-- **"Open file location"** (`#ictx-open-location`) — shown only when `card.dataset.sourcePath` is set; opens the file's parent directory in OS file explorer via `invoke('plugin:shell|open', { path: dir })`. Hidden by default, revealed in `openImgCtxMenu()` when sourcePath exists.
+- **"Open file location"** (`#ictx-open-location`) — shown only when `card.dataset.sourcePath` is set; opens the file's parent directory in OS file explorer via `core.invoke('plugin:shell|open', { path: dir })`. Requires `plugins.shell.open: ".*"` in `tauri.conf.json` — `true` uses the default URL-only regex and rejects file paths; `".*"` is the `Validate` form that matches any string. Hidden by default, revealed in `openImgCtxMenu()` when sourcePath exists.
 - **"Move / Copy to folder"** — hover opens cascading folder browser
 - Closes on: left-click anywhere on canvas or outside, `closeAllFolderUI()`
 
