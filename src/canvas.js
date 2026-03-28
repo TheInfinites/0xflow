@@ -221,7 +221,8 @@ function restoreCanvas(state){
           oldTa.remove();
           createBlockEditor(el);
           if(txt.trim()) initEditorWithText(el.querySelector('.block-editor'), txt);
-        } else if(!el.querySelector('.block-editor')) {
+        } else {
+          const oldEd = el.querySelector('.block-editor'); if (oldEd) oldEd.remove();
           createBlockEditor(el);
         }
         if(items[i] && items[i].blocks && items[i].blocks.length) {

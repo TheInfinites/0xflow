@@ -709,6 +709,7 @@ body.dash-light #toast { background: #1a1a1a; }
 .bar-btn svg { width: 11px; height: 11px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .bar-btn:hover { color: rgba(255,255,255,0.75); border-color: rgba(255,255,255,0.2); }
 .bar-btn:disabled { opacity: 0.25; cursor: default; }
+.bar-btn.active { color: rgba(255,255,255,0.85); border-color: rgba(255,255,255,0.35); }
 #import-btn.active { color: rgba(255,255,255,0.75); border-color: rgba(255,255,255,0.2); }
 
 /* ── Import panel ──────────────────────── */

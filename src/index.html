@@ -209,6 +209,7 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
       <button class="bar-btn" onclick="toggleMinimap()" title="Minimap"><svg viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" rx="1.5"/><rect x="3" y="3" width="3" height="2"/><rect x="7" y="4" width="2" height="4"/><rect x="3" y="7" width="4" height="2"/></svg></button>
       <button class="bar-btn" onclick="toggleBookmarkPanel()" title="Viewport bookmarks"><svg viewBox="0 0 12 12"><path d="M2 1h8v10L6 8.5 2 11z"/></svg></button>
       <button class="bar-btn" onclick="toggleTimer()"><svg viewBox="0 0 12 12"><circle cx="6" cy="7" r="4"/><line x1="6" y1="1" x2="6" y2="3"/><line x1="4" y1="1" x2="8" y2="1"/><line x1="6" y1="7" x2="8.5" y2="5"/></svg></button>
+      <button class="bar-btn" id="always-on-top-btn" onclick="toggleAlwaysOnTop()" title="Always on top"><svg viewBox="0 0 12 12"><polyline points="6,1 6,9"/><polyline points="3,4 6,1 9,4"/><line x1="2" y1="11" x2="10" y2="11"/></svg></button>
     </div>
     <div id="bar-right">
       <button class="bar-btn" onclick="clearAll()">clear</button>
@@ -515,7 +516,6 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
 <svg id="conn-wire-svg" style="display:none"><path id="conn-wire-path" d=""/></svg>
 </div><!-- /view-canvas -->
 
-<div id="paste-hint"><div id="paste-hint-inner">Drop or paste image<span>supports jpg, png, gif, webp, svg — full resolution preserved</span></div></div>
 
 <!-- Custom video fullscreen overlay (bypasses browser native fullscreen chrome) -->
 <div id="vc-fs-overlay">

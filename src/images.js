@@ -1299,15 +1299,14 @@ async function placeMediaFromPath(filePath, wx, wy, mediaType, mimeType) {
 
   // Save a reference in IDB by writing the file there too (for persistence/restore)
   try {
-    const ext = mediaType === 'video' ? '.mp4' : '.mp3';
-    const { writeFile, readFile } = window.__TAURI__.fs;
+    const ext = '.' + filePath.split('.').pop().toLowerCase();
+    const { copyFile } = window.__TAURI__.fs;
     const { join } = window.__TAURI__.path;
     const dir = await getTauriImagesDir();
     const destPath = await join(dir, id + ext);
     // Copy file only if source is not already in our images dir
     if (!filePath.startsWith(dir)) {
-      const data = await readFile(filePath);
-      await writeFile(destPath, data);
+      await copyFile(filePath, destPath);
     }
   } catch (e) { console.warn('placeMediaFromPath: copy failed', e); }
 
@@ -1988,14 +1987,11 @@ if (IS_TAURI) {
     const _videoExts = ['.mp4','.webm','.mov','.avi','.mkv','.ogv'];
     const _audioExts = ['.mp3','.wav','.ogg','.flac','.aac','.m4a','.opus'];
     const isMedia = p => { const l = p.toLowerCase(); return _videoExts.some(e => l.endsWith(e)) || _audioExts.some(e => l.endsWith(e)); };
-    if (paths.some(p => isImagePath(p) || isPdfPath(p) || isExrPath(p) || isMedia(p))) document.getElementById('paste-hint').classList.add('show');
+    if (paths.some(p => isImagePath(p) || isPdfPath(p) || isExrPath(p) || isMedia(p))) {}
   });
   listen('tauri://drag-over', () => {});
-  listen('tauri://drag-leave', () => {
-    document.getElementById('paste-hint').classList.remove('show');
-  });
+  listen('tauri://drag-leave', () => {});
   listen('tauri://drag-drop', async (event) => {
-    document.getElementById('paste-hint').classList.remove('show');
     if (!document.body.classList.contains('on-canvas')) return;
     const allPaths = event.payload.paths || [];
 
@@ -2057,14 +2053,10 @@ if (IS_TAURI) {
     );
     if (hasMedia) {
       e.preventDefault();
-      document.getElementById('paste-hint').classList.add('show');
     }
   });
-  document.addEventListener('dragleave', e => {
-    if (e.relatedTarget === null) document.getElementById('paste-hint').classList.remove('show');
-  });
+  document.addEventListener('dragleave', e => {});
   document.addEventListener('drop', async e => {
-    document.getElementById('paste-hint').classList.remove('show');
     if (!document.body.classList.contains('on-canvas')) return;
     e.preventDefault();
     const dropPos = c2w(e.clientX, e.clientY);
@@ -2127,6 +2119,15 @@ document.addEventListener('mouseup',()=>{ _mmDrag=false; });
 
 let timerTotal=300,timerLeft=300,timerInterval=null,timerRunning=false;
 function toggleTimer(){ document.getElementById('timer-box').classList.toggle('show'); }
+
+let _alwaysOnTop = false;
+async function toggleAlwaysOnTop() {
+  if (!IS_TAURI) return;
+  _alwaysOnTop = !_alwaysOnTop;
+  await window.__TAURI__.core.invoke('set_always_on_top', { onTop: _alwaysOnTop });
+  const btn = document.getElementById('always-on-top-btn');
+  if (btn) btn.classList.toggle('active', _alwaysOnTop);
+}
 function setTimer(mins){ timerTotal=mins*60;timerLeft=timerTotal;renderTimer();if(timerRunning)stopTimer(); }
 function renderTimer(){ const m=Math.floor(timerLeft/60),s=timerLeft%60,disp=document.getElementById('timer-display');disp.textContent=String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');disp.classList.toggle('urgent',timerLeft<=30&&timerLeft>0);document.getElementById('timer-progress-bar').style.width=(timerLeft/timerTotal*100)+'%'; }
 function toggleTimer_run(){ if(timerRunning)stopTimer();else startTimer(); }
@@ -2931,18 +2932,25 @@ document.addEventListener('mousemove', e => {
     radialDragged = true;
     openRadialMenu(radialStartX, radialStartY);
   }
-  // highlight the item whose angle is nearest to the drag direction
-  if (radialOpen && Math.sqrt(dx*dx+dy*dy) > DRAG_THRESHOLD) {
-    const dragAngle = Math.atan2(dy, dx);
+  // highlight by angle only when cursor has reached the item ring, with dead zones between items
+  if (radialOpen) {
+    const dist = Math.sqrt(dx*dx+dy*dy);
     const items = radialRing.querySelectorAll('.radial-item');
-    let bestEl = null, bestDiff = Infinity;
-    items.forEach(el => {
-      let diff = dragAngle - parseFloat(el.dataset.angle);
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      if (Math.abs(diff) < bestDiff) { bestDiff = Math.abs(diff); bestEl = el; }
-    });
-    items.forEach(el => el.classList.toggle('hovered', el === bestEl));
+    if (dist >= 40) {
+      const dragAngle = Math.atan2(dy, dx);
+      const TOLERANCE = 22 * Math.PI / 180; // dead zone between items
+      let bestEl = null, bestDiff = Infinity;
+      items.forEach(el => {
+        let diff = dragAngle - parseFloat(el.dataset.angle);
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        if (Math.abs(diff) < bestDiff) { bestDiff = Math.abs(diff); bestEl = el; }
+      });
+      const hit = bestDiff <= TOLERANCE ? bestEl : null;
+      items.forEach(el => el.classList.toggle('hovered', el === hit));
+    } else {
+      items.forEach(el => el.classList.remove('hovered'));
+    }
   }
 });
 
@@ -2952,8 +2960,8 @@ document.addEventListener('mouseup', e => {
   radialMouseDown = false;
   if (!radialDragged) { closeRadialMenu(); return; }
   if (radialOpen) {
-    const hovered = radialRing.querySelector('.radial-item.hovered');
     const ox = radialStartX, oy = radialStartY;
+    const hovered = radialRing.querySelector('.radial-item.hovered');
     if (hovered) {
       const idx = parseInt(hovered.dataset.index);
       const action = _radialActiveItems[idx]?.action;
