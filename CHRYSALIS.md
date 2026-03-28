@@ -665,10 +665,11 @@ git add -A && git commit -m "Phase 6: Replace custom editor with TipTap"
 - **`src/lib/DrawCard.svelte`** — embedded drawing canvas (HTML5 Canvas, positioned over PixiJS)
 - **`src/lib/PDFViewer.svelte`** — PDF page rendering via PDF.js
 
-Media blob storage stays the same architecture:
-- Tauri: filesystem at `{appDataDir}/images/`
-- Browser: IndexedDB `freeflow_images`
-- Wrap in a clean `src/lib/media-service.js` module
+Media blob storage — differentiate by type in `media-service.js`:
+- **Images** — copy to `{appDataDir}/images/` (current behavior, fine)
+- **Video / Audio** — store the original file path only, do NOT copy. Copying a 2GB+ MOV/MP4 on drop would block the user. Store the source path in `content.filePath` and reference it directly in the `<video>`/`<audio>` element.
+- Browser: IndexedDB `freeflow_images` (images only; video/audio path-reference not applicable in browser mode)
+- Wrap in a clean `src/lib/media-service.js` module with a `handleDrop(file)` function that branches on `file.type` to decide copy vs. path-reference
 
 ### 7c. Remaining UI components
 
