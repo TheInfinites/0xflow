@@ -403,6 +403,7 @@ function imgCardResizeFn(el, nw) {
   const nwMax = parseInt(el.dataset.nw)||99999;
   const actualW = Math.min(nw - 12, nwMax);
   if(imgEl){ imgEl.style.width = actualW+'px'; imgEl.style.height = 'auto'; }
+  // keep card width in sync with clamped image width so the anchor stays correct
   el.style.width = (actualW + 12) + 'px';
   el.style.height = 'auto';
 }
@@ -1297,16 +1298,21 @@ async function placeMediaFromPath(filePath, wx, wy, mediaType, mimeType) {
   const assetURL = convertFileSrc(filePath);
   const id = 'media_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
 
-  // Save a reference in IDB by writing the file there too (for persistence/restore)
+  // Save a reference by copying to images dir — skip for large files (>100 MB) to avoid memory/disk issues
   try {
     const ext = '.' + filePath.split('.').pop().toLowerCase();
-    const { copyFile } = window.__TAURI__.fs;
+    const { copyFile, stat } = window.__TAURI__.fs;
     const { join } = window.__TAURI__.path;
     const dir = await getTauriImagesDir();
     const destPath = await join(dir, id + ext);
-    // Copy file only if source is not already in our images dir
     if (!filePath.startsWith(dir)) {
-      await copyFile(filePath, destPath);
+      const fileStat = await stat(filePath).catch(() => null);
+      const sizeBytes = fileStat?.size ?? 0;
+      const MB100 = 100 * 1024 * 1024;
+      if (sizeBytes < MB100) {
+        await copyFile(filePath, destPath);
+      }
+      // large files: stream directly from source path via convertFileSrc — no copy needed
     }
   } catch (e) { console.warn('placeMediaFromPath: copy failed', e); }
 
@@ -1326,6 +1332,11 @@ async function placeMediaFromPath(filePath, wx, wy, mediaType, mimeType) {
 }
 
 async function placeMediaBlob(blob, wx, wy, sourcePath, mediaType) {
+  const MB100 = 100 * 1024 * 1024;
+  if (IS_TAURI && blob.size > MB100) {
+    showToast('File too large to import this way — drag it onto the canvas instead');
+    return;
+  }
   const id = 'media_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
   // store blob in same IDB store (key doesn't need .png extension in IDB)
   if (!IS_TAURI) {
@@ -1627,8 +1638,24 @@ async function onImportFiles(e) {
   for (const f of exrFiles) await placeExrBlob(f);
   if (imgFiles.length) await placeImagesGrid(imgFiles);
   for (const f of pdfFiles) await placePdf(f);
-  for (const f of videoFiles) await placeMediaBlob(f, undefined, undefined, undefined, 'video');
-  for (const f of audioFiles) await placeMediaBlob(f, undefined, undefined, undefined, 'audio');
+  for (const f of videoFiles) {
+    if (IS_TAURI && f.path) {
+      const ext = f.name.split('.').pop().toLowerCase();
+      const videoMime = { mp4:'video/mp4', webm:'video/webm', mov:'video/quicktime', avi:'video/x-msvideo', mkv:'video/x-matroska', ogv:'video/ogg' };
+      await placeMediaFromPath(f.path, undefined, undefined, 'video', videoMime[ext] || 'video/mp4');
+    } else {
+      await placeMediaBlob(f, undefined, undefined, undefined, 'video');
+    }
+  }
+  for (const f of audioFiles) {
+    if (IS_TAURI && f.path) {
+      const ext = f.name.split('.').pop().toLowerCase();
+      const audioMime = { mp3:'audio/mpeg', wav:'audio/wav', ogg:'audio/ogg', flac:'audio/flac', aac:'audio/aac', m4a:'audio/mp4', opus:'audio/opus' };
+      await placeMediaFromPath(f.path, undefined, undefined, 'audio', audioMime[ext] || 'audio/mpeg');
+    } else {
+      await placeMediaBlob(f, undefined, undefined, undefined, 'audio');
+    }
+  }
   for (const f of otherFiles) {
     // try as image, silently skip if not renderable
     try { await placeImagesGrid([f]); } catch {}

@@ -8,10 +8,13 @@ function _projDirKey() { return 'freeflow_projdir_' + (activeProjectId || '_defa
 
 function loadProjectDir() {
   const saved = store.get(_projDirKey());
+  const btn = document.getElementById('proj-dir-btn');
   if (saved) {
     _projectDir = saved;
-    const btn = document.getElementById('proj-dir-btn');
     if (btn) btn.textContent = '📁 ' + saved.split(/[\\/]/).pop();
+  } else {
+    _projectDir = null;
+    if (btn) btn.textContent = '📁 project dir';
   }
 }
 
@@ -187,16 +190,16 @@ function getDragLineSvg() {
   return svg;
 }
 
-function setDragLine(x1, y1, x2, y2) {
+function setDragLine(x1, y1, x2, y2, id='_main') {
   const svg = getDragLineSvg();
-  // x/y are viewport coords; svg is absolute inside #cv so subtract its bounding rect
   const cvRect = document.getElementById('cv').getBoundingClientRect();
   const ox = cvRect.left, oy = cvRect.top;
-  let line = svg.querySelector('line');
+  let line = svg.querySelector(`line[data-id="${id}"]`);
   if (!line) {
     line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
     line.setAttribute('stroke-width', '1');
     line.setAttribute('stroke-dasharray', '5 5');
+    line.setAttribute('data-id', id);
     svg.appendChild(line);
   }
   const isLight = document.body.classList.contains('light');
@@ -207,7 +210,7 @@ function setDragLine(x1, y1, x2, y2) {
 }
 
 function clearDragLine() {
-  if (_dragLineSvg) _dragLineSvg.style.display = 'none';
+  if (_dragLineSvg) { _dragLineSvg.innerHTML = ''; _dragLineSvg.style.display = 'none'; }
 }
 
 function cardCenter(card) {
@@ -251,32 +254,37 @@ function startImgRightDrag(e, card) {
   _rcDragMoved = false;
   window._noteRightDragActive = true;
 
-  const origin = cardCenter(card);
+  const ELEM_SEL = '.note, .img-card, .frame, .lbl, .todo-card';
+  const multiSources = (selected.size > 1 && selected.has(card))
+    ? [...selected].filter(el => !(el instanceof SVGElement))
+    : [card];
+  const origins = multiSources.map(el => ({ el, center: cardCenter(el) }));
 
   function onMove(ev) {
     if (Math.abs(ev.clientX - _rcDragStartX) > 4 || Math.abs(ev.clientY - _rcDragStartY) > 4) {
       _rcDragMoved = true;
     }
-    if (_rcDragMoved) setDragLine(origin.x, origin.y, ev.clientX, ev.clientY);
+    if (_rcDragMoved) {
+      origins.forEach(({ el, center }, i) => setDragLine(center.x, center.y, ev.clientX, ev.clientY, i));
+    }
   }
   function onUp(ev) {
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
     if (_rcDragCard && _rcDragMoved) {
       // Check if dropped on another element — create relation instead of opening menu
-      _rcDragCard.style.pointerEvents = 'none';
+      multiSources.forEach(el => el.style.pointerEvents = 'none');
       const target = document.elementFromPoint(ev.clientX, ev.clientY);
-      _rcDragCard.style.pointerEvents = '';
-      const targetEl = target?.closest('.note, .img-card, .frame, .lbl, .todo-card');
-      if (targetEl && targetEl !== _rcDragCard) {
+      multiSources.forEach(el => el.style.pointerEvents = '');
+      const targetEl = target?.closest(ELEM_SEL);
+      if (targetEl && !multiSources.includes(targetEl)) {
         clearDragLine();
-        addRelation(_rcDragCard, targetEl);
+        multiSources.forEach(src => addRelation(src, targetEl));
         _rcDragCard = null;
         setTimeout(() => { window._noteRightDragActive = false; }, 0);
         return;
       }
-      // No connection target — open context menu
-      setDragLine(origin.x, origin.y, ev.clientX, ev.clientY);
+      // No connection target — open context menu (single card only), keep drag line visible
       openImgCtxMenu(ev.clientX, ev.clientY, _rcDragCard);
     } else if (_rcDragCard) {
       openImgCtxMenu(ev.clientX, ev.clientY, _rcDragCard);
@@ -322,6 +330,10 @@ function openImgCtxMenu(x, y, card) {
     }
   }
 
+  // Show "open file location" only when the card has a source path on disk
+  const locBtn = document.getElementById('ictx-open-location');
+  if (locBtn) locBtn.style.display = card.dataset.sourcePath ? 'flex' : 'none';
+
   // Position — keep on screen
   imgCtxMenu.style.left = '0px';
   imgCtxMenu.style.top = '0px';
@@ -341,6 +353,29 @@ function closeImgCtxMenu() {
   _ctxCard = null;
   clearDragLine();
 }
+
+document.getElementById('ictx-zoom-to')?.addEventListener('click', () => {
+  if (_ctxCard && typeof zoomToEl === 'function') { zoomToEl(_ctxCard); closeImgCtxMenu(); }
+});
+
+document.getElementById('ictx-open-location')?.addEventListener('click', async () => {
+  const path = _ctxCard?.dataset.sourcePath;
+  if (!path) return;
+  closeImgCtxMenu();
+  if (IS_TAURI) {
+    try {
+      // Get parent directory and open it in the system file explorer
+      const { dirname } = window.__TAURI__.path;
+      const dir = await dirname(path);
+      await window.__TAURI__.core.invoke('plugin:shell|open', { path: dir });
+    } catch (e) {
+      console.warn('open file location error:', e);
+      showToast('Could not open file location');
+    }
+  } else {
+    showToast('Open file location requires the desktop app\n' + path);
+  }
+});
 
 function closeAllFolderUI() {
   imgCtxMenu.classList.remove('show');

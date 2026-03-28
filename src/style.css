@@ -2012,6 +2012,22 @@ body.on-canvas.light .rh-sw::after, body.on-canvas.light .rh-se::after { backgro
 /* light mode: collapse button */
 body.on-canvas.light .collapse-btn svg { stroke: rgba(0,0,0,0.5); }
 
+/* light mode: label node */
+body.on-canvas.light .lbl { border-bottom-color: rgba(0,0,0,0.12); caret-color: rgba(0,0,0,0.6); }
+body.on-canvas.light .lbl:empty::before { color: rgba(0,0,0,0.2); }
+body.on-canvas.light .lbl[contenteditable="true"].editing { border-bottom-color: rgba(232,68,10,0.5); }
+
+/* light mode: block-editor todo checkbox — notes keep dark bg so stay white, non-note context goes dark */
+body.on-canvas.light .be-todo-text:empty::before { color: rgba(0,0,0,0.2); }
+/* inside notes, undo the body.light override — note bg is always dark */
+body.on-canvas.light .note .be-todo-cb { border-color: rgba(255,255,255,0.2); }
+body.on-canvas.light .note .be-todo-cb:hover { border-color: rgba(255,255,255,0.45); }
+body.on-canvas.light .note .be-todo-text:empty::before { color: rgba(255,255,255,0.2); }
+
+/* light mode: stroke/pen selection highlight */
+body.on-canvas.light .stroke-wrap.stroke-selected path:not(.stroke-hit) { stroke: rgba(0,0,0,0.75) !important; }
+body.on-canvas.light .stroke-wrap.stroke-selected { filter: drop-shadow(0 0 5px rgba(0,0,0,0.15)); }
+
 /* minimap */
 #minimap { position: fixed; bottom: 56px; right: 14px; z-index: 800; width: 160px; height: 100px; background: rgba(10,10,10,0.95); border: 1px solid rgba(255,255,255,0.08); border-radius: 0; overflow: hidden; pointer-events: none; opacity: 0; transition: opacity 0.2s; cursor: crosshair; }
 #minimap.show { opacity: 1; pointer-events: all; }

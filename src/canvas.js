@@ -49,6 +49,9 @@ async function loadCanvasState(id){
   // clear canvas first
   document.querySelectorAll('.note,.img-card,.lbl,.frame').forEach(e=>e.remove());
   strokes.innerHTML=''; arrowsG.innerHTML='';
+  (window._relations||[]).forEach(r => { cancelAnimationFrame(r._raf); r.wireG?.remove(); });
+  window._relations = [];
+  if(relationsG) relationsG.innerHTML='';
   selected.clear(); updateSelBar();
   undoStack=[]; redoStack=[]; syncUndoButtons();
   scale=1; px=0; py=0;
@@ -420,6 +423,22 @@ function zoomToSelection(){
   px=cw/2-((mnX+mxX)/2-3000)*ns; py=ch/2-((mnY+mxY)/2-3000)*ns; scale=ns;
   applyT();positionSelBar();
 }
+function zoomToEl(el){
+  let mnX,mnY,mxX,mxY;
+  if(el instanceof SVGElement){
+    try{const b=el.getBBox();mnX=b.x;mnY=b.y;mxX=b.x+b.width;mxY=b.y+b.height;}
+    catch{return;}
+  } else {
+    mnX=parseFloat(el.style.left)||0;mnY=parseFloat(el.style.top)||0;
+    mxX=mnX+(el.offsetWidth||200);mxY=mnY+(el.offsetHeight||128);
+  }
+  const pad=80,cw=cv.offsetWidth,ch=cv.offsetHeight,ww=mxX-mnX+pad*2,wh=mxY-mnY+pad*2;
+  const ns=Math.min(Math.min(cw/ww,ch/wh),3);
+  px=cw/2-((mnX+mxX)/2-3000)*ns; py=ch/2-((mnY+mxY)/2-3000)*ns; scale=ns;
+  applyT();positionSelBar();
+}
+function zoomToMenuNote(){ if(menuNote){zoomToEl(menuNote);closeMenu();} }
+function zoomToMenuFrame(){ if(menuFrame){zoomToEl(menuFrame);closeFrameMenu();} }
 function zoomToFit(){
   const els=[...document.querySelectorAll('.note,.img-card,.lbl,.frame')];
   if(!els.length){resetView();return;}
@@ -1017,7 +1036,20 @@ async function convertToPng(blob) {
 }
 
 async function pasteClipboard() {
-  // prefer internal canvas clipboard
+  // check system clipboard first — an image copied from outside takes priority
+  try {
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      if (item.types.includes('image/png') || item.types.includes('image/jpeg') || item.types.find(t => t.startsWith('image/'))) {
+        const type = item.types.find(t => t.startsWith('image/'));
+        const blob = await item.getType(type);
+        placeImagesGrid([blob], []);
+        return;
+      }
+    }
+  } catch(e) { /* clipboard read not available or denied */ }
+
+  // fallback: internal canvas clipboard
   if (_clipboard.length) {
     snapshot();
     const newEls = [];
@@ -1041,20 +1073,7 @@ async function pasteClipboard() {
     clearSelection();
     newEls.forEach(el => { el.classList.add('selected'); selected.add(el); });
     updateSelBar();
-    return;
   }
-  // fallback: try reading an image from the system clipboard
-  try {
-    const items = await navigator.clipboard.read();
-    for (const item of items) {
-      if (item.types.includes('image/png') || item.types.includes('image/jpeg')) {
-        const type = item.types.find(t => t.startsWith('image/'));
-        const blob = await item.getType(type);
-        placeImagesGrid([blob], []);
-        return;
-      }
-    }
-  } catch(e) { /* clipboard read not available */ }
 }
 
 function groupSelected(){
@@ -2127,6 +2146,16 @@ function startEdgeResize(e, el, dir, minW, minH, onResizeFn) {
     el.style.left=nl+'px'; el.style.top=nt+'px';
     el.style.width=nw+'px'; el.style.height=nh+'px';
     if(onResizeFn) onResizeFn(el, nw, nh);
+    // if the callback clamped the element width (e.g. image native size limit),
+    // re-anchor left/top so the opposite edge doesn't drift
+    if(dir.includes('w')){
+      const actualW=el.offsetWidth;
+      if(actualW!==nw) el.style.left=(sl+(sw-actualW))+'px';
+    }
+    if(dir.includes('n')){
+      const actualH=el.offsetHeight;
+      if(actualH!==nh) el.style.top=(st+(sh-actualH))+'px';
+    }
   }
   function onUp(){ document.removeEventListener('mousemove',onMove); document.removeEventListener('mouseup',onUp); snapshot(); }
   document.addEventListener('mousemove',onMove);
@@ -2227,26 +2256,33 @@ function startNoteRightDrag(e, note) {
   const startX = e.clientX, startY = e.clientY;
   note._rcDragMoved = false;
   window._noteRightDragActive = true;
-  const origin = cardCenter(note);
+  // If this note is part of a multi-selection, drag from all selected non-SVG elements
+  const ELEM_SEL = '.note, .img-card, .frame, .lbl, .todo-card';
+  const multiSources = (selected.size > 1 && selected.has(note))
+    ? [...selected].filter(el => !(el instanceof SVGElement))
+    : [note];
+  const origins = multiSources.map(el => ({ el, center: cardCenter(el) }));
 
   function onMove(ev) {
     if (Math.abs(ev.clientX - startX) > 4 || Math.abs(ev.clientY - startY) > 4) {
       note._rcDragMoved = true;
     }
-    if (note._rcDragMoved) setDragLine(origin.x, origin.y, ev.clientX, ev.clientY);
+    if (note._rcDragMoved) {
+      origins.forEach(({ el, center }, i) => setDragLine(center.x, center.y, ev.clientX, ev.clientY, i));
+    }
   }
   function onUp(ev) {
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
     clearDragLine();
     if (note._rcDragMoved) {
-      // Find element under cursor
-      note.style.pointerEvents = 'none';
+      // Temporarily hide all sources to find element under cursor
+      multiSources.forEach(el => el.style.pointerEvents = 'none');
       const target = document.elementFromPoint(ev.clientX, ev.clientY);
-      note.style.pointerEvents = '';
-      const targetEl = target?.closest('.note, .img-card, .frame, .lbl, .todo-card');
-      if (targetEl && targetEl !== note) {
-        addRelation(note, targetEl);
+      multiSources.forEach(el => el.style.pointerEvents = '');
+      const targetEl = target?.closest(ELEM_SEL);
+      if (targetEl && !multiSources.includes(targetEl)) {
+        multiSources.forEach(src => addRelation(src, targetEl));
       }
     }
     setTimeout(() => { window._noteRightDragActive = false; }, 0);
@@ -2549,13 +2585,19 @@ function startFrameRightDrag(e, frame) {
   const startX = e.clientX, startY = e.clientY;
   frame._rcDragMoved = false;
   window._noteRightDragActive = true;
-  const origin = cardCenter(frame);
+  const ELEM_SEL = '.note, .img-card, .frame, .lbl, .todo-card';
+  const multiSources = (selected.size > 1 && selected.has(frame))
+    ? [...selected].filter(el => !(el instanceof SVGElement))
+    : [frame];
+  const origins = multiSources.map(el => ({ el, center: cardCenter(el) }));
 
   function onMove(ev) {
     if (Math.abs(ev.clientX - startX) > 4 || Math.abs(ev.clientY - startY) > 4) {
       frame._rcDragMoved = true;
     }
-    if (frame._rcDragMoved) setDragLine(origin.x, origin.y, ev.clientX, ev.clientY);
+    if (frame._rcDragMoved) {
+      origins.forEach(({ el, center }, i) => setDragLine(center.x, center.y, ev.clientX, ev.clientY, i));
+    }
   }
   function onUp(ev) {
     document.removeEventListener('mousemove', onMove);
@@ -2563,12 +2605,12 @@ function startFrameRightDrag(e, frame) {
     clearDragLine();
     if (frame._rcDragMoved) {
       // Check if dropped on another element — create relation
-      frame.style.pointerEvents = 'none';
+      multiSources.forEach(el => el.style.pointerEvents = 'none');
       const target = document.elementFromPoint(ev.clientX, ev.clientY);
-      frame.style.pointerEvents = '';
-      const targetEl = target?.closest('.note, .img-card, .frame, .lbl, .todo-card');
-      if (targetEl && targetEl !== frame) {
-        addRelation(frame, targetEl);
+      multiSources.forEach(el => el.style.pointerEvents = '');
+      const targetEl = target?.closest(ELEM_SEL);
+      if (targetEl && !multiSources.includes(targetEl)) {
+        multiSources.forEach(src => addRelation(src, targetEl));
         setTimeout(() => { window._noteRightDragActive = false; }, 0);
         return;
       }
@@ -2886,6 +2928,13 @@ document.addEventListener('mouseup',()=>{ if(drawing){drawing=false;if(curPath)s
     opacityVal.textContent = opacitySlider.value;
   });
   opacitySlider?.addEventListener('change', () => snapshot());
+
+  // Zoom to
+  menu.querySelector('#sctx-zoom')?.addEventListener('click', () => {
+    if (!_ctxShape) return;
+    zoomToEl(_ctxShape);
+    closeStrokeCtxMenu();
+  });
 
   // Delete
   menu.querySelector('#sctx-delete')?.addEventListener('click', () => {
