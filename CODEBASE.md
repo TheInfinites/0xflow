@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.7.7**
+> Current version: **v0.7.8**
 
 ---
 
@@ -256,6 +256,9 @@ Typing `/` (or `/query`) opens a floating menu filtered by block type label. Cli
 | `doZoom(factor, cx?, cy?)` | Zoom in/out by multiplicative factor (e.g. 1.15), optionally around a point |
 | `zoomToFit()` | Zoom to fit all content in view |
 | `zoomToSelection()` | Zoom to fit only selected elements (falls back to `zoomToFit` if nothing selected) |
+| `zoomToEl(el)` | Zoom to fit a single element — works for DOM elements (reads `style.left/top`) and SVG elements (reads `getBBox()`). Used by context menu zoom actions. |
+| `zoomToMenuNote()` | Zoom to the element referenced by `menuNote`; closes note context menu |
+| `zoomToMenuFrame()` | Zoom to the element referenced by `menuFrame`; closes frame context menu |
 | `resetView()` | Reset to scale=1, pan=0 |
 | `snap(v)` | Snap value to 20px grid if snapEnabled |
 | `tool(t)` | Switch active tool, update toolbar UI |
@@ -267,12 +270,12 @@ Typing `/` (or `/query`) opens a floating menu filtered by block type label. Cli
 | `serializeCanvas()` | Returns `{items[], strokes, arrows}` — full canvas state |
 | `restoreCanvas(state)` | Restores DOM from serialized state |
 | `saveCanvasState(id)` | Saves canvas to localStorage + user file (if path set) |
-| `loadCanvasState(id)` | Loads canvas from user file (if set) or localStorage; restores viewport |
+| `loadCanvasState(id)` | Loads canvas from user file (if set) or localStorage; restores viewport. Always clears `window._relations` and the SVG relations layer before loading to prevent relation lines from a previous canvas bleeding in |
 | `saveCanvasToFile()` | Opens save dialog, stores path, saves immediately |
 | `snapshot()` | Push current state to undoStack (capped at 30) |
 | `undo()` / `redo()` | Standard undo/redo |
 | `copySelected()` | Copy selected elements to internal clipboard; writes image to system clipboard if single image |
-| `pasteClipboard()` | Paste from internal clipboard (offset 24px), or paste image from system clipboard |
+| `pasteClipboard()` | Checks system clipboard first (prioritises images copied from browser/internet); falls back to internal `_clipboard` |
 | `convertToPng(blob)` | Convert any image blob to PNG for system clipboard write |
 
 ### Element Creation
@@ -292,13 +295,13 @@ Typing `/` (or `/query`) opens a floating menu filtered by block type label. Cli
 | `makeLabel(x, y)` | Create an inline text label |
 | `makeImgCard(id, url, x, y, w, h, nw, nh)` | Create an image card |
 | `makeResizeHandles(el, minW, minH, onResizeFn?)` | Attach 8 resize handles (4 edges + 4 corners) to any element |
-| `startEdgeResize(e, el, dir, minW, minH, onResizeFn?)` | Handle mousedown for a specific resize direction (`n/ne/e/se/s/sw/w/nw`) |
+| `startEdgeResize(e, el, dir, minW, minH, onResizeFn?)` | Handle mousedown for a specific resize direction (`n/ne/e/se/s/sw/w/nw`). After `onResizeFn` runs, re-reads `el.offsetWidth/Height` to detect clamping (e.g. image capped at native size) and corrects `left`/`top` anchor accordingly — prevents anchor jerk on west/north handles |
 | `makeCollapseBtn(el, getLabel)` | Create collapse/expand chevron button for a card |
 | `toggleCollapse(el, getLabel)` | Toggle `.collapsed` class, save/restore dimensions in `dataset.expandedW/H` |
 | `placeImagesGrid(blobs, sourcePaths, anchor?)` | Resolve all image dimensions, compute √n column grid, centre on `anchor` world-pos (drop point) or viewport centre, place all in one snapshot |
 | `placeImageBlob(blob, wx?, wy?)` | Full pipeline: save blob → place on canvas. Used by both image and PDF import. |
-| `placeMediaBlob(blob, wx?, wy?, sourcePath?, mediaType)` | Same pipeline for video/audio blobs; uses object URL (not data URL) for smooth streaming. Uses `makeVideoCard` / `makeAudioCard` based on `mediaType`. |
-| `placeMediaFromPath(filePath, wx?, wy?, mediaType, mimeType)` | Tauri-only: places media using `convertFileSrc(filePath)` for direct streaming — no file read into memory. Used by Tauri drag-drop for video/audio. |
+| `placeMediaBlob(blob, wx?, wy?, sourcePath?, mediaType)` | Same pipeline for video/audio blobs; uses object URL (not data URL) for smooth streaming. Uses `makeVideoCard` / `makeAudioCard` based on `mediaType`. In Tauri, rejects blobs larger than 100 MB with a toast (use drag-drop instead). |
+| `placeMediaFromPath(filePath, wx?, wy?, mediaType, mimeType)` | Tauri-only: places media using `convertFileSrc(filePath)` for direct streaming — no file read into memory. Used by Tauri drag-drop for video/audio. Skips the file-copy step for files >100 MB. |
 | `makeVideoCard(id, url, x, y, w)` | Create a video card. Video fills top (no native controls). Custom footer: frame-step buttons (‹›), seek bar, mute, fullscreen, grab-still, play/pause. Click video to play/pause; shift+hover to scrub. Seek bar updates via rAF (60fps, not `timeupdate`). `bindVideoCard(card)` rebinds controls after restore. |
 | `makeAudioCard(id, url, x, y, filename)` | Create an audio card with custom player controls. Single horizontal row: art square (44×44px) left, title + format label (e.g. "MP3") right, play button far right. Title extracted from `filename` (underscores/hyphens→spaces), extension shown as format label. |
 | `bindAudioCard(card)` | Rebind custom audio player controls (scrubber, play button, timestamps) after canvas restore. Called in `restoreCanvas` for `img-card[data-media-type=audio]` elements. |
@@ -368,11 +371,12 @@ Two separate systems:
 - `relCurve(ax, ay, bx, by)` — generates cubic bezier path with control points along the A→B direction (slight perpendicular bulge for overlapping line disambiguation)
 
 **Right-Click Drag Connections** (any element → any element):
-- `startNoteRightDrag(e, note)` — right-click drag from notes/todos to create relations
-- `startImgRightDrag(e, card)` — right-click drag from images; creates relation if dropped on element, opens folder panel otherwise
-- `startFrameRightDrag(e, frame)` — right-click drag from frames; creates relation if dropped on element, opens move/copy menu with all contained img-cards auto-selected otherwise
+- `startNoteRightDrag(e, note)` — right-click drag from notes/todos. If the dragged element is part of a multi-selection, draws one drag line per selected source and connects all to the target on drop.
+- `startImgRightDrag(e, card)` — right-click drag from images; creates relation if dropped on element, opens folder panel otherwise. Drag line persists while the context menu is open (cleared only when menu closes via `closeImgCtxMenu`).
+- `startFrameRightDrag(e, frame)` — right-click drag from frames. Multi-source support same as notes.
 - Uses `window._noteRightDragActive` global flag to suppress context menus on target elements during drag
 - On images/frames: if connection target found, skips the folder browser context menu
+- Multi-source visual: `setDragLine(x1, y1, x2, y2, id)` — `id` parameter allows multiple simultaneous drag lines (one per source element); `clearDragLine()` wipes all lines via `innerHTML=''`
 
 ### Minimap Navigation
 - Minimap is a `<canvas>` element (`160×100px`) that renders all canvas content at `1/8000` scale
@@ -590,6 +594,19 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 
 ## File Operations Feature
 
+### Changes in v0.7.8
+- **Zoom to element** — all element context menus (note, frame, stroke, image) and the selection bar now have a "zoom to" action. Uses new `zoomToEl(el)` for single-element zoom; `zoomToMenuNote()` / `zoomToMenuFrame()` wrap it for menu context. SVG shapes use `getBBox()` for bounds.
+- **Paste priority fix** — `pasteClipboard()` now checks the system clipboard first, so images copied from a browser/internet are pasted immediately instead of being overridden by the internal canvas clipboard.
+- **Multi-select right-click drag** — dragging from a selected element when 2+ items are selected draws one drag line per source element and creates relations from all of them to the drop target. `setDragLine` extended with an `id` parameter for multiple simultaneous lines.
+- **New canvas project dir isolation** — `loadProjectDir()` now resets `_projectDir` to null when no saved value exists for the canvas, preventing one canvas's project directory from leaking into a new canvas.
+- **Relation bleed between canvases fixed** — `loadCanvasState()` clears `window._relations` and `relationsG.innerHTML` before loading new canvas state, so connection lines no longer bleed from one canvas into another.
+- **Image resize anchor fix** — `startEdgeResize` re-reads `el.offsetWidth/Height` after the resize callback and corrects `left`/`top` when the callback clamped the size (e.g. img-card capped at native resolution). Eliminates anchor jerk on west/north handles.
+- **Open file location** — new "open file location" item in the image context menu (visible only when `dataset.sourcePath` is set). Invokes `plugin:shell|open` with the file's parent directory.
+- **Drag line persistence during context menu** — the drag line no longer disappears when the image context menu opens; `clearDragLine()` is called only on menu close.
+- **Large video import fix** — importing a video ≥100 MB via the file picker no longer crashes the app. Tauri imports are routed through `placeMediaFromPath` (streaming via `convertFileSrc`); files >100 MB skip the copy step. `placeMediaBlob` rejects blobs >100 MB in Tauri with a toast.
+- **Video drag-and-drop** — video files can now be dragged onto the canvas from the OS file manager; routed through the same `placeMediaFromPath` streaming path.
+- **Light mode fixes** — labels (`.lbl`) now show dark text and correct caret/placeholder colors in light mode. Checkboxes and todo placeholders inside notes are correctly styled (note backgrounds remain dark in light mode so white colors are preserved inside `.note`). Stroke selection glow adapted for light canvas.
+
 ### Changes in v0.6.0
 - **Light mode note text fix** — notes keep dark background (`#2a2a2a`) in light mode; added `.note`-scoped CSS overrides so all block editor text (paragraph, quote, code, bullet, divider) stays white inside notes.
 - **Sel-bar drop shadow removed** — `box-shadow` stripped from `#sel-bar`.
@@ -601,7 +618,7 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 - `toggleImportPanel(e)` / `closeImportPanel()` — toggle a floating panel positioned below the button, right-aligned; closes on outside click
 - The panel lists 5 import options: **Image**, **PDF**, **Video**, **Audio**, **Any file**
 - `triggerImport(accept)` — sets the `accept` attribute on `#import-file` and programmatically clicks it to open the OS file picker
-- `onImportFiles(e)` — routes selected files to the correct pipeline based on MIME type (image → `placeImageBlob`, PDF → `placePdf`, video/audio → `placeMediaBlob`, other → `placeImageBlob` for generic blobs)
+- `onImportFiles(e)` — routes selected files to the correct pipeline based on MIME type (image → `placeImageBlob`, PDF → `placePdf`, video/audio → in Tauri with a disk path: `placeMediaFromPath` for direct streaming; otherwise `placeMediaBlob`, other → `placeImageBlob` for generic blobs)
 - `#import-panel` — absolutely positioned below `#import-btn`, `right: 0`, appears with a small fade/scale animation
 
 ### Project Directory
@@ -610,6 +627,7 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 - Key: `freeflow_projdir_{canvasId}` — loaded inside `loadCanvasState()`
 - Uses `window.__TAURI__.dialog.open({ directory: true })` in Tauri; prompt() in browser mock
 - `openProjectDirInExplorer()` — opens `_projectDir` in the OS file explorer via `window.__TAURI__.shell.open`
+- `loadProjectDir()` resets `_projectDir = null` and restores the button label to "📁 project dir" when no saved value exists for the current canvas — prevents one canvas's project dir leaking into a new canvas
 
 ### Right-Click Drag Gesture (`startImgRightDrag`)
 - Triggered by `mousedown` with `button === 2` on `.img-card`
@@ -622,6 +640,8 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 - Mac Finder-style linear list, appears at cursor on right-drag release
 - **"Rename file"** (`#ictx-rename-file`) — shown when a single img-card is right-dragged; renames on disk via `window.__TAURI__.fs.rename`; updates `card.dataset.sourcePath`. Browser mock: toast only.
 - **"Batch rename"** (`#ictx-batch-rename`) — shown instead of "rename file" when 2+ img-cards are selected; opens the batch rename modal.
+- **"Zoom to"** (`#ictx-zoom-to`) — zooms canvas to fit the target img-card
+- **"Open file location"** (`#ictx-open-location`) — shown only when `card.dataset.sourcePath` is set; opens the file's parent directory in OS file explorer via `invoke('plugin:shell|open', { path: dir })`. Hidden by default, revealed in `openImgCtxMenu()` when sourcePath exists.
 - **"Move / Copy to folder"** — hover opens cascading folder browser
 - Closes on: left-click anywhere on canvas or outside, `closeAllFolderUI()`
 
