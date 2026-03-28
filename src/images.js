@@ -978,6 +978,7 @@ function makeVideoCard(id, url, x, y, w) {
 
   // Video — no native controls, fills card width
   const video = document.createElement('video');
+  video.crossOrigin = 'anonymous';
   video.src = url;
   video.controls = false;
   video.draggable = false;
@@ -1390,6 +1391,7 @@ function bindVideoCard(card) {
   const stillBtn = card.querySelector('.vc-still');
   if (!video) return;
   // Ensure smooth playback attributes are set even on restored cards
+  video.crossOrigin = 'anonymous';
   video.preload = 'auto';
   video.setAttribute('playsinline', '');
 
