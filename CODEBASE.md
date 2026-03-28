@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.7.6**
+> Current version: **v0.7.7**
 
 ---
 
@@ -28,7 +28,7 @@
     ├── Cargo.toml            Rust crate "oxflow" (Cargo names can't start with digit)
     ├── src/
     │   ├── main.rs           Entry point (windows_subsystem = "windows")
-    │   └── lib.rs            Tauri builder + call_ai_api command
+    │   └── lib.rs            Tauri builder + call_ai_api, set_always_on_top commands
     └── icons/                App icons (ICO, PNG)
 ```
 
@@ -81,11 +81,14 @@ All platform-specific code branches on `IS_TAURI`. The app remains fully functio
 
 ### Rust Backend (`lib.rs`)
 
-Single custom command — `call_ai_api` — proxies AI API requests to avoid CORS:
+Two custom commands in `lib.rs`:
 
 ```rust
 #[tauri::command]
 async fn call_ai_api(url, headers: Vec<(String, String)>, body: String) -> Result<String, String>
+
+#[tauri::command]
+fn set_always_on_top(window: tauri::Window, on_top: bool)
 ```
 
 Plugins registered: `fs`, `dialog`, `store`, `http`, `shell`, `updater`, `process`.
@@ -98,6 +101,7 @@ Plugins registered: `fs`, `dialog`, `store`, `http`, `shell`, `updater`, `proces
 | **Image storage** | `window.__TAURI__.fs.writeFile` / `readFile` to AppData dir (browser: IndexedDB) |
 | **Image drag-drop** | Listens to `tauri://drag-drop` events (browser: standard drag/drop) |
 | **Window controls** | Custom chrome (`decorations: false`), direct `invoke('plugin:window\|...')` calls |
+| **Always on top** | `toggleAlwaysOnTop()` invokes `set_always_on_top` command; toolbar button highlights when active |
 | **Auto-updater** | Checks GitHub releases endpoint via `invoke('plugin:updater\|check', {})` + `Channel`; shows update button in both dashboard and canvas bar |
 | **File save/open** | Tauri dialog + fs plugins (browser: download/upload) |
 | **Canvas file save** | User-chosen path via `saveCanvasToFile()`; stored in `freeflow_filepath_{id}`; also saves to localStorage as backup |

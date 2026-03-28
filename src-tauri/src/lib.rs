@@ -1,4 +1,9 @@
 #[tauri::command]
+fn set_always_on_top(window: tauri::Window, on_top: bool) {
+    let _ = window.set_always_on_top(on_top);
+}
+
+#[tauri::command]
 async fn call_ai_api(url: String, headers: Vec<(String, String)>, body: String) -> Result<String, String> {
     let client = reqwest::Client::new();
     let mut req = client.post(&url);
@@ -22,7 +27,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .invoke_handler(tauri::generate_handler![call_ai_api])
+        .invoke_handler(tauri::generate_handler![call_ai_api, set_always_on_top])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
