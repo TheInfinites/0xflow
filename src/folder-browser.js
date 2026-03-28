@@ -57,7 +57,7 @@ async function openProjectDirInExplorer() {
   }
   if (IS_TAURI) {
     try {
-      await window.__TAURI__.core.invoke('plugin:shell|open', { path: _projectDir });
+      await window.__TAURI__.shell.open(_projectDir);
     } catch (e) {
       console.warn('openProjectDirInExplorer error:', e);
       showToast('Could not open folder');
@@ -367,7 +367,7 @@ document.getElementById('ictx-open-location')?.addEventListener('click', async (
       // Get parent directory and open it in the system file explorer
       const { dirname } = window.__TAURI__.path;
       const dir = await dirname(path);
-      await window.__TAURI__.core.invoke('plugin:shell|open', { path: dir });
+      await window.__TAURI__.shell.open(dir);
     } catch (e) {
       console.warn('open file location error:', e);
       showToast('Could not open file location');

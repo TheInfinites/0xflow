@@ -1294,7 +1294,7 @@ const _mediaBlobs = {};
 
 // Tauri-only: place media directly from a filesystem path using convertFileSrc (no file read into memory)
 async function placeMediaFromPath(filePath, wx, wy, mediaType, mimeType) {
-  const { convertFileSrc } = window.__TAURI__.tauri;
+  const { convertFileSrc } = window.__TAURI__.core;
   const assetURL = convertFileSrc(filePath);
   const id = 'media_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
 
@@ -1533,7 +1533,7 @@ async function restoreImgCards() {
       // In Tauri: resolve path in images dir and use convertFileSrc for direct streaming
       try {
         const { join } = window.__TAURI__.path;
-        const { convertFileSrc } = window.__TAURI__.tauri;
+        const { convertFileSrc } = window.__TAURI__.core;
         const dir = await getTauriImagesDir();
         const exts = mediaType === 'video' ? ['.mp4', '.webm', '.mov', '.mkv'] : ['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a', '.opus'];
         let assetURL = null;
