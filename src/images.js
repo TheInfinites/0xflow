@@ -2181,16 +2181,30 @@ function panToNote(note){ const x=parseFloat(note.style.left)+100,y=parseFloat(n
 const minimapEl=document.getElementById('minimap'),minimapCanvas=document.getElementById('minimap-canvas'),minimapViewport=document.getElementById('minimap-viewport');
 const MM_W=160,MM_H=100,SCALE_X=MM_W/8000,SCALE_Y=MM_H/8000;
 function toggleMinimap(){ minimapVisible=!minimapVisible;minimapEl.classList.toggle('show',minimapVisible);if(minimapVisible)updateMinimap(); }
-function updateMinimap(){
+// Cheap per-frame update: only move the viewport indicator box
+function _updateMinimapViewport(){
+  if(!minimapVisible) return;
+  const r=cv.getBoundingClientRect(),vx=(-px/scale+3000)*SCALE_X,vy=(-py/scale+3000)*SCALE_Y,vw=(r.width/scale)*SCALE_X,vh=(r.height/scale)*SCALE_Y;
+  minimapViewport.style.cssText=`left:${vx}px;top:${vy}px;width:${vw}px;height:${vh}px`;
+}
+// Full element redraw — throttled to ~250ms, only needed when elements change
+let _minimapRedrawTimer=0;
+function _scheduleMinimapRedraw(){
+  clearTimeout(_minimapRedrawTimer);
+  _minimapRedrawTimer=setTimeout(_drawMinimapElements,250);
+}
+function _drawMinimapElements(){
   if(!minimapVisible) return;
   minimapCanvas.width=MM_W;minimapCanvas.height=MM_H;
   const ctx=minimapCanvas.getContext('2d');ctx.clearRect(0,0,MM_W,MM_H);
   document.querySelectorAll('.img-card').forEach(c=>{ const x=(parseFloat(c.style.left)+3000)*SCALE_X,y=(parseFloat(c.style.top)+3000)*SCALE_Y,w=(c.offsetWidth||200)*SCALE_X,h=(c.offsetHeight||150)*SCALE_Y;ctx.fillStyle='rgba(100,150,255,0.18)';ctx.fillRect(x,y,w,h); });
   document.querySelectorAll('.note').forEach(n=>{ const x=(parseFloat(n.style.left)+3000)*SCALE_X,y=(parseFloat(n.style.top)+3000)*SCALE_Y,w=(n.offsetWidth||200)*SCALE_X,h=(n.offsetHeight||128)*SCALE_Y,c=n.dataset.color;ctx.fillStyle=c||'rgba(255,255,255,0.15)';ctx.beginPath();if(ctx.roundRect)ctx.roundRect(x,y,w,h,2);else ctx.rect(x,y,w,h);ctx.fill(); });
   document.querySelectorAll('.frame').forEach(f=>{ const x=(parseFloat(f.style.left)+3000)*SCALE_X,y=(parseFloat(f.style.top)+3000)*SCALE_Y,w=parseFloat(f.style.width)*SCALE_X,h=parseFloat(f.style.height)*SCALE_Y;ctx.strokeStyle='rgba(255,255,255,0.2)';ctx.lineWidth=0.5;ctx.strokeRect(x,y,w,h); });
-  const r=cv.getBoundingClientRect(),vx=(-px/scale+3000)*SCALE_X,vy=(-py/scale+3000)*SCALE_Y,vw=(r.width/scale)*SCALE_X,vh=(r.height/scale)*SCALE_Y;
-  minimapViewport.style.cssText=`left:${vx}px;top:${vy}px;width:${vw}px;height:${vh}px`;
 }
+// Called from canvas.js applyT (every RAF frame) — just moves viewport box
+function _scheduleMinimapViewport(){ _updateMinimapViewport(); }
+// Public API used elsewhere (add/delete elements): trigger a full redraw
+function updateMinimap(){ _updateMinimapViewport(); _scheduleMinimapRedraw(); }
 // Minimap click/drag to navigate
 let _mmDrag=false;
 function minimapPanTo(e){
@@ -2201,7 +2215,7 @@ function minimapPanTo(e){
   px=cvR.width/2-(worldX-3000)*scale;
   py=cvR.height/2-(worldY-3000)*scale;
   if(_zoomTarget){_zoomTarget.px=px;_zoomTarget.py=py;}
-  applyT(); positionSelBar();
+  applyT();
 }
 minimapEl.addEventListener('mousedown',e=>{ if(e.target===minimapViewport)return; _mmDrag=true; minimapPanTo(e); e.stopPropagation(); e.preventDefault(); });
 document.addEventListener('mousemove',e=>{ if(!_mmDrag)return; minimapPanTo(e); });

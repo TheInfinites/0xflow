@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.7.14**
+> Current version: **v0.7.15**
 
 ---
 
@@ -601,6 +601,15 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 ---
 
 ## File Operations Feature
+
+### Changes in v0.7.15
+- **RAF dirty-flag render loop** — `applyT()` no longer applies transforms synchronously. It sets a dirty flag and schedules a single `requestAnimationFrame`. All pan/zoom/drag events within one frame coalesce into one render call, dropping render rate from ~200/s to a capped 60fps.
+- **Element drag RAF** — multi-element drag moves are also deferred to a `_dragRafFlush` RAF, preventing layout thrashing during drag.
+- **Off-screen culling with `display:none`** — culled elements now use `display:none` (true render-tree removal) instead of `visibility:hidden`. Element dimensions are cached in a `WeakMap` (`_cullDimCache`) at first read and invalidated on resize/collapse, so `offsetWidth`/`offsetHeight` are only read once per element lifecycle — not every frame.
+- **Marquee and sel-bar use world coordinates** — `getSelectionScreenBounds` and marquee hit-testing now use world→screen conversion (`svgToScreen`) instead of `getBoundingClientRect`, so they work correctly for elements that are culled (`display:none`).
+- **`positionSelBar()` early exit** — skips all work when `selected.size === 0`, avoiding `getBoundingClientRect` calls on every pan/zoom frame.
+- **Minimap split** — `updateMinimap()` is split into `_updateMinimapViewport()` (moves CSS viewport indicator, runs every RAF frame, cheap) and `_drawMinimapElements()` (full canvas redraw, throttled to ~250ms via `setTimeout`, only triggered when elements change). Pan and zoom no longer trigger full minimap redraws.
+- **`snapshot()` O(N²) → O(N+R)** — relation serialization in `serializeCanvas()` now builds a `Map` of element→index once, then does O(1) lookups per relation, down from O(N) per relation.
 
 ### Changes in v0.7.14
 - **Ghost relation lines fix** — `restoreCanvas()` now clears `relationsG.innerHTML` (the SVG DOM layer) in addition to resetting `window._relations = []`. Previously only the JS array was cleared, leaving orphaned SVG path elements that appeared as ghost orange lines when moving nodes after opening a canvas.
