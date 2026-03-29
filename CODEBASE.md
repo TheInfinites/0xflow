@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.7.12**
+> Current version: **v0.7.13**
 
 ---
 
@@ -154,7 +154,7 @@ Custom titlebar with minimize/maximize/close buttons. Window dragging via progra
 | `blobURLCache` | `{[id]: url}` | In-memory cache of media URLs keyed by imgId (object URLs for video/audio, data URLs for images) |
 | `_mediaBlobs` | `{[id]: Blob}` | In-memory blob cache for media so object URLs can be recreated after undo/redo/restore |
 | `window._relations` | `Relation[]` | Semantic connection lines between elements |
-| `selectedRelId` | `number\|null` | Currently selected relation line (click to select, Delete to remove) |
+| `selectedRelIds` | `Set<number>` | Currently selected relation lines — supports multi-select via marquee (click to select single, Delete to remove all selected) |
 | `CULL_BUFFER` | `number` | Off-screen culling margin in screen pixels (300) |
 
 ---
