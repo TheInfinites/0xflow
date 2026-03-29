@@ -399,11 +399,8 @@ async function placeImageBlob(blob, wx, wy, sourcePath) {
 }
 
 function imgCardResizeFn(el, nw) {
-  const imgEl = el.querySelector('img');
   const nwMax = parseInt(el.dataset.nw)||99999;
   const actualW = Math.min(nw, nwMax);
-  if(imgEl){ imgEl.style.width = actualW+'px'; imgEl.style.height = 'auto'; }
-  // keep card width in sync with clamped image width so the anchor stays correct
   el.style.width = actualW + 'px';
   el.style.height = 'auto';
 }
@@ -425,7 +422,7 @@ function makeImgCard(id, url, x, y, w, h, nw, nh) {
   // image tag
   const img = document.createElement('img');
   img.src = url;
-  img.style.width = w + 'px';
+  img.style.width = '100%';
   img.draggable = false;
   card.appendChild(img);
 
@@ -495,23 +492,17 @@ document.addEventListener('mouseup', () => { if (_resizeCard) { snapshot(); _res
 
 // ── image toolbar actions ──
 function imgActualSize(card) {
-  const nw = parseInt(card.dataset.nw) || 400;
-  card.querySelector('img').style.width = nw + 'px';
-  card.style.width = nw + 'px';
+  card.style.width = (parseInt(card.dataset.nw) || 400) + 'px';
   snapshot();
 }
 function imgFitView(card) {
-  const maxW = Math.min(cv.offsetWidth * 0.7 / scale, 1200);
-  card.querySelector('img').style.width = maxW + 'px';
-  card.style.width = maxW + 'px';
+  card.style.width = Math.min(cv.offsetWidth * 0.7 / scale, 1200) + 'px';
   snapshot();
 }
 function imgScale(card, factor) {
-  const cur = parseFloat(card.querySelector('img').style.width) || 300;
+  const cur = card.offsetWidth || 300;
   const nw = parseInt(card.dataset.nw) || 99999;
-  const newW = Math.max(80, Math.min(Math.round(cur * factor), nw));
-  card.querySelector('img').style.width = newW + 'px';
-  card.style.width = newW + 'px';
+  card.style.width = Math.max(80, Math.min(Math.round(cur * factor), nw)) + 'px';
   snapshot();
 }
 async function imgExport(card, fmt, destDir) {
