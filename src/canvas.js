@@ -332,7 +332,7 @@ function _dragRafFlush(){
 
 // ── Off-screen culling ──────────────────────────────────────────
 const CULL_BUFFER = 300;
-// Cache element dimensions at creation/resize time to avoid offsetWidth reads every frame
+// Cache element dimensions — only written when element is visible (offsetWidth valid)
 const _cullDimCache = new WeakMap();
 function setCullDim(el, w, h){ _cullDimCache.set(el, {w, h}); }
 function cullElements() {
@@ -342,13 +342,14 @@ function cullElements() {
     if (el.classList.contains('pinned')) return;
     const l = parseFloat(el.style.left)||0, t = parseFloat(el.style.top)||0;
     const cached = _cullDimCache.get(el);
+    // Only read offsetWidth when visible — returns 0 for visibility:hidden but layout is intact
     const w = cached ? cached.w : (el.offsetWidth||200);
     const h = cached ? cached.h : (el.offsetHeight||128);
-    if(!cached) _cullDimCache.set(el, {w, h});
+    if(!cached && w > 0 && h > 0) _cullDimCache.set(el, {w, h});
     const sl = (l-3000)*scale+px, st = (t-3000)*scale+py;
     const hidden = (sl+w*scale)<-CULL_BUFFER || sl>vr || (st+h*scale)<-CULL_BUFFER || st>vb;
-    const wasHidden = el.style.display==='none';
-    if(hidden !== wasHidden) el.style.display = hidden?'none':'';
+    const wasHidden = el.style.visibility==='hidden';
+    if(hidden !== wasHidden) el.style.visibility = hidden?'hidden':'';
   });
 }
 
@@ -776,14 +777,7 @@ function getSelectionScreenBounds() {
   selected.forEach(el=>{
     let r;
     if(el instanceof SVGElement){try{const b=el.getBBox(),tl=svgToScreen(b.x,b.y),br=svgToScreen(b.x+b.width,b.y+b.height);r={left:tl.x,top:tl.y,right:br.x,bottom:br.y};}catch{return;}}
-    else {
-      // Use world→screen conversion so display:none culled elements compute correctly
-      const l=parseFloat(el.style.left)||0,t=parseFloat(el.style.top)||0;
-      const cached=_cullDimCache.get(el);
-      const w=cached?cached.w:(el.offsetWidth||200),h=cached?cached.h:(el.offsetHeight||128);
-      const tl=svgToScreen(l,t),br=svgToScreen(l+w,t+h);
-      r={left:tl.x,top:tl.y,right:br.x,bottom:br.y};
-    }
+    else r=el.getBoundingClientRect();
     mnX=Math.min(mnX,r.left);mnY=Math.min(mnY,r.top);mxX=Math.max(mxX,r.right);mxY=Math.max(mxY,r.bottom);
   });
   if(mnX===Infinity) return null;
@@ -1228,18 +1222,8 @@ document.addEventListener('mousemove',e=>{
 
 document.addEventListener('mouseup',e=>{
   if(marqueeActive){
-    marqueeActive=false;
-    // read marquee in world coords (marquee lives in #world, uses world positions)
-    const mWL=parseFloat(marqueeEl.style.left)||0, mWT=parseFloat(marqueeEl.style.top)||0;
-    const mWR=mWL+(parseFloat(marqueeEl.style.width)||0), mWB=mWT+(parseFloat(marqueeEl.style.height)||0);
-    marqueeEl.style.display='none'; marqueeEl.style.width='0'; marqueeEl.style.height='0';
-    document.querySelectorAll('.note,.img-card,.lbl,.frame').forEach(el=>{
-      if(el.classList.contains('pinned')) return;
-      const l=parseFloat(el.style.left)||0, t=parseFloat(el.style.top)||0;
-      const cached=_cullDimCache.get(el);
-      const w=cached?cached.w:(el.offsetWidth||200), h=cached?cached.h:(el.offsetHeight||128);
-      if(!((l+w)<mWL||l>mWR||(t+h)<mWT||t>mWB)){el.classList.add('selected');selected.add(el);}
-    });
+    marqueeActive=false; const mr=marqueeEl.getBoundingClientRect(); marqueeEl.style.display='none'; marqueeEl.style.width='0'; marqueeEl.style.height='0';
+    document.querySelectorAll('.note,.img-card,.lbl,.frame').forEach(el=>{ const er=el.getBoundingClientRect(); if(!(er.right<mr.left||er.left>mr.right||er.bottom<mr.top||er.top>mr.bottom)){el.classList.add('selected');selected.add(el);} });
     document.querySelectorAll('#strokes .stroke-wrap,#arrows .stroke-wrap').forEach(g=>{ try{const bb=g.getBBox(),tl=svgToScreen(bb.x,bb.y),br=svgToScreen(bb.x+bb.width,bb.y+bb.height); if(!(br.x<mr.left||tl.x>mr.right||br.y<mr.top||tl.y>mr.bottom)){g.classList.add('stroke-selected');selected.add(g);}}catch{} });
     // select relation lines whose path bounding box intersects the marquee
     window._relations.forEach(r => {

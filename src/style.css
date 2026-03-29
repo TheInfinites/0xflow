@@ -1666,12 +1666,12 @@ body.on-canvas.light .todo-progress { background: rgba(255,255,255,0.06); }
 /* image cards */
 .img-card {
   position: absolute; background: #111; border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 8px; padding: 4px; cursor: grab; z-index: 10;
+  border-radius: 8px; padding: 0; cursor: grab; z-index: 10;
   transition: border-color 0.12s; overflow: visible;
 }
 .img-card:hover { border-color: rgba(255,255,255,0.18); }
 .img-card.drag { cursor: grabbing; z-index: 200; }
-.img-card img { display: block; border-radius: 5px; pointer-events: none; max-width: 100%; height: auto; }
+.img-card img { display: block; border-radius: 7px; pointer-events: none; max-width: 100%; height: auto; }
 /* ── Video card ──────────────────────────── */
 /* ── Video Card ─────────────────────────────────────────── */
 .video-card { padding: 0 !important; overflow: hidden; display: flex; flex-direction: column; background: #0c0c0c; }
