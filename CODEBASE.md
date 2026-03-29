@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.7.13**
+> Current version: **v0.7.14**
 
 ---
 
@@ -28,7 +28,7 @@
     ├── Cargo.toml            Rust crate "oxflow" (Cargo names can't start with digit)
     ├── src/
     │   ├── main.rs           Entry point (windows_subsystem = "windows")
-    │   └── lib.rs            Tauri builder + call_ai_api, set_always_on_top commands
+    │   └── lib.rs            Tauri builder + call_ai_api, set_always_on_top, copy_image_to_clipboard commands
     └── icons/                App icons (ICO, PNG)
 ```
 
@@ -81,7 +81,7 @@ All platform-specific code branches on `IS_TAURI`. The app remains fully functio
 
 ### Rust Backend (`lib.rs`)
 
-Two custom commands in `lib.rs`:
+Three custom commands in `lib.rs`:
 
 ```rust
 #[tauri::command]
@@ -89,7 +89,14 @@ async fn call_ai_api(url, headers: Vec<(String, String)>, body: String) -> Resul
 
 #[tauri::command]
 fn set_always_on_top(window: tauri::Window, on_top: bool)
+
+#[tauri::command]
+fn copy_image_to_clipboard(data_url: String) -> Result<(), String>
 ```
+
+`copy_image_to_clipboard` strips the `data:image/...;base64,` prefix, decodes via the `base64` crate, decodes the image to RGBA8 via the `image` crate, and writes to the OS clipboard via `arboard`. Used because `navigator.clipboard.write` with `ClipboardItem` silently fails in Tauri's WebView2.
+
+Rust dependencies added: `arboard = "3"`, `base64 = "0.22"`, `image = "0.25"` (PNG + JPEG features only).
 
 Plugins registered: `fs`, `dialog`, `store`, `http`, `shell`, `updater`, `process`.
 
@@ -350,8 +357,9 @@ Typing `/` (or `/query`) opens a floating menu filtered by block type label. Cli
 | `exportMarkdown()` | Export as readable Markdown document |
 | `imgExport(card, fmt, destDir?)` | Export image card to PNG/JPEG/WebP/TIFF/EXR. If `destDir` is provided (from folder browser), saves via Tauri fs; otherwise browser download. |
 | `downloadBlob(blob, filename)` | Trigger browser download |
-| `exportSharedCanvas()` | Export self-contained canvas JSON with all media blobs base64-encoded inline under `blobs` key and `shared: true` flag. Saves via Tauri dialog or browser download. |
-| `importSharedCanvas()` | Open a shared canvas JSON, inject bundled blobs into `blobURLCache`, create a new project, restore canvas, then persist each blob to local storage in the background. |
+| `exportSharedCanvas()` | Create a `{canvasName}_share/` folder next to the saved canvas file. Copies all media into `images/`, `videos/`, `audio/` subfolders. Writes `canvas.json` with `shareFolder: true` and a `fileMap: {imgId → "images/file.ext"}` of relative paths. The recipient can drag `canvas.json` onto the canvas to restore the full state. |
+| `importSharedCanvas()` | Opens a file picker for `canvas.json`; delegates to `_applySharedCanvas`. |
+| `_applySharedCanvas(raw, sourceFilePath)` | Handles both new folder-based format (`shareFolder: true`) and legacy blob format (`shared: true`). For folder-based: resolves absolute paths from `dirname(sourceFilePath)` + `fileMap` relative paths, calls `convertFileSrc()` to populate `blobURLCache` without reading files into memory. Also triggered by dragging a `.json` file onto the canvas via `tauri://drag-drop`. |
 
 ### Connection Systems
 Two separate systems:
@@ -364,7 +372,7 @@ Two separate systems:
 **Relation Lines** (bottom handle → any element):
 - `addRelHandle(el)` — add relation handle to element
 - `startRelDrag(e, sourceEl)` — drag relation line
-- `addRelation(elA, elB)` — create SVG bezier curve with arrowhead (`marker-end: url(#rel-ah)`)
+- `addRelation(elA, elB, skipSnapshot=false)` — create SVG bezier curve with arrowhead (`marker-end: url(#rel-ah)`); `skipSnapshot=true` is passed during `restoreCanvas` to avoid polluting the undo stack with N partial states
 - `removeRelation(id)` — remove by id
 - `selectRelation(id)` / `deselectRelation()` — click a relation line to select it (`.selected-rel` glow), then Delete/Backspace removes it; double-click also removes instantly
 - `updateAllRelations()` — RAF loop keeping lines attached; also updates line color from source element's `dataset.color`
@@ -527,7 +535,7 @@ Video and audio cards are created via `makeVideoCard()` and `makeAudioCard()` re
 ```
 > ⚠️ **Draw-cards** store their canvas content as `drawData: "data:image/png;base64,..."` alongside `html` in the items array. Restored via `restoreDrawCardData()`.
 
-> ⚠️ **Shared canvas format** adds two top-level keys: `shared: true` and `blobs: {[imgId]: dataURL}`. All media referenced by img-cards is bundled inline. On import, blobs are injected into `blobURLCache` before `restoreCanvas()` runs, then persisted to local storage in the background. The `blobs` key is stripped before saving to localStorage to avoid size bloat.
+> ⚠️ **Shared canvas format (v0.7.14+):** `canvas.json` with `shareFolder: true` and `fileMap: {imgId → "images/file.ext"}`. Media lives in sibling `images/`, `videos/`, `audio/` folders. On import, absolute paths are resolved from the `canvas.json` location and `convertFileSrc()` is used to stream media directly — no re-copy into app storage. Legacy format (`shared: true` with `blobs: {[imgId]: dataURL}` inline) is still supported for backward compatibility.
 
 > ⚠️ For `.img-card` elements, the `<img src>`, `<video src>`, and `<audio src>` attributes are **stripped before serializing** (set to `""`). The src is restored after load via `restoreImgCards()` which reads from `blobURLCache` or storage using `data-img-id`. This prevents base64/blob URLs from bloating undo snapshots and the saved file.
 
@@ -593,6 +601,14 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 ---
 
 ## File Operations Feature
+
+### Changes in v0.7.14
+- **Ghost relation lines fix** — `restoreCanvas()` now clears `relationsG.innerHTML` (the SVG DOM layer) in addition to resetting `window._relations = []`. Previously only the JS array was cleared, leaving orphaned SVG path elements that appeared as ghost orange lines when moving nodes after opening a canvas.
+- **Undo stack pollution fix** — `addRelation(elA, elB, skipSnapshot=false)` gained a third parameter. During `restoreCanvas`, relations are added with `skipSnapshot=true` to avoid pushing N partial undo states onto the stack.
+- **Share redesign (folder-based)** — `exportSharedCanvas()` rewrote from base64-blob JSON to a folder-based format. Creates `{canvasName}_share/` next to the canvas file with `images/`, `videos/`, `audio/` subfolders and a `canvas.json` using relative `fileMap` paths. Recipient drags `canvas.json` onto their canvas; `_applySharedCanvas` uses `convertFileSrc()` for zero-copy streaming.
+- **JSON drag-drop** — Dragging a `.json` file onto the canvas triggers `_applySharedCanvas` automatically via the `tauri://drag-drop` handler.
+- **Image clipboard fix** — Ctrl+C on a single selected image card now copies the image to the OS clipboard. In Tauri, uses the new native `copy_image_to_clipboard` Rust command (via `arboard`) because `navigator.clipboard.write` with `ClipboardItem` silently fails in WebView2. Browser path still uses `navigator.clipboard.write`.
+- **New Rust dependencies** — `arboard = "3"`, `base64 = "0.22"`, `image = "0.25"` (PNG + JPEG) added to `Cargo.toml`.
 
 ### Changes in v0.7.12
 - **Open file location fix (complete)** — `plugins.shell.open: true` uses the default URL regex (`^((mailto:...)|(https?://...)).+`) which still rejects Windows file paths. Changed to `"open": ".*"` (a `Validate` regex matching any string) so `plugin:shell|open` accepts absolute file paths.
