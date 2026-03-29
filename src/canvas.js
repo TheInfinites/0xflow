@@ -1179,6 +1179,15 @@ document.addEventListener('mouseup',e=>{
     marqueeActive=false; const mr=marqueeEl.getBoundingClientRect(); marqueeEl.style.display='none'; marqueeEl.style.width='0'; marqueeEl.style.height='0';
     document.querySelectorAll('.note,.img-card,.lbl,.frame').forEach(el=>{ const er=el.getBoundingClientRect(); if(!(er.right<mr.left||er.left>mr.right||er.bottom<mr.top||er.top>mr.bottom)){el.classList.add('selected');selected.add(el);} });
     document.querySelectorAll('#strokes .stroke-wrap,#arrows .stroke-wrap').forEach(g=>{ try{const bb=g.getBBox(),tl=svgToScreen(bb.x,bb.y),br=svgToScreen(bb.x+bb.width,bb.y+bb.height); if(!(br.x<mr.left||tl.x>mr.right||br.y<mr.top||tl.y>mr.bottom)){g.classList.add('stroke-selected');selected.add(g);}}catch{} });
+    // select relation lines whose path bounding box intersects the marquee
+    window._relations.forEach(r => {
+      try {
+        const pb=r.pathEl.getBoundingClientRect();
+        if(!(pb.right<mr.left||pb.left>mr.right||pb.bottom<mr.top||pb.top>mr.bottom)){
+          selectedRelIds.add(r.id); r.pathEl.classList.add('selected-rel');
+        }
+      } catch{}
+    });
     updateSelBar();
   }
   if(frameDrawing){
@@ -1341,20 +1350,20 @@ window._relations = [];
 let relIdCounter = 0;
 let relDragActive = false, relDragSource = null;
 let relDragSvg, relDragPath, relationsG;
-let selectedRelId = null;
+let selectedRelIds = new Set();
 
 function selectRelation(id) {
   deselectRelation();
-  selectedRelId = id;
+  selectedRelIds.add(id);
   const rel = window._relations.find(r => r.id === id);
   if (rel) rel.pathEl.classList.add('selected-rel');
 }
 function deselectRelation() {
-  if (selectedRelId !== null) {
-    const rel = window._relations.find(r => r.id === selectedRelId);
+  selectedRelIds.forEach(id => {
+    const rel = window._relations.find(r => r.id === id);
     if (rel) rel.pathEl.classList.remove('selected-rel');
-    selectedRelId = null;
-  }
+  });
+  selectedRelIds.clear();
 }
 
 function initRelations() {
@@ -1440,7 +1449,7 @@ function removeRelation(id) {
   if (idx === -1) return;
   window._relations[idx].pathEl.remove();
   window._relations.splice(idx, 1);
-  if (selectedRelId === id) selectedRelId = null;
+  selectedRelIds.delete(id);
   snapshot();
 }
 
