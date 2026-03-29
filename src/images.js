@@ -448,7 +448,7 @@ function makeImgCard(id, url, x, y, w, h, nw, nh) {
   // all-edge resize handles
   makeResizeHandles(card, 60, 60, imgCardResizeFn, ['ne','e','se','sw','w','nw']);
 
-  // connector output port
+  // connector output port (for AI note wiring)
   const connPort = document.createElement('div');
   connPort.className = 'conn-port';
   connPort.addEventListener('mousedown', e => { e.stopPropagation(); startConnDrag(e, card); });

@@ -1426,11 +1426,13 @@ function getElCenter(el) {
 }
 
 function elToWorld(el) {
-  const r = el.getBoundingClientRect();
-  const cvR = cv.getBoundingClientRect();
-  const cx = (r.left + r.width / 2  - cvR.left - px) / scale + 3000;
-  const cy = (r.top  + r.height / 2 - cvR.top  - py) / scale + 3000;
-  return { x: cx, y: cy };
+  // Use world coords directly — works for visibility:hidden culled elements
+  const l = parseFloat(el.style.left) || 0;
+  const t = parseFloat(el.style.top)  || 0;
+  const cached = _cullDimCache.get(el);
+  const w = cached ? cached.w : (el.offsetWidth  || 200);
+  const h = cached ? cached.h : (el.offsetHeight || 128);
+  return { x: l + w / 2, y: t + h / 2 };
 }
 
 function relCurve(ax, ay, bx, by) {
