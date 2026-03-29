@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.7.16**
+> Current version: **v0.7.18**
 
 ---
 
@@ -601,6 +601,14 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 ---
 
 ## File Operations Feature
+
+### Changes in v0.7.18
+- **Image card no-padding fix** — `img.style.width` changed from a fixed pixel value to `100%`, so the image always fills the card exactly with no right-side gap. Resize functions (`imgCardResizeFn`, `imgActualSize`, `imgFitView`, `imgScale`) now only set `card.style.width` — the image follows via `width: 100%`.
+- **Relation lines use world coordinates** — `elToWorld()` now reads `style.left/top` + cached dimensions directly instead of `getBoundingClientRect()`. This fixes relation lines pointing to screen origin (0,0) for elements that were culled or had `display:none` from a previous session.
+
+### Changes in v0.7.17
+- **Image card border redesign (final)** — `padding: 0`, `border-radius: 10px` on card, `border-radius: 9px` on `img` for clean edge clipping. `conn-port` (AI wiring port) kept on image cards.
+- **Image card sizing simplified** — card width equals image width directly; no `+12px` padding offset anywhere.
 
 ### Changes in v0.7.16
 - **Image card border redesign** — `.img-card` now uses `padding: 0` and `overflow: visible` (matching the video card approach). The `<img>` inside gets `border-radius: 7px` to clip cleanly against the card's `8px` border-radius, eliminating the inner gap/padding look.
