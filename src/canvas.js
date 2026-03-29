@@ -196,6 +196,7 @@ function restoreCanvas(state){
   // clear existing relations
   (window._relations||[]).forEach(r => { cancelAnimationFrame(r._raf); r.wireG?.remove(); });
   window._relations = [];
+  if(relationsG) relationsG.innerHTML='';
   document.querySelectorAll('.note,.frame,.img-card,.lbl').forEach(el=>el.remove());
   const items = Array.isArray(state.items) ? state.items : [];
   const restoredEls = [];
@@ -278,7 +279,7 @@ function restoreCanvas(state){
   setTimeout(() => {
     (state.relations||[]).forEach(r => {
       const a = restoredEls[r.a], b = restoredEls[r.b];
-      if(a && b) addRelation(a, b);
+      if(a && b) addRelation(a, b, true);
     });
   }, 50);
 }
@@ -1010,12 +1011,27 @@ async function copySelected() {
   if (imgCards.length === 1) {
     try {
       const imgId = imgCards[0].dataset.imgId;
-      const blob = await loadImgBlob(imgId);
-      if (blob) {
-        const pngBlob = blob.type === 'image/png' ? blob : await convertToPng(blob);
-        await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })]);
+      // Get dataURL from cache, or load blob and convert
+      let dataURL = blobURLCache[imgId];
+      if (!dataURL || !dataURL.startsWith('data:')) {
+        const blob = await loadImgBlob(imgId);
+        if (blob) {
+          dataURL = await new Promise((res, rej) => {
+            const r = new FileReader(); r.onload = e => res(e.target.result); r.onerror = rej; r.readAsDataURL(blob);
+          });
+        }
       }
-    } catch(e) { /* clipboard write not supported or denied — canvas clipboard still works */ }
+      if (dataURL && dataURL.startsWith('data:')) {
+        if (IS_TAURI) {
+          // Use native Rust command — works reliably in WebView2 on Windows
+          await window.__TAURI__.core.invoke('copy_image_to_clipboard', { dataUrl: dataURL });
+        } else {
+          const res = await fetch(dataURL);
+          const pngBlob = await convertToPng(await res.blob());
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })]);
+        }
+      }
+    } catch(e) { console.warn('copy image to clipboard failed:', e); }
   }
   showToast(`Copied ${_clipboard.length} element${_clipboard.length>1?'s':''}`);
 }
@@ -1423,7 +1439,7 @@ function updateAllRelations() {
 }
 requestAnimationFrame(updateAllRelations);
 
-function addRelation(elA, elB) {
+function addRelation(elA, elB, skipSnapshot=false) {
   // prevent duplicates
   if (window._relations.find(r =>
     (r.elA === elA && r.elB === elB) || (r.elA === elB && r.elB === elA))) return;
@@ -1441,7 +1457,7 @@ function addRelation(elA, elB) {
   const rel = { id, elA, elB, pathEl: path };
   window._relations.push(rel);
   updateRelLine(rel);
-  snapshot();
+  if (!skipSnapshot) snapshot();
 }
 
 function removeRelation(id) {

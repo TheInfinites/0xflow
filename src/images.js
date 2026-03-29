@@ -1676,112 +1676,167 @@ document.addEventListener('mousedown', e => {
 // ── Shared canvas export/import ──
 async function exportSharedCanvas() {
   if (!activeProjectId) { showToast('No active canvas'); return; }
-  showToast('Bundling canvas…');
-  const state = serializeCanvas();
-  state.viewport = { scale, px, py };
-  // collect all blob dataURLs referenced by img-cards
-  const blobs = {};
-  document.querySelectorAll('.img-card[data-img-id]').forEach(card => {
-    const id = card.dataset.imgId;
-    if (id && blobURLCache[id]) blobs[id] = blobURLCache[id];
-  });
-  // also load any that aren't cached yet
-  const uncached = [...document.querySelectorAll('.img-card[data-img-id]')]
-    .map(c => c.dataset.imgId).filter(id => id && !blobs[id]);
-  for (const id of uncached) {
-    const blob = await loadImgBlob(id);
-    if (blob) {
-      blobs[id] = await new Promise((res, rej) => {
-        const r = new FileReader(); r.onload = e => res(e.target.result); r.onerror = rej; r.readAsDataURL(blob);
-      });
-    }
+  if (!IS_TAURI) { showToast('Sharing requires the desktop app'); return; }
+
+  const canvasFilePath = store.get('freeflow_filepath_' + activeProjectId);
+  if (!canvasFilePath) {
+    showToast('Save your canvas to a file first (use the save button)');
+    return;
   }
-  state.shared = true;
-  state.blobs = blobs;
-  const json = JSON.stringify(state);
-  if (IS_TAURI) {
-    try {
-      const { save } = window.__TAURI__.dialog;
-      const p = projects.find(x => x.id === activeProjectId);
-      const defName = (p ? p.name.replace(/[^a-z0-9_\-]/gi, '_') : 'canvas') + '_shared.json';
-      const filePath = await save({ filters: [{ name: 'Shared Canvas', extensions: ['json'] }], defaultPath: defName });
-      if (!filePath) return;
-      await window.__TAURI__.fs.writeTextFile(filePath, json);
-      showToast('Exported: ' + filePath.split(/[\\/]/).pop());
-    } catch (e) { console.error('exportSharedCanvas', e); showToast('Export failed'); }
-  } else {
-    // browser fallback: download
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = 'canvas_shared.json'; a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-    showToast('Shared canvas downloaded');
+
+  showToast('Preparing share folder\u2026');
+  try {
+    const { join, dirname, basename } = window.__TAURI__.path;
+    const { mkdir, copyFile, writeTextFile, readFile } = window.__TAURI__.fs;
+
+    const canvasDir  = await dirname(canvasFilePath);
+    const canvasBase = await basename(canvasFilePath, '.json');
+    const shareDir   = await join(canvasDir, canvasBase + '_share');
+    const imagesDir  = await join(shareDir, 'images');
+    const videosDir  = await join(shareDir, 'videos');
+    const audioDir   = await join(shareDir, 'audio');
+
+    await mkdir(shareDir,  { recursive: true });
+    await mkdir(imagesDir, { recursive: true });
+    await mkdir(videosDir, { recursive: true });
+    await mkdir(audioDir,  { recursive: true });
+
+    const state = serializeCanvas();
+    state.viewport = { scale, px, py };
+    state.shareFolder = true;
+
+    const fileMap = {};
+    const appImagesDir = await getTauriImagesDir();
+
+    for (const card of document.querySelectorAll('.img-card[data-img-id]')) {
+      const id = card.dataset.imgId;
+      if (!id) continue;
+      const mediaType  = card.dataset.mediaType;
+      const sourcePath = card.dataset.sourcePath || '';
+
+      let srcPath = null;
+      if (sourcePath) {
+        srcPath = sourcePath;
+      } else {
+        const tryExts = mediaType === 'video'
+          ? ['.mp4', '.webm', '.mov', '.mkv']
+          : mediaType === 'audio'
+          ? ['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a', '.opus']
+          : ['.png', '.jpg'];
+        for (const e of tryExts) {
+          const candidate = await join(appImagesDir, id + e);
+          try { await readFile(candidate, { length: 1 }); srcPath = candidate; break; } catch {}
+        }
+      }
+      if (!srcPath) continue;
+
+      const fileExt = '.' + srcPath.split('.').pop().toLowerCase();
+      const fileName = id + fileExt;
+      let destDir, relPath;
+      if (mediaType === 'video')      { destDir = videosDir; relPath = 'videos/' + fileName; }
+      else if (mediaType === 'audio') { destDir = audioDir;  relPath = 'audio/'  + fileName; }
+      else                            { destDir = imagesDir; relPath = 'images/' + fileName; }
+
+      try {
+        await copyFile(srcPath, await join(destDir, fileName));
+        fileMap[id] = relPath;
+      } catch (e) { console.warn('share: copy failed', srcPath, e); }
+    }
+
+    // Patch serialized HTML: update data-source-path to share-relative path
+    state.items = (state.items || []).map(item => {
+      if (!item || !item.html) return item;
+      let html = item.html;
+      for (const [id, relPath] of Object.entries(fileMap)) {
+        html = html.replace(
+          new RegExp('(data-img-id="' + id + '"[^>]*?)(?:\\s+data-source-path="[^"]*")?', 'g'),
+          '$1 data-source-path="' + relPath + '"'
+        );
+      }
+      return { ...item, html };
+    });
+
+    state.fileMap = fileMap;
+    await writeTextFile(await join(shareDir, 'canvas.json'), JSON.stringify(state));
+    showToast('Share folder ready: ' + canvasBase + '_share');
+  } catch (e) {
+    console.error('exportSharedCanvas', e);
+    showToast('Share failed: ' + (e.message || e));
   }
 }
 
 async function importSharedCanvas() {
-  if (IS_TAURI) {
-    try {
-      const { open } = window.__TAURI__.dialog;
-      const filePath = await open({ filters: [{ name: 'Canvas', extensions: ['json'] }] });
-      if (!filePath) return;
-      const raw = await window.__TAURI__.fs.readTextFile(filePath);
-      await _applySharedCanvas(raw);
-    } catch (e) { console.error('importSharedCanvas', e); showToast('Import failed'); }
-  } else {
-    // browser fallback
-    const input = document.createElement('input'); input.type = 'file'; input.accept = '.json';
-    input.addEventListener('change', async () => {
-      const f = input.files[0]; if (!f) return;
-      const raw = await f.text();
-      await _applySharedCanvas(raw);
-    });
-    input.click();
-  }
+  if (!IS_TAURI) { showToast('Import requires the desktop app'); return; }
+  try {
+    const { open } = window.__TAURI__.dialog;
+    const filePath = await open({ filters: [{ name: 'Canvas', extensions: ['json'] }] });
+    if (!filePath) return;
+    const raw = await window.__TAURI__.fs.readTextFile(filePath);
+    await _applySharedCanvas(raw, filePath);
+  } catch (e) { console.error('importSharedCanvas', e); showToast('Import failed'); }
 }
 
-async function _applySharedCanvas(raw) {
+async function _applySharedCanvas(raw, sourceFilePath) {
   let parsed;
   try { parsed = JSON.parse(raw); } catch { showToast('Invalid canvas file'); return; }
   if (!parsed || typeof parsed !== 'object') { showToast('Invalid canvas file'); return; }
-  if (!parsed.shared) { showToast('Not a shared canvas file'); return; }
-  // inject blobs into cache so restoreImgCards can find them
-  if (parsed.blobs) {
-    Object.entries(parsed.blobs).forEach(([id, dataURL]) => { blobURLCache[id] = dataURL; });
+
+  if (parsed.shareFolder && IS_TAURI && sourceFilePath) {
+    // Folder-based share: resolve asset paths relative to canvas.json location
+    const { dirname, join } = window.__TAURI__.path;
+    const { convertFileSrc } = window.__TAURI__.core;
+    const shareDir = await dirname(sourceFilePath);
+    const fileMap  = parsed.fileMap || {};
+
+    for (const [id, relPath] of Object.entries(fileMap)) {
+      try {
+        const absPath = await join(shareDir, relPath);
+        blobURLCache[id] = convertFileSrc(absPath);
+      } catch {}
+    }
+  } else if (parsed.shared) {
+    // Legacy blob-based share
+    if (parsed.blobs) {
+      Object.entries(parsed.blobs).forEach(([id, dataURL]) => { blobURLCache[id] = dataURL; });
+    }
+  } else {
+    showToast('Not a shared canvas file');
+    return;
   }
-  // create a new project for this shared canvas
+
   const newId = 'proj_' + Date.now();
   const p = { id: newId, name: 'Imported Canvas', createdAt: Date.now(), updatedAt: Date.now(), noteCount: 0 };
   projects.push(p); saveProjects(projects);
-  // save state to localStorage under new id (without the blobs to save space)
-  const stateCopy = { ...parsed }; delete stateCopy.blobs; delete stateCopy.shared;
+  const stateCopy = { ...parsed };
+  delete stateCopy.blobs; delete stateCopy.shared; delete stateCopy.shareFolder; delete stateCopy.fileMap;
   store.set('freeflow_canvas_' + newId, JSON.stringify(stateCopy));
-  // switch to the new canvas
   activeProjectId = newId;
   await loadCanvasState(newId);
-  showToast('Shared canvas imported');
-  // save blobs to local storage for future loads
-  for (const [id, dataURL] of Object.entries(parsed.blobs || {})) {
-    try {
-      const res = await fetch(dataURL); const blob = await res.blob();
-      if (IS_TAURI) {
-        const { writeFile } = window.__TAURI__.fs;
-        const { join } = window.__TAURI__.path;
-        const dir = await getTauriImagesDir();
-        const path = await join(dir, id + '.png');
-        const ab = await blob.arrayBuffer();
-        await writeFile(path, new Uint8Array(ab));
-      } else {
-        const db = await openImgDB();
-        await new Promise((res2, rej) => {
-          const tx = db.transaction('blobs', 'readwrite');
-          tx.objectStore('blobs').put({ id, blob });
-          tx.oncomplete = res2; tx.onerror = () => rej(tx.error);
-        });
-      }
-    } catch (e) { console.warn('blob persist failed for', id, e); }
+  showToast('Canvas imported');
+
+  // Persist blobs from legacy share for future loads
+  if (parsed.blobs) {
+    for (const [id, dataURL] of Object.entries(parsed.blobs)) {
+      try {
+        const res = await fetch(dataURL); const blob = await res.blob();
+        if (IS_TAURI) {
+          const { writeFile } = window.__TAURI__.fs;
+          const { join } = window.__TAURI__.path;
+          const dir = await getTauriImagesDir();
+          await writeFile(await join(dir, id + '.png'), new Uint8Array(await blob.arrayBuffer()));
+        } else {
+          const db = await openImgDB();
+          await new Promise((res2, rej) => {
+            const tx = db.transaction('blobs', 'readwrite');
+            tx.objectStore('blobs').put({ id, blob });
+            tx.oncomplete = res2; tx.onerror = () => rej(tx.error);
+          });
+        }
+      } catch (e) { console.warn('blob persist failed for', id, e); }
+    }
   }
 }
+
 
 // ── file upload ──
 function triggerImg() { document.getElementById('img-file').click(); }
@@ -2044,6 +2099,12 @@ if (IS_TAURI) {
     for (const filePath of allPaths) {
       try {
         const ext = filePath.split('.').pop().toLowerCase();
+        // Canvas JSON (shared folder): import it
+        if (ext === 'json') {
+          const raw = await window.__TAURI__.fs.readTextFile(filePath);
+          await _applySharedCanvas(raw, filePath);
+          continue;
+        }
         // Video/audio: use convertFileSrc — skip expensive readFile into memory
         if (isVideoPath(filePath)) {
           await placeMediaFromPath(filePath, dropPos.x, dropPos.y, 'video', videoMime[ext] || 'video/mp4');
