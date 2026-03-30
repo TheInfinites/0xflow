@@ -1189,7 +1189,7 @@ cv.addEventListener('mousedown',e=>{
 
 function onElemMouseDown(e){
   if(e.button===0 && imgCtxMenu.classList.contains('show')) closeAllFolderUI();
-  if(e.target.tagName==='TEXTAREA'||e.target.tagName==='BUTTON') return;
+  if(e.target.tagName==='TEXTAREA'||e.target.tagName==='BUTTON'||e.target.tagName==='INPUT') return;
   if(curTool==='arrow') return;
   if(e.currentTarget.classList.contains('pinned')){if(!e.target.closest('.block-editor')){e.stopPropagation();return;}}
   if(e.currentTarget.classList.contains('locked')){e.stopPropagation();return;}

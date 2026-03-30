@@ -467,8 +467,8 @@ function bindImgCard(card) {
   card._imgBound = true;
   card.addEventListener('mousedown', e => {
     if (e.target.classList.contains('rh') || e.target.closest('.img-toolbar') || e.target.classList.contains('collapse-btn') || e.target.closest('.collapse-btn')) return;
-    // For video cards: footer buttons handle themselves; video area drags normally
-    if (card.classList.contains('video-card') && e.target.closest('.vc-btn')) return;
+    // For video cards: entire footer (buttons, seek bar, frame steps) handles itself
+    if (card.classList.contains('video-card') && e.target.closest('.vc-footer')) return;
     if (e.button === 2) { startImgRightDrag(e, card); return; }
     onElemMouseDown(e);
   });
