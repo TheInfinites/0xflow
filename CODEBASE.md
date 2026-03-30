@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.7.26**
+> Current version: **v0.7.27**
 
 ---
 
@@ -601,6 +601,9 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 ---
 
 ## File Operations Feature
+
+### Changes in v0.7.27
+- **Video thumbnail wrong frame on load** — on restore, the seek bar's saved value wasn't being applied to `video.currentTime`. Added a one-time `loadedmetadata` listener in `bindVideoCard` that seeks to the saved position once the video is ready.
 
 ### Changes in v0.7.26
 - **Video controls unresponsive — definitive fix** — WebView2's native video compositor layer captures all pointer events regardless of CSS z-index, making buttons and seek bar in the footer unreachable. Fixed by wrapping the `<video>` in a `.vc-video-wrap` div and placing a `.vc-video-overlay` div (`position:absolute; inset:0; z-index:2`) over it. The overlay intercepts all pointer events on the video area (drag, scrub, click-to-play) while the footer sits outside the wrap as a normal flex sibling — fully clickable. Old serialized cards (pre-v0.7.26) are migrated in `bindVideoCard`: the bare `<video>` is wrapped and the overlay injected at restore time.
