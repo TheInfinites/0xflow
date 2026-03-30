@@ -2,6 +2,11 @@
 // STORAGE — works with or without localStorage
 // ════════════════════════════════════════════
 import { dbSet, dbRemove } from '../lib/db.js';
+import {
+  setProjects, setFolders,
+  setActiveProjectId, getActiveProjectId,
+  setCurrentFolderId, getCurrentFolderId,
+} from '../stores/projects.js';
 
 const _memStore = {};
 let _dbReady = false;
@@ -60,8 +65,8 @@ const STORAGE_KEY = 'freeflow_projects';
 const FOLDERS_KEY = 'freeflow_folders';
 function loadProjects(){ try{ return JSON.parse(store.get(STORAGE_KEY))||[]; }catch{ return []; } }
 function saveProjects(p){
+  setProjects([...p]); // sync to Svelte store
   if(IS_TAURI_STORAGE && _dbReady){
-    // Persist each project row; deletions tracked separately via deleteProject()
     p.forEach(proj => dbSaveProject(proj).catch(e=>console.warn('[store] dbSaveProject:', e)));
   } else {
     store.set(STORAGE_KEY, JSON.stringify(p));
@@ -69,6 +74,7 @@ function saveProjects(p){
 }
 function loadFolders(){ try{ return JSON.parse(store.get(FOLDERS_KEY))||[]; }catch{ return []; } }
 function saveFolders(f){
+  setFolders([...f]); // sync to Svelte store
   if(IS_TAURI_STORAGE && _dbReady){
     f.forEach(folder => dbSaveFolder(folder).catch(e=>console.warn('[store] dbSaveFolder:', e)));
   } else {
@@ -83,6 +89,10 @@ let pendingDeleteId = null, modalMode = 'new', renameTargetId = null;
 let activeProjectId = null;
 let currentFolderId = null; // null = all, '__unfiled__' = unfiled, else folderId
 let ctxProjectId = null; // id of project for context menu
+
+// Sync initial values to stores
+setProjects(projects);
+setFolders(folders);
 
 const ACCENT_COLORS = [null,null,null,'rgba(180,100,100,0.8)','rgba(100,140,180,0.8)','rgba(120,160,120,0.8)','rgba(160,120,80,0.8)','rgba(130,100,170,0.8)'];
 
@@ -155,7 +165,7 @@ function renderSidebar(){
 }
 
 function setFolder(fid){
-  currentFolderId=fid;
+  currentFolderId=fid; setCurrentFolderId(fid);
   renderSidebar();
   // update title
   const titles={null:'all canvases','__unfiled__':'unfiled'};
@@ -369,7 +379,7 @@ async function openProject(id,e){
   if(e) e.stopPropagation();
   const p=projects.find(x=>x.id===id); if(!p) return;
   p.updatedAt=Date.now(); saveProjects(projects);
-  activeProjectId=id;
+  activeProjectId=id; setActiveProjectId(id);
   document.getElementById('project-title').textContent=p.name;
   document.body.classList.add('on-canvas');
   await loadCanvasState(id);
@@ -393,7 +403,7 @@ function toggleDashboard(){
     // ensure a project exists
     if(!activeProjectId){
       const p = createProject('untitled canvas');
-      activeProjectId = p.id;
+      activeProjectId = p.id; setActiveProjectId(p.id);
     }
     openProject(activeProjectId);
   }
@@ -543,4 +553,34 @@ function fmtDateShort(ts){ const d=new Date(ts),now=new Date(),diff=(now-d)/1000
 
 let toastTimer;
 function showToast(msg){ const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),2200); }
+
+// ── Legacy bridge: expose module-scoped globals for cross-file access ──
+// These are needed by canvas.js and images.js until full Svelte migration.
+Object.assign(window, {
+  // state
+  get projects(){ return projects; },
+  set projects(v){ projects=v; },
+  get folders(){ return folders; },
+  set folders(v){ folders=v; },
+  get activeProjectId(){ return activeProjectId; },
+  set activeProjectId(v){ activeProjectId=v; setActiveProjectId(v); },
+  get currentFolderId(){ return currentFolderId; },
+  set currentFolderId(v){ currentFolderId=v; },
+  get _dbReady(){ return _dbReady; },
+  get _memStore(){ return _memStore; },
+  // functions
+  saveProjects, saveFolders,
+  loadProjects, loadFolders,
+  store,
+  markDbReady,
+  showToast,
+  dashRender,
+  createProject,
+  openProject,
+  goToDashboard,
+  toggleDashboard,
+  escHtml, fmtDate, fmtDateShort,
+  ACCENT_COLORS,
+  IS_TAURI_STORAGE,
+});
 

@@ -897,3 +897,17 @@ async function buildFolderPanel(dirPath, depth, x, y) {
     panel.style.top = finalY + 'px';
   });
 }
+
+// ── Legacy bridge: expose module-scoped globals for cross-file access ──
+Object.assign(window, {
+  get _projectDir(){ return _projectDir; },
+  set _projectDir(v){ _projectDir=v; },
+  loadProjectDir, saveProjectDir, pickProjectDir,
+  openProjectDirInExplorer,
+  openFolderBrowser, openFolderBrowserForExport,
+  openImgCtxMenu, closeImgCtxMenu,
+  openRenamePanel, closeRenamePanel,
+  startImgRightDrag,
+  openBatchRenameModal,
+  execFileOp, execFileOpSingle,
+});

@@ -1,6 +1,9 @@
 // ════════════════════════════════════════════
 // IMAGE STORE — Tauri filesystem (with IndexedDB fallback for browser)
 // ════════════════════════════════════════════
+import { setIsLight, setMinimapVisible } from '../stores/canvas.js';
+import { setBrainstormOpen } from '../stores/ui.js';
+
 const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 
 // ── Tauri filesystem image store ──
@@ -2205,7 +2208,7 @@ function panToNote(note){ const x=parseFloat(note.style.left)+100,y=parseFloat(n
 
 const minimapEl=document.getElementById('minimap'),minimapCanvas=document.getElementById('minimap-canvas'),minimapViewport=document.getElementById('minimap-viewport');
 const MM_W=160,MM_H=100,SCALE_X=MM_W/8000,SCALE_Y=MM_H/8000;
-function toggleMinimap(){ minimapVisible=!minimapVisible;minimapEl.classList.toggle('show',minimapVisible);if(minimapVisible)updateMinimap(); }
+function toggleMinimap(){ minimapVisible=!minimapVisible; setMinimapVisible(minimapVisible); minimapEl.classList.toggle('show',minimapVisible);if(minimapVisible)updateMinimap(); }
 // Cheap per-frame update: only move the viewport indicator box
 function _updateMinimapViewport(){
   if(!minimapVisible) return;
@@ -2425,7 +2428,7 @@ document.addEventListener('mousedown', e => {
 });
 
 function toggleTheme(){
-  isLight=!isLight;document.body.classList.toggle('light',isLight);
+  isLight=!isLight; setIsLight(isLight); document.body.classList.toggle('light',isLight);
   const btn=document.getElementById('tb-theme'),icon=document.getElementById('theme-icon');
   if(isLight){btn.setAttribute('data-tip','dark mode');icon.innerHTML='<path d="M11.5 7.5a5 5 0 01-6.5 4.75A5 5 0 007.5 2.5a5 5 0 004 5z"/>';document.querySelectorAll('#strokes .stroke-wrap path:not(.stroke-hit)').forEach(p=>p.setAttribute('stroke','rgba(0,0,0,0.55)'));document.querySelectorAll('#arrows .stroke-wrap path:not(.stroke-hit)').forEach(p=>p.setAttribute('stroke','rgba(0,0,0,0.3)'));document.querySelector('#ah path')?.setAttribute('stroke','rgba(0,0,0,0.4)');}
   else{btn.setAttribute('data-tip','light mode');icon.innerHTML='<circle cx="7.5" cy="7.5" r="3"/><line x1="7.5" y1="1" x2="7.5" y2="2.5"/><line x1="7.5" y1="12.5" x2="7.5" y2="14"/><line x1="1" y1="7.5" x2="2.5" y2="7.5"/><line x1="12.5" y1="7.5" x2="14" y2="7.5"/><line x1="3" y1="3" x2="4.1" y2="4.1"/><line x1="10.9" y1="10.9" x2="12" y2="12"/><line x1="12" y1="3" x2="10.9" y2="4.1"/><line x1="4.1" y1="10.9" x2="3" y2="12"/>';document.querySelectorAll('#strokes .stroke-wrap path:not(.stroke-hit)').forEach(p=>p.setAttribute('stroke','rgba(255,255,255,0.5)'));document.querySelectorAll('#arrows .stroke-wrap path:not(.stroke-hit)').forEach(p=>p.setAttribute('stroke','rgba(255,255,255,0.25)'));document.querySelector('#ah path')?.setAttribute('stroke','rgba(255,255,255,0.35)');}
@@ -2437,7 +2440,7 @@ let brainstormOpen = false;
 let brainstormHistory = [];
 
 function toggleBrainstorm() {
-  brainstormOpen = !brainstormOpen;
+  brainstormOpen = !brainstormOpen; setBrainstormOpen(brainstormOpen);
   document.getElementById('brainstorm-panel').classList.toggle('open', brainstormOpen);
   document.getElementById('tb-brainstorm').classList.toggle('active', brainstormOpen);
   if (brainstormOpen) setTimeout(() => document.getElementById('brainstorm-input').focus(), 200);
@@ -3754,3 +3757,32 @@ if (IS_TAURI) {
     window.checkForAppUpdate = checkForAppUpdate;
   })();
 }
+
+// ── Legacy bridge: expose module-scoped globals for cross-file access ──
+// canvas.js and HTML onclick attributes need these until full Svelte migration.
+Object.assign(window, {
+  // image/media placement
+  placeImageBlob, placeMediaBlob, placeMediaFromPath, placeExrBlob,
+  placeImagesGrid, makePdfCard: (typeof makePdfCard !== 'undefined' ? makePdfCard : undefined),
+  restoreImgCards,
+  triggerImg, onImgFiles, onPdfFiles,
+  // card constructors
+  makeImgCard, makeVideoCard, makeAudioCard,
+  bindImgCard, rebindImgCard,
+  imgDelete, imgActualSize, imgFitView, imgScale,
+  imgExport,
+  // media blob
+  getBlobURL, saveImgBlob, loadImgBlob, deleteImgBlob, duplicateImgBlob,
+  saveImgToProjectDir,
+  // search
+  toggleSearch, doSearch, searchNav, clearSearchHL,
+  panToNote,
+  // minimap
+  toggleMinimap, updateMinimap,
+  // UI helpers
+  clearAll, closeClearConfirm, confirmClear,
+  toggleImportPanel, closeImportPanel, triggerImport,
+  exportSharedCanvas, importSharedCanvas,
+  toggleTimer, toggleAlwaysOnTop,
+  toggleTheme, toggleBrainstorm, clearBrainstorm,
+});

@@ -2,6 +2,11 @@
 // CANVAS PERSISTENCE
 // ════════════════════════════════════════════
 import { dbSaveCanvasState, dbLoadCanvasState } from '../lib/db.js';
+import {
+  setScale, setPx, setPy,
+  setCurTool, setSelected, setSnapEnabled,
+  setIsLight, setMinimapVisible,
+} from '../stores/canvas.js';
 
 function saveCanvasState(id){
   if(!id) return;
@@ -117,7 +122,7 @@ const SNAP_SIZE=20; // matches grid spacing
 function snap(v){ return snapEnabled ? Math.round(v/SNAP_SIZE)*SNAP_SIZE : v; }
 function snapXY(x,y){ return {x:snap(x), y:snap(y)}; }
 function toggleSnap(){
-  snapEnabled=!snapEnabled;
+  snapEnabled=!snapEnabled; setSnapEnabled(snapEnabled);
   const btn=document.getElementById('tb-snap');
   if(btn){ btn.classList.toggle('on', snapEnabled); btn.setAttribute('data-tip', snapEnabled?'snap on  g':'snap to grid  g'); }
   showToast(snapEnabled?'Snap to grid on':'Snap to grid off');
@@ -317,6 +322,7 @@ function _rafFlush(){
   _rafPending=false;
   if(!_rafDirty) return;
   _rafDirty=false;
+  setScale(scale); setPx(px); setPy(py); // sync to Svelte store
   world.style.transform=`translate(${px}px,${py}px) scale(${scale})`;
   const zd = document.getElementById('zoom-display');
   if(zd) zd.textContent=Math.round(scale*100)+'%';
@@ -491,7 +497,7 @@ function zoomToFit(){
 const SHAPE_TOOLS = new Set(['rect','ellipse','line']);
 
 function tool(t){
-  curTool=t;
+  curTool=t; setCurTool(t);
   document.querySelectorAll('.t[id^="tb-"]').forEach(b=>b.classList.remove('on'));
   const el=document.getElementById('tb-'+t);if(el)el.classList.add('on');
   stTool.textContent=t; syncInkPointerEvents();
@@ -516,6 +522,7 @@ function setPen(el){ penSize=parseFloat(el.dataset.s); document.querySelectorAll
 function selectEl(el){ el.classList.add('selected'); selected.add(el); updateSelBar(); }
 function clearSelection(){ selected.forEach(el=>{el.classList.remove('selected');el.classList.remove('stroke-selected');}); selected.clear(); deselectRelation(); updateSelBar(); }
 function updateSelBar(){
+  setSelected(new Set(selected)); // sync to Svelte store
   const n=selected.size; selCount.textContent=n+(n===1?' item':' items');
   if(n>1){ const ae=document.activeElement; if(ae&&ae.closest('.block-editor,.be-todo-text,.todo-title')) ae.blur(); }
   if(n>0){
@@ -3052,5 +3059,31 @@ cv.addEventListener('mouseup',e=>{
   const hit=document.createElementNS('http://www.w3.org/2000/svg','path');hit.setAttribute('d',d);hit.setAttribute('stroke','transparent');hit.setAttribute('stroke-width','16');hit.setAttribute('fill','none');hit.setAttribute('stroke-linecap','round');hit.setAttribute('class','stroke-hit');
   const p=document.createElementNS('http://www.w3.org/2000/svg','path');p.setAttribute('d',d);p.setAttribute('stroke',isLight?'rgba(0,0,0,0.3)':'rgba(255,255,255,0.25)');p.setAttribute('stroke-width','1.5');p.setAttribute('fill','none');p.setAttribute('stroke-linecap','round');p.setAttribute('marker-end','url(#ah)');
   g.appendChild(hit);g.appendChild(p);g.addEventListener('mousedown',onStrokeMouseDown);arrowsG.appendChild(g);arrowSt=null;
+});
+
+// ── Legacy bridge: expose module-scoped globals for cross-file access ──
+// images.js and other legacy files read/write these until full Svelte migration.
+Object.assign(window, {
+  // viewport state
+  get scale(){ return scale; }, set scale(v){ scale=v; },
+  get px(){ return px; },     set px(v){ px=v; },
+  get py(){ return py; },     set py(v){ py=v; },
+  get isLight(){ return isLight; }, set isLight(v){ isLight=v; setIsLight(v); },
+  get minimapVisible(){ return minimapVisible; }, set minimapVisible(v){ minimapVisible=v; },
+  get curTool(){ return curTool; }, set curTool(v){ curTool=v; },
+  get selected(){ return selected; },
+  get undoStack(){ return undoStack; },
+  get redoStack(){ return redoStack; },
+  // DOM refs
+  cv, world, ink, strokes, arrowsG,
+  // functions
+  applyT, syncInkPointerEvents, syncUndoButtons,
+  saveCanvasState, loadCanvasState,
+  saveViewBookmarks, loadViewBookmarks,
+  snapshot, serializeCanvas, restoreCanvas,
+  clearSelection, updateSelBar,
+  c2w, tool,
+  makeNote, bindNote, bindLabel, bindFrame, bindTodoCard,
+  onElemMouseDown,
 });
 
