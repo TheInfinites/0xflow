@@ -1675,7 +1675,11 @@ body.on-canvas.light .todo-progress { background: rgba(255,255,255,0.06); }
 /* ── Video card ──────────────────────────── */
 /* ── Video Card ─────────────────────────────────────────── */
 .video-card { padding: 0 !important; overflow: hidden; display: flex; flex-direction: column; background: #0c0c0c; }
-.vc-video { display: block; width: 100%; height: auto; flex-shrink: 0; cursor: grab; will-change: transform; transform: translateZ(0); }
+.vc-video-wrap { position: relative; flex-shrink: 0; line-height: 0; }
+.vc-video { display: block; width: 100%; height: auto; cursor: grab; will-change: transform; transform: translateZ(0); }
+.vc-video-overlay { position: absolute; inset: 0; z-index: 2; cursor: grab; }
+.vc-video-overlay.scrubbing { cursor: ew-resize; }
+.vc-video-overlay:active { cursor: grabbing; }
 /* ── Custom video fullscreen overlay ── */
 #vc-fs-overlay {
   display: none;
@@ -1727,7 +1731,6 @@ body.on-canvas.light .todo-progress { background: rgba(255,255,255,0.06); }
 #vc-fs-mute .vc-fs-wave { transition: opacity 0.15s; }
 #vc-fs-mute.muted .vc-fs-wave { opacity: 0; }
 .vc-video:active { cursor: grabbing; }
-.vc-video.scrubbing { cursor: ew-resize; }
 .vc-frame-step { font-family: 'Geist Mono', monospace; font-size: 9px; letter-spacing: 0.04em; }
 .vc-footer { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-top: 1px solid rgba(255,255,255,0.06); background: #0f0f0f; flex-shrink: 0; cursor: grab; }
 .vc-footer:active { cursor: grabbing; }

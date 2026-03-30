@@ -979,7 +979,15 @@ function makeVideoCard(id, url, x, y, w) {
   video.preload = 'auto';
   video.setAttribute('playsinline', '');
   video.className = 'vc-video';
-  card.appendChild(video);
+  // Wrap video + overlay together so overlay covers only the video area, not the footer
+  const videoWrap = document.createElement('div');
+  videoWrap.className = 'vc-video-wrap';
+  videoWrap.appendChild(video);
+  // Overlay captures pointer events — WebView2 native video layer eats them regardless of z-index
+  const videoOverlay = document.createElement('div');
+  videoOverlay.className = 'vc-video-overlay';
+  videoWrap.appendChild(videoOverlay);
+  card.appendChild(videoWrap);
 
   // ── custom footer controls ──
   const footer = document.createElement('div');
@@ -1081,12 +1089,14 @@ function makeVideoCard(id, url, x, y, w) {
 
   // Shift+hover to scrub frame by frame
   let _scrubLastX = null;
-  video.addEventListener('mousemove', e => {
+  // Scrub and click-to-play go on the overlay (not the video element)
+  // because WebView2's native video compositor layer eats all pointer events regardless of z-index
+  videoOverlay.addEventListener('mousemove', e => {
     if (!e.shiftKey) {
-      if (_scrubLastX !== null) { _scrubLastX = null; video.classList.remove('scrubbing'); }
+      if (_scrubLastX !== null) { _scrubLastX = null; videoOverlay.classList.remove('scrubbing'); }
       return;
     }
-    video.classList.add('scrubbing');
+    videoOverlay.classList.add('scrubbing');
     if (_scrubLastX === null) { _scrubLastX = e.clientX; return; }
     const dx = e.clientX - _scrubLastX;
     _scrubLastX = e.clientX;
@@ -1094,17 +1104,17 @@ function makeVideoCard(id, url, x, y, w) {
     video.pause();
     video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + (dx / 4) * getFrameDur()));
   });
-  video.addEventListener('mouseleave', () => { _scrubLastX = null; video.classList.remove('scrubbing'); });
+  videoOverlay.addEventListener('mouseleave', () => { _scrubLastX = null; videoOverlay.classList.remove('scrubbing'); });
 
-  // Click on video to toggle play/pause
-  video.addEventListener('mousedown', e => {
+  // Click overlay to toggle play/pause
+  videoOverlay.addEventListener('mousedown', e => {
     if (e.button !== 0) return;
     if (e.shiftKey) { e.stopPropagation(); e.preventDefault(); return; }
     const sx = e.clientX, sy = e.clientY;
     let moved = false;
     const onMove = m => { if (Math.abs(m.clientX-sx) > 3 || Math.abs(m.clientY-sy) > 3) moved = true; };
     document.addEventListener('mousemove', onMove);
-    video.addEventListener('click', ce => {
+    videoOverlay.addEventListener('click', ce => {
       document.removeEventListener('mousemove', onMove);
       if (moved) { ce.stopPropagation(); ce.preventDefault(); }
       else { video.paused ? video.play() : video.pause(); }
@@ -1399,37 +1409,49 @@ function bindVideoCard(card) {
     video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + dir * getFrameDurV()));
   }
 
-  // Shift+hover to scrub frame by frame
-  let _scrubLastXV = null;
-  video.addEventListener('mousemove', e => {
-    if (!e.shiftKey) {
-      if (_scrubLastXV !== null) { _scrubLastXV = null; video.classList.remove('scrubbing'); }
-      return;
+  // Scrub and click-to-play go on the overlay — WebView2 native video layer eats pointer events
+  let overlayV = card.querySelector('.vc-video-overlay');
+  if (!overlayV) {
+    // Wrap the bare video element and inject overlay (old serialized cards pre-v0.7.26)
+    let wrapV = card.querySelector('.vc-video-wrap');
+    if (!wrapV && video) {
+      wrapV = document.createElement('div');
+      wrapV.className = 'vc-video-wrap';
+      video.parentNode.insertBefore(wrapV, video);
+      wrapV.appendChild(video);
     }
-    video.classList.add('scrubbing');
-    if (_scrubLastXV === null) { _scrubLastXV = e.clientX; return; }
-    const dx = e.clientX - _scrubLastXV;
-    _scrubLastXV = e.clientX;
-    if (Math.abs(dx) < 1) return;
-    video.pause();
-    video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + (dx / 4) * getFrameDurV()));
-  });
-  video.addEventListener('mouseleave', () => { _scrubLastXV = null; video.classList.remove('scrubbing'); });
-
-  // Click on video to toggle play/pause (non-shift)
-  video.addEventListener('mousedown', e => {
-    if (e.button !== 0) return;
-    if (e.shiftKey) { e.stopPropagation(); e.preventDefault(); return; }
-    const sx = e.clientX, sy = e.clientY;
-    let moved = false;
-    const onMove = m => { if (Math.abs(m.clientX-sx) > 3 || Math.abs(m.clientY-sy) > 3) moved = true; };
-    document.addEventListener('mousemove', onMove);
-    video.addEventListener('click', ce => {
-      document.removeEventListener('mousemove', onMove);
-      if (moved) { ce.stopPropagation(); ce.preventDefault(); }
-      else { video.paused ? video.play() : video.pause(); }
-    }, { once: true });
-  });
+    if (wrapV) { overlayV = document.createElement('div'); overlayV.className = 'vc-video-overlay'; wrapV.appendChild(overlayV); }
+  }
+  let _scrubLastXV = null;
+  if (overlayV) {
+    overlayV.addEventListener('mousemove', e => {
+      if (!e.shiftKey) {
+        if (_scrubLastXV !== null) { _scrubLastXV = null; overlayV.classList.remove('scrubbing'); }
+        return;
+      }
+      overlayV.classList.add('scrubbing');
+      if (_scrubLastXV === null) { _scrubLastXV = e.clientX; return; }
+      const dx = e.clientX - _scrubLastXV;
+      _scrubLastXV = e.clientX;
+      if (Math.abs(dx) < 1) return;
+      video.pause();
+      video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + (dx / 4) * getFrameDurV()));
+    });
+    overlayV.addEventListener('mouseleave', () => { _scrubLastXV = null; overlayV.classList.remove('scrubbing'); });
+    overlayV.addEventListener('mousedown', e => {
+      if (e.button !== 0) return;
+      if (e.shiftKey) { e.stopPropagation(); e.preventDefault(); return; }
+      const sx = e.clientX, sy = e.clientY;
+      let moved = false;
+      const onMove = m => { if (Math.abs(m.clientX-sx) > 3 || Math.abs(m.clientY-sy) > 3) moved = true; };
+      document.addEventListener('mousemove', onMove);
+      overlayV.addEventListener('click', ce => {
+        document.removeEventListener('mousemove', onMove);
+        if (moved) { ce.stopPropagation(); ce.preventDefault(); }
+        else { video.paused ? video.play() : video.pause(); }
+      }, { once: true });
+    });
+  }
 
   // Frame step buttons
   const frameStepBtns = card.querySelectorAll('.vc-frame-step');
@@ -1462,7 +1484,10 @@ function bindVideoCard(card) {
 
   if (playBtn) {
     playBtn.addEventListener('mousedown', e => e.stopPropagation());
-    playBtn.addEventListener('click', e => { e.stopPropagation(); video.paused ? video.play() : video.pause(); });
+    playBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (video.paused) { video.play().catch(() => {}); } else { video.pause(); }
+    });
     video.addEventListener('play',  () => { playBtn.querySelector('.vc-icon-play').style.display='none'; playBtn.querySelector('.vc-icon-pause').style.display=''; startSeekRAFV(); });
     video.addEventListener('pause', () => { playBtn.querySelector('.vc-icon-play').style.display=''; playBtn.querySelector('.vc-icon-pause').style.display='none'; });
     video.addEventListener('ended', () => { playBtn.querySelector('.vc-icon-play').style.display=''; playBtn.querySelector('.vc-icon-pause').style.display='none'; });
