@@ -6,6 +6,13 @@ import './legacy/canvas.js';
 import './legacy/images.js';
 import './legacy/folder-browser.js';
 
-// Future: mount Svelte app
-// import App from './App.svelte';
-// const app = new App({ target: document.body });
+// Mount Svelte Dashboard into #view-dashboard
+import { mount } from 'svelte';
+import Dashboard from './lib/Dashboard.svelte';
+
+const dashTarget = document.getElementById('view-dashboard');
+if (dashTarget) {
+  // Clear existing static HTML — Svelte takes over
+  dashTarget.innerHTML = '';
+  mount(Dashboard, { target: dashTarget });
+}

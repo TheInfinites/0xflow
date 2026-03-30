@@ -1,7 +1,7 @@
 <script>
-  // Root Svelte component — initially just a shell.
-  // Legacy JS handles all UI directly via index.html DOM.
-  // Svelte components will be mounted here incrementally in later phases.
+  import Dashboard from './lib/Dashboard.svelte';
 </script>
 
-<!-- Legacy app is rendered via index.html DOM + main.js imports -->
+<!-- Dashboard mounts into #view-dashboard via main.js -->
+<!-- Canvas view remains in index.html DOM -->
+<Dashboard />
