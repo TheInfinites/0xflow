@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.7.23**
+> Current version: **v0.7.24**
 
 ---
 
@@ -601,6 +601,9 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 ---
 
 ## File Operations Feature
+
+### Changes in v0.7.24
+- **Video not loading after file open (root cause fix)** — `restoreImgCards` was checking file existence via `readFile(p, { length: 1 })`, but `tauri-plugin-fs v2` doesn't support partial reads — it read the entire video file into memory, causing OOM/timeout errors on large videos. The `catch` then skipped all extensions, leaving `assetURL = null` and the video with no `src`. Fixed by using `fs.stat(p)` instead, which only checks existence without reading the file.
 
 ### Changes in v0.7.23
 - **Video controls broken after file load (root cause fix)** — `restoreCanvas` was injecting a `video-drag-overlay` div (`position:absolute; inset:0; z-index:1`) on top of every restored video card, blocking all mouse events from reaching the video element and footer buttons. Removed — dragging is already handled by `bindImgCard`/`onElemMouseDown` on the card itself.
