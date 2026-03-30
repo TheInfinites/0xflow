@@ -4,8 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>freeflow</title>
-<!-- Mock Tauri APIs for browser dev mode (no-op inside real Tauri) -->
-<script src="./tauri-mock.js"></script>
 <!-- PDF.js for PDF rendering -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs" type="module" id="pdfjs-script"></script>
 <script>
@@ -612,10 +610,6 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
 
 <div id="toast"></div>
 
-<script src="./storage.js"></script>
-<script src="./editor.js"></script>
-<script src="./canvas.js"></script>
-<script src="./images.js"></script>
 
 <!-- ══════════════════════════════════════════
      IMG RIGHT-CLICK CONTEXT MENU + FOLDER BROWSER
@@ -780,6 +774,6 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
 
 <link rel="stylesheet" href="./folder-browser.css">
 
-<script src="./folder-browser.js"></script>
+<script type="module" src="./main.js"></script>
 </body>
 </html>

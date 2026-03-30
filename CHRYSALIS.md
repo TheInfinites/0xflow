@@ -61,7 +61,25 @@ If any new features, localStorage keys, element types, UI components, or data st
 
 ### 0c. Changes found
 
-_(Fill this in during execution)_
+Audit completed 2026-03-30. The following differences were found vs. the plan written 2026-03-28:
+
+**New localStorage key (not in Phase 2g migration list):**
+- `freeflow_key_claude` — Claude API key (stored in localStorage like gpt/gemini keys, even though Claude is called server-side). Add to Phase 2g settings migration.
+
+**Canvas element data — new fields to add to Phase 5b data model:**
+- `votes: number` — note voting count stored in `dataset.votes`
+- `reactions: Array<{emoji, count}>` — emoji reactions stored on elements
+- These are serialized inside `items[].html` in canvas state today. When migrating to a structured store in Phase 5, these need explicit fields in the element model.
+
+**Export formats — Phase 7d is incomplete:**
+- `exportPDF()` exists (current implementation) — not listed in Phase 7d
+- `exportSVG()` exists (current implementation) — not listed in Phase 7d
+- Add both to Phase 7d
+
+**Backend dependency already present (not blocking):**
+- `tauri-plugin-store` is in Cargo.toml — not used in the current frontend JS. Not a migration concern, just noting it exists.
+
+**No other new features, block types, Tauri commands, or data structures found beyond what the plan already covers.**
 
 ---
 
@@ -347,6 +365,7 @@ if (migrated.length === 0) {
 - `freeflow_projdir_<id>` → settings table
 - `freeflow_key_gpt` → settings table
 - `freeflow_key_gemini` → settings table
+- `freeflow_key_claude` → settings table
 - `freeflow_dash_theme` → settings table
 
 > **Note:** Check Phase 0 findings — if new keys were added, include them here.
@@ -492,7 +511,9 @@ npm install pixi.js
   zIndex: number,
   content: object,    // type-specific data (blocks, todoItems, aiHistory, imgId, drawData, etc.)
   pinned: boolean,
-  locked: boolean
+  locked: boolean,
+  votes: number,      // vote count (0 default)
+  reactions: Array<{ emoji: string, count: number }>  // emoji reactions
 }
 ```
 
@@ -683,6 +704,8 @@ Reimplement export functions using the new data model:
 - **Export PNG** — use PixiJS `renderer.extract`
 - **Export JSON** — serialize element store directly
 - **Export Markdown** — convert TipTap JSON to markdown
+- **Export PDF** — render PixiJS canvas to PNG, wrap in PDF (jsPDF or similar)
+- **Export SVG** — serialize PixiJS Graphics paths to SVG markup
 - **Export Shared Canvas** — bundle element store + media blobs as base64
 - **Import Shared Canvas** — parse JSON, inject into store, save blobs
 
