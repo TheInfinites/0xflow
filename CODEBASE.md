@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.7.18**
+> Current version: **v0.7.22**
 
 ---
 
@@ -601,6 +601,21 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 ---
 
 ## File Operations Feature
+
+### Changes in v0.7.22
+- **Video controls broken after drag-in fix** — `makeVideoCard` now sets `card._vcBound = true` immediately after attaching its inline listeners, so subsequent `restoreImgCards` calls (triggered by undo/redo/paste) cannot call `bindVideoCard` again and stack duplicate listeners. Previously the v0.7.21 guard only protected the restore path, not freshly created cards.
+- **Audio card duplicate binding fix** — `bindAudioCard` now guards with `card._audBound` for the same reason.
+
+### Changes in v0.7.21
+- **Video controls stop working fix** — `bindVideoCard(card)` now guards with `card._vcBound` so it only attaches event listeners once per DOM node. Previously, every undo/redo/load/paste triggered `restoreImgCards()` which called `bindVideoCard` again, stacking duplicate listeners that conflicted and broke playback controls.
+- **Shift+click multi-select stops working fix** — same root cause: `bindImgCard(card)` now guards with `card._imgBound`. Duplicate `mousedown` listeners on the same card caused the second listener to call `clearSelection()` immediately after the first added the element to the selection, making shift+click appear broken.
+
+### Changes in v0.7.20
+- **Folder browser icon buttons** — "Move here" and "Copy here" text buttons replaced with compact icon-only buttons (arrow-into-bar for move, duplicate stack for copy). Added a third "Open folder" icon button (amber on hover) that opens the current folder in the system file explorer.
+
+### Changes in v0.7.19
+- **Inline rename panel** — hovering "rename file" in the image context menu now opens an inline panel to the right instead of a browser `prompt()`. Only the filename stem is editable; the extension is shown greyed-out and cannot be changed. Confirm with Enter or the "rename" button.
+- **Move/Copy deduplication** — when moving or copying an image card to a folder where a file with the same name already exists, the file is automatically renamed by appending `(1)`, `(2)`, etc. to the stem (e.g. `photo.jpg` → `photo (1).jpg`).
 
 ### Changes in v0.7.18
 - **Image card no-padding fix** — `img.style.width` changed from a fixed pixel value to `100%`, so the image always fills the card exactly with no right-side gap. Resize functions (`imgCardResizeFn`, `imgActualSize`, `imgFitView`, `imgScale`) now only set `card.style.width` — the image follows via `width: 100%`.
