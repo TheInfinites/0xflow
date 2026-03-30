@@ -1,4 +1,6 @@
 <script>
+  import { exportJSON, exportMarkdown, exportPNG, exportSharedCanvasV2, importSnapshot } from './export-service.js';
+
   let open  = $state(false);
   let query = $state('');
   let activeIdx = $state(0);
@@ -19,6 +21,10 @@
     { label: 'Back to dashboard',  shortcut: 'Ctrl+\\',  action: () => window.goToDashboard?.() },
     { label: 'Summarise canvas',   shortcut: '',         action: () => window.summariseCanvas?.() },
     { label: 'Clear canvas',       shortcut: '',         action: () => window.clearAll?.() },
+    { label: 'Export JSON',        shortcut: '',         action: exportJSON },
+    { label: 'Export Markdown',    shortcut: '',         action: exportMarkdown },
+    { label: 'Export PNG',         shortcut: '',         action: exportPNG },
+    { label: 'Export shared canvas', shortcut: '',       action: exportSharedCanvasV2 },
   ];
 
   let filtered = $derived(

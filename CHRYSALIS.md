@@ -807,6 +807,37 @@ git merge migration/modern-stack
 
 ---
 
+## Phase 8 Actual Status (2026-03-31)
+
+**Completed in Phase 8:**
+- `src/lib/export-service.js` — v2 export (JSON, Markdown, PNG, shared canvas) and import with v1 fallback
+- Export commands wired into CommandPalette (Ctrl+K)
+- CHRYSALIS.md updated with honest migration status
+
+**Why legacy files were NOT deleted:**
+The `src/legacy/` files (`canvas.js`, `images.js`, `storage.js`, `editor.js`, `folder-browser.js`) are still
+the active runtime for all DOM-based canvas operations. Every Svelte component calls `window.*` bridge
+functions that delegate to these files. The Svelte+PixiJS canvas (Canvas.svelte) runs *alongside* the
+legacy DOM canvas — both are active at the same time.
+
+**What's needed before legacy deletion (Phase 9):**
+1. Remove the legacy DOM canvas entirely — `#world`, `#ink`, `#strokes`, `#arrowsG`, `#sel-bar`
+2. Move all note creation/editing through `elementsStore` and `NoteEditor.svelte` exclusively
+3. Move image/video/audio placement through `media-service.js` + `MediaOverlay.svelte`
+4. Replace `storage.js` project CRUD with pure Svelte store operations
+5. Replace `images.js` search, minimap, brainstorm, timer, import/export with Svelte components
+6. Replace `folder-browser.js` file ops with a Svelte `FolderBrowser.svelte` component
+7. Strip index.html to the minimal shell defined in 8b above
+
+**Architecture as of Phase 8:**
+- Legacy DOM canvas handles: all existing note cards, image cards, drawing, selection bar, toolbar actions
+- Svelte/PixiJS handles: background dot grid (Canvas.svelte), new elements created via Svelte toolbar
+- Both read/write through the same `elementsStore` / `strokesStore` via bridge functions
+- Dashboard is fully Svelte (no legacy DOM involvement)
+- SQLite persistence active via db.js (Tauri mode) / localStorage fallback (browser mode)
+
+---
+
 ## Implementation Order Summary
 
 | Phase | What | Scope |
