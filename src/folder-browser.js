@@ -118,13 +118,30 @@ async function listSubdirs(dirPath) {
   }
 }
 
+// Returns a unique destination path, appending (1), (2)... to the stem if needed
+async function uniqueDestPath(dir, fileName, sep) {
+  if (!IS_TAURI) return dir.replace(/[\\/]$/, '') + sep + fileName;
+  const { exists } = window.__TAURI__.fs;
+  const dotIdx = fileName.lastIndexOf('.');
+  const stem = dotIdx > 0 ? fileName.slice(0, dotIdx) : fileName;
+  const ext = dotIdx > 0 ? fileName.slice(dotIdx) : '';
+  const base = dir.replace(/[\\/]$/, '');
+  let candidate = base + sep + fileName;
+  let n = 1;
+  while (await exists(candidate)) {
+    candidate = base + sep + stem + ' (' + n + ')' + ext;
+    n++;
+  }
+  return candidate;
+}
+
 // Copy or move a file on disk, update the canvas card's sourcePath
 async function execFileOpSingle(op, card, destDir) {
   const sourcePath = card.dataset.sourcePath;
   if (!sourcePath) return;
   const fileName = sourcePath.split(/[\\/]/).pop();
   const sep = destDir.includes('\\') ? '\\' : '/';
-  const destPath = destDir.replace(/[\\/]$/, '') + sep + fileName;
+  const destPath = await uniqueDestPath(destDir, fileName, sep);
   const sourceInProject = _projectDir && sourcePath.toLowerCase().startsWith(_projectDir.toLowerCase());
   const newSourcePath = (op === 'copy' && sourceInProject) ? sourcePath : destPath;
   if (IS_TAURI) {
@@ -218,29 +235,62 @@ function cardCenter(card) {
   return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
 }
 
-async function renameImgFile(card) {
-  closeAllFolderUI();
+function openRenamePanel(card) {
+  if (!card) return;
   const sourcePath = card.dataset.sourcePath;
   if (!sourcePath) { showToast('No source path — file was not imported from disk'); return; }
   const oldName = sourcePath.split(/[\\/]/).pop();
-  const newName = window.prompt('Rename file:', oldName);
-  if (!newName || newName.trim() === '' || newName.trim() === oldName) return;
-  const trimmed = newName.trim();
+  // Split into stem + ext, preserving original extension
+  const dotIdx = oldName.lastIndexOf('.');
+  const stem = dotIdx > 0 ? oldName.slice(0, dotIdx) : oldName;
+  const ext = dotIdx > 0 ? oldName.slice(dotIdx) : '';
+
+  const panel = document.getElementById('ictx-rename-panel');
+  const stemInput = document.getElementById('ictx-rename-stem');
+  const extSpan = document.getElementById('ictx-rename-ext');
+
+  stemInput.value = stem;
+  extSpan.textContent = ext;
+  panel.classList.add('show');
+  stemInput.focus();
+  stemInput.select();
+}
+
+function closeRenamePanel() {
+  const panel = document.getElementById('ictx-rename-panel');
+  panel.classList.remove('show');
+}
+
+async function performRenameFromPanel(card) {
+  if (!card) return;
+  const sourcePath = card.dataset.sourcePath;
+  if (!sourcePath) return;
+  const oldName = sourcePath.split(/[\\/]/).pop();
+  const dotIdx = oldName.lastIndexOf('.');
+  const oldExt = dotIdx > 0 ? oldName.slice(dotIdx) : '';
+
+  const stemInput = document.getElementById('ictx-rename-stem');
+  const newStem = stemInput.value.trim();
+  if (!newStem) return;
+  const newName = newStem + oldExt;
+  if (newName === oldName) { closeAllFolderUI(); return; }
+
   const dir = sourcePath.replace(/[\\/][^\\/]+$/, '');
   const sep = sourcePath.includes('\\') ? '\\' : '/';
-  const newPath = dir + sep + trimmed;
+  const newPath = dir + sep + newName;
+  closeAllFolderUI();
   if (IS_TAURI) {
     try {
       const { rename } = window.__TAURI__.fs;
       await rename(sourcePath, newPath);
       card.dataset.sourcePath = newPath;
-      showToast('renamed to ' + trimmed);
+      showToast('renamed to ' + newName);
     } catch(e) {
       showToast('rename failed: ' + (e.message || String(e)));
     }
   } else {
     card.dataset.sourcePath = newPath;
-    showToast('renamed (preview): ' + trimmed);
+    showToast('renamed (preview): ' + newName);
   }
 }
 
@@ -352,6 +402,7 @@ function closeImgCtxMenu() {
   imgCtxMenu.classList.remove('show');
   _ctxCard = null;
   clearDragLine();
+  closeRenamePanel();
 }
 
 document.getElementById('ictx-zoom-to')?.addEventListener('click', () => {
@@ -386,6 +437,7 @@ function closeAllFolderUI() {
   _activeFolderPath = null;
   _fileOpCard = null;
   clearDragLine();
+  closeRenamePanel();
   // Brief cooldown so mouseover can't immediately reopen
   _menuJustClosed = true;
   setTimeout(() => { _menuJustClosed = false; }, 150);
@@ -406,15 +458,32 @@ imgCtxMenu.addEventListener('mouseover', e => {
       folderBrowser.innerHTML = '';
     }
   } else {
-    // Hovering another item collapses the folder browser
+    // Hovering another item collapses the folder browser and rename panel
     folderBrowser.classList.remove('show');
     folderBrowser.innerHTML = '';
+    if (item.id !== 'ictx-rename-file') closeRenamePanel();
   }
 });
 
-document.getElementById('ictx-rename-file')?.addEventListener('click', () => {
-  if (_ctxCard) renameImgFile(_ctxCard);
-});
+// Rename panel: open on hover, close when hovering other menu items
+{
+  const renameItem = document.getElementById('ictx-rename-file');
+  const stemInput = document.getElementById('ictx-rename-stem');
+  const renameConfirm = document.getElementById('ictx-rename-confirm');
+
+  renameItem?.addEventListener('mouseenter', () => {
+    openRenamePanel(_ctxCard);
+  });
+
+  stemInput?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') performRenameFromPanel(_ctxCard);
+    if (e.key === 'Escape') closeAllFolderUI();
+  });
+
+  renameConfirm?.addEventListener('click', () => {
+    performRenameFromPanel(_ctxCard);
+  });
+}
 
 document.getElementById('ictx-batch-rename')?.addEventListener('click', () => {
   closeAllFolderUI();

@@ -53,6 +53,60 @@
   margin: 4px 6px;
 }
 
+/* ── inline rename panel ── */
+#ictx-rename-panel {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  background: rgba(13,13,14,0.97);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  padding: 7px 8px;
+  display: none;
+  align-items: center;
+  gap: 5px;
+  z-index: 10001;
+  white-space: nowrap;
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  margin-left: 4px;
+}
+#ictx-rename-panel.show { display: flex; }
+#ictx-rename-stem {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 5px;
+  color: rgba(255,255,255,0.9);
+  font-size: 12px;
+  padding: 3px 6px;
+  outline: none;
+  min-width: 80px;
+  max-width: 180px;
+  font-family: inherit;
+}
+#ictx-rename-stem:focus {
+  border-color: rgba(232,68,10,0.6);
+}
+#ictx-rename-ext {
+  color: rgba(255,255,255,0.35);
+  font-size: 12px;
+  font-family: inherit;
+}
+#ictx-rename-confirm {
+  background: rgba(232,68,10,0.18);
+  border: 1px solid rgba(232,68,10,0.35);
+  border-radius: 5px;
+  color: rgba(255,255,255,0.85);
+  font-size: 11px;
+  padding: 3px 9px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.1s;
+}
+#ictx-rename-confirm:hover {
+  background: rgba(232,68,10,0.35);
+}
+
 /* ── export submenu ── */
 #ictx-export { position: relative; }
 .ictx-submenu {

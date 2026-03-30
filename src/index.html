@@ -621,9 +621,14 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
      IMG RIGHT-CLICK CONTEXT MENU + FOLDER BROWSER
 ══════════════════════════════════════════ -->
 <div id="img-ctx-menu">
-  <div class="ictx-item" id="ictx-rename-file">
+  <div class="ictx-item" id="ictx-rename-file" style="position:relative;">
     <svg viewBox="0 0 12 12" style="width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:1.4;stroke-linecap:round;"><path d="M2 9l1-1 5-5 1 1-5 5-2 1z"/><line x1="7" y1="3" x2="9" y2="5"/></svg>
     rename file
+    <div id="ictx-rename-panel">
+      <input id="ictx-rename-stem" type="text" spellcheck="false" />
+      <span id="ictx-rename-ext"></span>
+      <button id="ictx-rename-confirm">rename</button>
+    </div>
   </div>
   <div class="ictx-item" id="ictx-batch-rename" style="display:none">
     <svg viewBox="0 0 12 12" style="width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:1.4;stroke-linecap:round;">
