@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.7.24**
+> Current version: **v0.7.25**
 
 ---
 
@@ -601,6 +601,9 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 ---
 
 ## File Operations Feature
+
+### Changes in v0.7.25
+- **Video controls unresponsive on restored cards (actual fix)** — `bindImgCard`'s mousedown guard only exempted `.vc-btn` clicks, so the seek bar (`<input type="range">`) and other footer interactions still reached `onElemMouseDown` which called `e.preventDefault()`, killing the input event. Fixed by guarding the entire `.vc-footer` in `bindImgCard`, and also added `INPUT` to the `onElemMouseDown` early-return tag check.
 
 ### Changes in v0.7.24
 - **Video not loading after file open (root cause fix)** — `restoreImgCards` was checking file existence via `readFile(p, { length: 1 })`, but `tauri-plugin-fs v2` doesn't support partial reads — it read the entire video file into memory, causing OOM/timeout errors on large videos. The `catch` then skipped all extensions, leaving `assetURL = null` and the video with no `src`. Fixed by using `fs.stat(p)` instead, which only checks existence without reading the file.
