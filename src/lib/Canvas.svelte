@@ -4,7 +4,9 @@
   import { elementsStore, strokesStore, relationsStore, snapshot, undo, redo, canUndo, canRedo } from '../stores/elements.js';
   import { scaleStore, pxStore, pyStore, setCurTool, getCurTool, setSelected, setScale, setPx, setPy, activeEditorIdStore, setActiveEditorId } from '../stores/canvas.js';
   import { activeProjectIdStore } from '../stores/projects.js';
-  import NoteOverlay from './NoteOverlay.svelte';
+  import NoteOverlay   from './NoteOverlay.svelte';
+  import MediaOverlay  from './MediaOverlay.svelte';
+  import BrainstormPanel from './BrainstormPanel.svelte';
 
   // ── Props / callbacks ────────────────────────
   let { onBack = () => {} } = $props();
@@ -1029,7 +1031,12 @@
   >
     <!-- NoteEditor overlay — appears on double-click of note/ai-note/label -->
     <NoteOverlay />
+    <!-- Media overlays — images, video, audio, draw cards -->
+    <MediaOverlay />
   </div>
+
+  <!-- Brainstorm panel (outside DOM overlay so it's not clipped) -->
+  <BrainstormPanel />
 </div>
 
 <style>

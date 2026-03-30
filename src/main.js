@@ -51,3 +51,15 @@ if (minimapMount) mount(Minimap, { target: minimapMount });
 
 const cmdMount = document.getElementById('svelte-cmd-palette-mount');
 if (cmdMount) mount(CommandPalette, { target: cmdMount });
+
+// ── Extra canvas overlays (mounted at body level) ─
+import BookmarkPanel from './lib/BookmarkPanel.svelte';
+import UpdateBanner  from './lib/UpdateBanner.svelte';
+
+const bookmarkMount = document.createElement('div');
+document.body.appendChild(bookmarkMount);
+mount(BookmarkPanel, { target: bookmarkMount });
+
+const updateMount = document.createElement('div');
+document.body.appendChild(updateMount);
+mount(UpdateBanner, { target: updateMount });
