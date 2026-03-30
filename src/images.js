@@ -1151,6 +1151,7 @@ function makeVideoCard(id, url, x, y, w) {
   card.appendChild(connPort);
 
   addRelHandle(card);
+  card._vcBound = true; // listeners already attached inline above; prevent bindVideoCard from doubling them
   bindImgCard(card);
   world.appendChild(card);
 
@@ -1228,6 +1229,8 @@ function makeAudioCard(id, url, x, y, filename) {
 }
 
 function bindAudioCard(card) {
+  if (card._audBound) return;
+  card._audBound = true;
   const aud = card.querySelector('audio');
   if (!aud) return;
   const playBtn = card.querySelector('.ac-play');
