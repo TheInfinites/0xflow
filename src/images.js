@@ -1507,6 +1507,12 @@ function bindVideoCard(card) {
       }
     });
     video.addEventListener('seeked', () => { if (video.duration && seekBar) seekBar.value = (video.currentTime / video.duration) * 1000; });
+    // On restore: once metadata loads, seek to the position saved in the seek bar
+    video.addEventListener('loadedmetadata', () => {
+      if (seekBar && seekBar.value > 0 && video.duration) {
+        video.currentTime = (seekBar.value / 1000) * video.duration;
+      }
+    }, { once: true });
   }
   if (volBtn) {
     volBtn.addEventListener('mousedown', e => e.stopPropagation());
