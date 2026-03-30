@@ -796,14 +796,30 @@ async function buildFolderPanel(dirPath, depth, x, y) {
   } else {
     const moveBtn = document.createElement('button');
     moveBtn.className = 'fb-action-btn move';
-    moveBtn.textContent = 'Move here';
+    moveBtn.title = 'Move here';
+    moveBtn.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8h9m0 0L8 5m3 3l-3 3"/><path d="M11 3h2a1 1 0 011 1v8a1 1 0 01-1 1h-2"/></svg>`;
     moveBtn.addEventListener('click', () => execFileOp('move', _fileOpCard, dirPath));
     const copyBtn = document.createElement('button');
     copyBtn.className = 'fb-action-btn copy';
-    copyBtn.textContent = 'Copy here';
+    copyBtn.title = 'Copy here';
+    copyBtn.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="8" height="9" rx="1.5"/><path d="M3 11V3a1 1 0 011-1h7"/></svg>`;
     copyBtn.addEventListener('click', () => execFileOp('copy', _fileOpCard, dirPath));
+    const openBtn = document.createElement('button');
+    openBtn.className = 'fb-action-btn open-folder';
+    openBtn.title = 'Open folder';
+    openBtn.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4.5A1.5 1.5 0 013.5 3h3l1.5 2H13a1 1 0 011 1v6a1 1 0 01-1 1H3.5A1.5 1.5 0 012 11.5z"/><path d="M10 9l1.5-1.5L13 9"/><line x1="11.5" y1="7.5" x2="11.5" y2="11"/></svg>`;
+    openBtn.addEventListener('click', async () => {
+      closeAllFolderUI();
+      if (IS_TAURI) {
+        try { await window.__TAURI__.core.invoke('plugin:shell|open', { path: dirPath }); }
+        catch(e) { showToast('Could not open folder'); }
+      } else {
+        showToast('Open folder requires the desktop app');
+      }
+    });
     actionRow.appendChild(moveBtn);
     actionRow.appendChild(copyBtn);
+    actionRow.appendChild(openBtn);
   }
   panel.appendChild(actionRow);
 

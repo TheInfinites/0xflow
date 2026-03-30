@@ -172,34 +172,41 @@
   margin-bottom: 4px;
 }
 .fb-action-btn {
-  flex: 1;
-  padding: 7px 0;
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 6px;
   border: none;
-  font-size: 10px;
-  font-family: inherit;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-weight: 500;
   cursor: pointer;
-  text-align: center;
   transition: background 0.12s, color 0.12s;
 }
+.fb-action-btn svg { width: 15px; height: 15px; }
 .fb-action-btn.move {
   background: rgba(255,255,255,0.06);
-  color: rgba(255,255,255,0.55);
+  color: rgba(255,255,255,0.5);
 }
 .fb-action-btn.move:hover {
-  background: rgba(255,255,255,0.1);
-  color: rgba(255,255,255,0.9);
+  background: rgba(255,255,255,0.11);
+  color: rgba(255,255,255,0.95);
 }
 .fb-action-btn.copy {
   background: rgba(255,255,255,0.06);
-  color: rgba(255,255,255,0.55);
+  color: rgba(255,255,255,0.5);
 }
 .fb-action-btn.copy:hover {
-  background: rgba(255,255,255,0.1);
-  color: rgba(255,255,255,0.9);
+  background: rgba(255,255,255,0.11);
+  color: rgba(255,255,255,0.95);
+}
+.fb-action-btn.open-folder {
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.5);
+}
+.fb-action-btn.open-folder:hover {
+  background: rgba(255,185,55,0.12);
+  color: rgba(255,185,55,0.9);
 }
 .fb-action-btn.export {
   background: rgba(232,68,10,0.12);
