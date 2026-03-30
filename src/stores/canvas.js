@@ -10,7 +10,8 @@ export const curToolStore     = writable('select');
 export const selectedStore    = writable(new Set());
 export const snapEnabledStore = writable(false);
 export const isLightStore     = writable(false);
-export const minimapVisibleStore = writable(false);
+export const minimapVisibleStore   = writable(false);
+export const activeEditorIdStore   = writable(null);  // id of note currently being edited
 
 // Bridge getters/setters for legacy JS
 export function getScale()             { return get(scaleStore); }
@@ -29,3 +30,5 @@ export function getIsLight()           { return get(isLightStore); }
 export function setIsLight(v)          { isLightStore.set(v); }
 export function getMinimapVisible()    { return get(minimapVisibleStore); }
 export function setMinimapVisible(v)   { minimapVisibleStore.set(v); }
+export function getActiveEditorId()    { return get(activeEditorIdStore); }
+export function setActiveEditorId(v)   { activeEditorIdStore.set(v); }

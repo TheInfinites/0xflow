@@ -2,8 +2,9 @@
   import { onMount, onDestroy } from 'svelte';
   import { Application, Graphics, Text, TextStyle, Container, Sprite, Texture, Assets } from 'pixi.js';
   import { elementsStore, strokesStore, relationsStore, snapshot, undo, redo, canUndo, canRedo } from '../stores/elements.js';
-  import { scaleStore, pxStore, pyStore, setCurTool, getCurTool, setSelected, setScale, setPx, setPy } from '../stores/canvas.js';
+  import { scaleStore, pxStore, pyStore, setCurTool, getCurTool, setSelected, setScale, setPx, setPy, activeEditorIdStore, setActiveEditorId } from '../stores/canvas.js';
   import { activeProjectIdStore } from '../stores/projects.js';
+  import NoteOverlay from './NoteOverlay.svelte';
 
   // ── Props / callbacks ────────────────────────
   let { onBack = () => {} } = $props();
@@ -255,6 +256,16 @@
 
     // Interaction
     c.on('pointerdown', e => onElPointerDown(e, el.id));
+
+    // Double-click opens editor for text elements
+    if (el.type === 'note' || el.type === 'ai-note' || el.type === 'label') {
+      c.on('pointertap', e => {
+        if (e.detail === 2) {  // double-click
+          e.stopPropagation();
+          setActiveEditorId(el.id);
+        }
+      });
+    }
 
     return c;
   }
@@ -1016,7 +1027,8 @@
     bind:this={domOverlay}
     style="position:absolute;inset:0;pointer-events:none;"
   >
-    <!-- Note/AI/Todo DOM overlays will be injected here by NoteOverlay components in Phase 6 -->
+    <!-- NoteEditor overlay — appears on double-click of note/ai-note/label -->
+    <NoteOverlay />
   </div>
 </div>
 
