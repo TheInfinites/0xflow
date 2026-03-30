@@ -463,6 +463,8 @@ function makeImgCard(id, url, x, y, w, h, nw, nh) {
 }
 
 function bindImgCard(card) {
+  if (card._imgBound) return;
+  card._imgBound = true;
   card.addEventListener('mousedown', e => {
     if (e.target.classList.contains('rh') || e.target.closest('.img-toolbar') || e.target.classList.contains('collapse-btn') || e.target.closest('.collapse-btn')) return;
     // For video cards: footer buttons handle themselves; video area drags normally
@@ -1374,6 +1376,8 @@ async function placeMediaBlob(blob, wx, wy, sourcePath, mediaType) {
 }
 
 function bindVideoCard(card) {
+  if (card._vcBound) return;
+  card._vcBound = true;
   const video = card.querySelector('.vc-video');
   const playBtn = card.querySelector('.vc-play');
   const seekBar = card.querySelector('.vc-seek');
