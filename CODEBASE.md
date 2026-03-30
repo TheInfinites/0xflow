@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.7.27**
+> Current version: **v0.7.28**
 
 ---
 
@@ -601,6 +601,9 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 ---
 
 ## File Operations Feature
+
+### Changes in v0.7.28
+- **Video starts in middle on load** — v0.7.27 restored the serialized seek bar position on load, but that position was wherever the video was last left. Videos now always reset to frame 0 on file open.
 
 ### Changes in v0.7.27
 - **Video thumbnail wrong frame on load** — on restore, the seek bar's saved value wasn't being applied to `video.currentTime`. Added a one-time `loadedmetadata` listener in `bindVideoCard` that seeks to the saved position once the video is ready.
