@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.7.22**
+> Current version: **v0.7.23**
 
 ---
 
@@ -601,6 +601,9 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 ---
 
 ## File Operations Feature
+
+### Changes in v0.7.23
+- **Video controls broken after file load (root cause fix)** — `restoreCanvas` was injecting a `video-drag-overlay` div (`position:absolute; inset:0; z-index:1`) on top of every restored video card, blocking all mouse events from reaching the video element and footer buttons. Removed — dragging is already handled by `bindImgCard`/`onElemMouseDown` on the card itself.
 
 ### Changes in v0.7.22
 - **Video controls broken after drag-in fix** — `makeVideoCard` now sets `card._vcBound = true` immediately after attaching its inline listeners, so subsequent `restoreImgCards` calls (triggered by undo/redo/paste) cannot call `bindVideoCard` again and stack duplicate listeners. Previously the v0.7.21 guard only protected the restore path, not freshly created cards.
