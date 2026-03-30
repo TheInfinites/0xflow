@@ -1540,8 +1540,7 @@ async function restoreImgCards() {
         for (const ext of exts) {
           try {
             const p = await join(dir, id + ext);
-            // Check file exists by attempting to read 1 byte (stat not always available)
-            await window.__TAURI__.fs.readFile(p, { length: 1 });
+            await window.__TAURI__.fs.stat(p); // throws if file doesn't exist
             assetURL = convertFileSrc(p);
             break;
           } catch { /* try next ext */ }
