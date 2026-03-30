@@ -24,6 +24,7 @@
 
   window.__TAURI__ = {
     __isMock: true, // flag so IS_TAURI stays false
+    sql: { Database: { load: async () => null } },
     core: {
       invoke: async (cmd, args) => {
         console.log('[tauri-mock] invoke:', cmd, args);

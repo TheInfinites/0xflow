@@ -1,18 +1,23 @@
 // ════════════════════════════════════════════
 // CANVAS PERSISTENCE
 // ════════════════════════════════════════════
+import { dbSaveCanvasState, dbLoadCanvasState } from '../lib/db.js';
+
 function saveCanvasState(id){
   if(!id) return;
   const state=serializeCanvas();
   state.viewport={scale,px,py};
   const json=JSON.stringify(state);
-  // always save to localStorage as backup
-  store.set('freeflow_canvas_'+id, json);
+  if(IS_TAURI && _dbReady){
+    dbSaveCanvasState(id, json).catch(err=>console.warn('[canvas] dbSaveCanvasState:', err));
+  } else {
+    store.set('freeflow_canvas_'+id, json);
+  }
   // also write to user-chosen file if one is set
   const filePath=store.get('freeflow_filepath_'+id);
   if(filePath && IS_TAURI){
     window.__TAURI__.fs.writeTextFile(filePath, json).catch(err=>{
-      console.warn('File save failed, data still in localStorage:', err);
+      console.warn('File save failed:', err);
     });
   }
   saveViewBookmarks(id);
@@ -61,7 +66,7 @@ async function loadCanvasState(id){
   const btn=document.getElementById('save-file-btn');
   if(btn) btn.title=filePath?'Saving to: '+filePath:'Save canvas to a file on disk';
 
-  // try reading from user file first, fall back to localStorage
+  // try reading from user file first, then SQLite/localStorage
   let raw=null;
   if(filePath && IS_TAURI){
     try{
@@ -70,6 +75,9 @@ async function loadCanvasState(id){
       // file may not exist yet or was moved — fall back silently
       raw=null;
     }
+  }
+  if(!raw && IS_TAURI && _dbReady){
+    raw=await dbLoadCanvasState(id);
   }
   if(!raw) raw=store.get('freeflow_canvas_'+id);
   loadViewBookmarks(id);
@@ -1332,14 +1340,14 @@ function makeAiNote(x,y){
   keySave.addEventListener('click',e=>{
     e.stopPropagation();
     const k=keyInput.value.trim();
-    if(k){ localStorage.setItem('freeflow_key_'+d._aiModel, k); keyInput.value=''; keyPrompt.style.display='none'; showToast('Key saved'); }
+    if(k){ store.set('freeflow_key_'+d._aiModel, k); keyInput.value=''; keyPrompt.style.display='none'; showToast('Key saved'); }
   });
   keyPrompt.appendChild(keyLabel);keyPrompt.appendChild(keyInput);keyPrompt.appendChild(keySave);
   d.appendChild(keyPrompt);
 
   function updateKeyPrompt(){
     if(d._aiModel==='claude'){ keyPrompt.style.display='none'; return; }
-    const stored=localStorage.getItem('freeflow_key_'+d._aiModel);
+    const stored=store.get('freeflow_key_'+d._aiModel);
     keyPrompt.style.display=stored?'none':'flex';
     keyLabel.textContent=d._aiModel==='gpt'?'OpenAI key:':'Gemini key:';
     keyInput.placeholder=d._aiModel==='gpt'?'sk-...':'AIza...';
@@ -1788,7 +1796,7 @@ async function runAiNote(noteEl){
 
   // check key for non-Claude models
   if (model !== 'claude') {
-    const key = localStorage.getItem('freeflow_key_' + model);
+    const key = store.get('freeflow_key_' + model);
     if (!key) {
       const keyPrompt = noteEl.querySelector('.ai-key-prompt');
       if (keyPrompt) { keyPrompt.style.display='flex'; keyPrompt.querySelector('input')?.focus(); }
@@ -1838,9 +1846,9 @@ async function runAiNote(noteEl){
     if (model === 'claude') {
       text = await callClaude(noteEl._aiHistory);
     } else if (model === 'gpt') {
-      text = await callGPT(noteEl._aiHistory, localStorage.getItem('freeflow_key_gpt'));
+      text = await callGPT(noteEl._aiHistory, store.get('freeflow_key_gpt'));
     } else if (model === 'gemini') {
-      text = await callGemini(noteEl._aiHistory, localStorage.getItem('freeflow_key_gemini'));
+      text = await callGemini(noteEl._aiHistory, store.get('freeflow_key_gemini'));
     }
     noteEl._aiHistory.push({role:'assistant', content: text});
     loadBubble.className='ai-bubble assistant';

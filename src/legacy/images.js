@@ -3639,12 +3639,36 @@ function downloadBlob(blob,filename){
 }
 
 // ── init ──
-dashRender();
-applyT();
-syncInkPointerEvents();
-syncUndoButtons();
-// Start on canvas — auto-open first project or create one
-(function(){
+(async function initApp(){
+  if(IS_TAURI){
+    const { initDB, dbGetAllSettings, dbLoadProjects, dbLoadFolders } = await import('../lib/db.js');
+    await initDB();
+    const allSettings = await dbGetAllSettings();
+    markDbReady(allSettings);
+    const dbProjects = await dbLoadProjects();
+    const dbFolders = await dbLoadFolders();
+    if(dbProjects.length > 0){ projects = dbProjects; folders = dbFolders; }
+    // migrate field additions for any legacy rows
+    projects.forEach(p=>{ if(!('folderId' in p)) p.folderId=null; });
+    folders.forEach(f=>{ if(!('parentId' in f)) f.parentId=null; });
+  }
+
+  // seed demo if empty
+  if(projects.length===0){
+    const p={id:'demo_0',name:'untitled',createdAt:Date.now(),updatedAt:Date.now(),noteCount:0,accent:null,folderId:null};
+    projects.push(p);
+    saveProjects(projects);
+  }
+
+  // restore dash theme now that _memStore is populated
+  if(store.get('freeflow_dash_theme')==='light' && !document.body.classList.contains('dash-light')){
+    toggleDashTheme();
+  }
+
+  dashRender();
+  applyT();
+  syncInkPointerEvents();
+  syncUndoButtons();
   let startId = activeProjectId || (projects.length > 0 ? projects[0].id : null);
   if(!startId){ const p = createProject('untitled canvas'); startId = p.id; }
   openProject(startId);
