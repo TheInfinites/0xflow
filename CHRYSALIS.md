@@ -914,7 +914,27 @@ legacy DOM canvas — both are active at the same time.
 - `legacy/images.js` — media and AI brainstorm
 - `legacy/folder-browser.js` — file system ops
 
-**Next: Phase 9f** — v1→v2 canvas migration pass + drop legacy/canvas.js
+### Phase 9f — v1→v2 canvas migration ✅
+
+**What was added:**
+- `migrateV1ToV2(raw)` in `canvas-persistence.js`: parses v1 DOM-based JSON, converts each item to a v2 element:
+  - `.note` → `type:'note'` with `content.blocks` as TipTap doc JSON (converted from legacy block-editor format)
+  - `.ai-note` → `type:'ai-note'` with `aiHistory`, `aiModel`
+  - `.todo-card` → `type:'todo'` with `todoTitle`, `todoItems`
+  - `.frame` → `type:'frame'` with `frameLabel`
+  - `.img-card` → `type:'image'` with `imgId`, `mediaType`
+  - `.lbl` → `type:'label'` with `text`
+  - Position/size extracted from `el.style.left/top/width/height`; WORLD_OFFSET (3000) applied
+  - Relations restored from index pairs to ID pairs
+  - v1 SVG strokes skipped (not easily convertible without full SVG path parser)
+- `_blocksToTiptap(blocks)` helper: converts legacy `{type, text, checked, indent}` blocks to TipTap doc JSON nodes (paragraph, heading 1-3, bulletList, orderedList, taskList, blockquote, codeBlock, horizontalRule)
+- `_tryMigrateV1(id)` in `projects-service.js`: reads raw v1 from file/SQLite/localStorage
+- `openProject()` updated: v2 load → if null, try v1 migration → persist migrated state as v2 → toast "canvas migrated to new format"
+- `legacy/canvas.js` `loadCanvasState` fallback removed from `openProject` — migration handles it
+
+**Strokes note:** v1 stores strokes as raw SVG innerHTML strings. A future pass could parse `<path d="...">` elements into stroke objects, but this is low priority (most canvases have few strokes relative to notes).
+
+**Next: Phase 9g** — remove `legacy/canvas.js` and `legacy/editor.js`
 
 ---
 

@@ -15,7 +15,7 @@ import {
   setCurrentFolderId, getCurrentFolderId,
 } from '../stores/projects.js';
 import { elementsStore } from '../stores/elements.js';
-import { saveCanvasV2, loadCanvasV2, applyCanvasState, clearCanvasState } from './canvas-persistence.js';
+import { saveCanvasV2, loadCanvasV2, applyCanvasState, clearCanvasState, migrateV1ToV2 } from './canvas-persistence.js';
 
 const IS_TAURI_STORAGE = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 
@@ -182,6 +182,27 @@ async function _saveCurrentCanvas() {
 
 // ── Navigation ────────────────────────────────
 
+/** Read raw v1 canvas data from storage and migrate it, or return null. */
+async function _tryMigrateV1(id) {
+  const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
+  let raw = null;
+
+  const filePath = window.store?.get?.('freeflow_filepath_' + id);
+  if (filePath && IS_TAURI) {
+    try { raw = await window.__TAURI__?.fs?.readTextFile(filePath); } catch {}
+  }
+  if (!raw && IS_TAURI && window._dbReady) {
+    const { dbLoadCanvasState } = await import('./db.js');
+    raw = await dbLoadCanvasState(id);
+  }
+  if (!raw) {
+    try { raw = localStorage.getItem('freeflow_canvas_' + id); } catch {}
+  }
+  if (!raw) return null;
+
+  return migrateV1ToV2(raw);
+}
+
 async function openProject(id, e) {
   if (e) e.stopPropagation();
   const projects = loadProjects();
@@ -199,15 +220,22 @@ async function openProject(id, e) {
   const bd = document.getElementById('dash-backdrop');
   if (bd) { bd.style.opacity = '0'; bd.style.pointerEvents = 'none'; }
 
-  // Load canvas state — try v2 first, fall back to legacy v1
+  // Load canvas state — try v2 first, then attempt v1→v2 migration, else DOM restore
   clearCanvasState();
   const state = await loadCanvasV2(id);
   if (state) {
     applyCanvasState(state);
   } else {
-    // Fall back: let legacy loadCanvasState run if available
-    // No v2 state — fall back to legacy v1 DOM canvas restore
-    await window.loadCanvasState?.(id);
+    // Try v1 migration: read raw v1 data and convert to v2 in-memory
+    const migrated = await _tryMigrateV1(id);
+    if (migrated) {
+      applyCanvasState(migrated);
+      // Persist as v2 so we never need to migrate again
+      await saveCanvasV2(id);
+      showToast('canvas migrated to new format');
+    } else {
+      // No canvas data at all — nothing to show
+    }
   }
 }
 
