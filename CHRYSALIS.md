@@ -838,6 +838,67 @@ legacy DOM canvas — both are active at the same time.
 
 ---
 
+## Phase 9 Actual Status (2026-03-31)
+
+### Phase 9a — legacy/storage.js removed ✅
+
+**Completed:**
+- `src/lib/projects-service.js` — pure Svelte replacement for storage.js: project CRUD, folder management, navigation (`openProject`/`goToDashboard`), toast, KV store abstraction, `mountProjectsBridge()` exposes everything to `window.*`
+- `src/lib/canvas-persistence.js` — v2 canvas save/load: `saveCanvasV2(id)` serializes stores to SQLite/localStorage; `loadCanvasV2(id)` restores; `applyCanvasState(state)` pushes to stores + calls `_pixiCanvas.restorePixiCanvas`
+- `main.js` — `legacy/storage.js` import removed; `mountProjectsBridge()` runs first
+- `Dashboard.svelte` — folder mutations now use `_svc()` helper + immutable array updates; `deleteFolderPrompt` → `_svc('deleteFolderPrompt', ...)`
+- Auto-save v2 canvas format every 30s and on `beforeunload`
+- On first open of a project: v2 format loaded if present; falls back to `window.loadCanvasState` (legacy v1 DOM format) for projects not yet migrated
+
+**Still running (legacy):**
+- `legacy/editor.js` — still needed by canvas.js for DOM note creation
+- `legacy/canvas.js` — DOM canvas, all DOM note/media rendering
+- `legacy/images.js` — all media and AI brainstorm
+- `legacy/folder-browser.js` — file system ops
+
+### Phase 9b — Canvas.svelte feature additions ✅
+
+**Added to Canvas.svelte:**
+- **Resize handles** — 8-direction DOM overlay handles (n/ne/e/se/s/sw/w/nw) for all selected elements; pointer drag resizes with min 60×40px, snap-to-grid when enabled
+- **Right-click element context menu** — color swatches (dark/light theme), lock/pin toggle, delete; rendered as fixed-position Svelte DOM with backdrop dismiss
+- **Copy/paste** — Ctrl+C copies selection to internal `_clipboard`, Ctrl+V pastes at +20 offset with new IDs
+- **Alignment tools** — `alignSelected(dir)` for left/right/centerH/top/bottom/centerV; `distributeSelected(axis)` for H/V (requires 3+ elements)
+- **SelectionBar.svelte** — alignment/distribute buttons appear when 2+ elements selected
+- **`window._pixiCanvas` bridge** extended with `copySelected`, `pasteClipboard`, `alignSelected`, `distributeSelected`, `selectAll`
+
+### Phase 9c — Viewport bookmark wiring ✅
+
+**Fixed:**
+- Canvas.svelte exposes `window._applyViewportTo(scale, px, py)` for animated viewport jump
+- BookmarkPanel.svelte: per-project storage key (`freeflow_bkmarks_<id>` via `window.store`), reloads on project change, exposes `window.addViewBookmark(label)` for legacy toolbar
+
+### Remaining legacy removal (Phase 9d+)
+
+**Feature gap — Canvas.svelte vs canvas.js (approximate):**
+- ✅ Core rendering, pan/zoom, tools, undo/redo, serialization, strokes, relations
+- ✅ Resize handles, context menu, copy/paste, alignment, bookmarks (added Phase 9b/c)
+- ❌ Collapse/expand notes
+- ❌ Multi-select scale box (uniform group resize from corners)
+- ❌ Note font size control
+- ❌ Group/ungroup (frame-based)
+- ❌ Pin-to-viewport (sticky notes)
+- ❌ Vote/reaction system
+- ❌ Connection wires (AI note source links)
+- ❌ Note color on PixiJS background render
+- ❌ Shape stroke/fill context menu
+- ❌ Zoom-to-selection in selection bar
+
+**Blocker:** `legacy/canvas.js` still provides all DOM note rendering (create, bind, editor, resize, context menu). Until Canvas.svelte renders notes without DOM backing (i.e., renders rich text preview + handles all note interactions natively in PixiJS), legacy/canvas.js cannot be removed.
+
+**Next steps to unblock legacy/canvas.js removal:**
+1. Implement note color rendering in `buildElBackground()` (use `el.color` for background fill)
+2. Add collapse/expand state to element model + Canvas.svelte render
+3. Add group/ungroup via frame wrapping
+4. Implement note font size: store in `el.content.fontSize`, apply in `buildTextPreview()`
+5. Once Canvas.svelte reaches ~80% parity, flip the switch: new notes go to PixiJS only, legacy DOM notes remain read-only until migrated via import/export
+
+---
+
 ## Implementation Order Summary
 
 | Phase | What | Scope |
