@@ -301,7 +301,7 @@
     const c = _elContainers.get(el.id);
     if (!c) return;
     c.position.set(el.x - WORLD_OFFSET, el.y - WORLD_OFFSET);
-    // Rebuild children (bg may change on selection/resize)
+    // Rebuild children (bg may change on selection/resize/collapse)
     c.removeChildren();
     const bg = buildElBackground(el);
     c.addChild(bg);
@@ -310,10 +310,25 @@
     } else if (el.type === 'note' || el.type === 'ai-note' || el.type === 'todo') {
       const preview = buildTextPreview(el);
       if (preview) c.addChild(preview);
+      // Collapsed: add small title text
+      if (el.collapsed) {
+        const titleText = el.content?.todoTitle ||
+          extractTiptapText(el.content?.blocks, 40) ||
+          (el.type === 'ai-note' ? 'AI note' : 'note');
+        const titleEl = new Text({
+          text: titleText,
+          style: new TextStyle({ fontSize: 11, fill: 0x888888, fontFamily: 'Barlow Condensed, sans-serif' }),
+          x: 12, y: 8,
+        });
+        c.addChild(titleEl);
+      }
     } else if (el.type === 'frame') {
       const label = buildFrameLabel(el);
       if (label) c.addChild(label);
     }
+    // Set hit area to match visual height (for collapsed cards)
+    const visH = el.collapsed ? 32 : (el.height || 180);
+    c.hitArea = { contains: (px, py) => px >= 0 && px <= (el.width || 240) && py >= 0 && py <= visH };
   }
 
   function buildElBackground(el) {
@@ -337,38 +352,90 @@
       // transparent — just text
     } else {
       // Note / card background
-      const bgColor = el.type === 'ai-note' ? 0x1e2030 : 0x1e1e1e;
-      g.roundRect(0, 0, w, h, 8).fill({ color: bgColor, alpha: 0.97 });
-      // Color strip
+      const isLight = document.body.classList.contains('light');
+      let bgColor = el.type === 'ai-note' ? 0x1e2030 : (isLight ? 0xfaf9f7 : 0x1e1e1e);
+      let bgAlpha = 0.97;
+
+      // Tint background with el.color if set
       if (el.color) {
-        const strip = parseRgba(el.color);
-        g.rect(0, 0, 4, h).fill(strip);
-      }
-      // Selection ring
-      if (isSelected) {
-        g.roundRect(-2, -2, w + 4, h + 4, 10).stroke({ color: 0x4a9eff, width: 2 });
+        const tint = parseRgba(el.color);
+        // Use color as semi-transparent overlay on top of base
+        g.roundRect(0, 0, w, h, 8).fill({ color: bgColor, alpha: bgAlpha });
+        g.roundRect(0, 0, w, h, 8).fill({ color: tint.color, alpha: Math.min(0.28, tint.alpha) });
+        // Left accent strip
+        g.rect(0, 0, 4, h).fill({ color: tint.color, alpha: Math.min(0.9, tint.alpha * 2) });
       } else {
-        g.roundRect(0, 0, w, h, 8).stroke({ color: 0x333333, width: 1 });
+        g.roundRect(0, 0, w, h, 8).fill({ color: bgColor, alpha: bgAlpha });
+      }
+
+      // Collapsed state — render as compact header strip
+      if (el.collapsed) {
+        g.clear();
+        g.roundRect(0, 0, w, 32, 8).fill({ color: bgColor, alpha: bgAlpha });
+        if (el.color) {
+          const tint = parseRgba(el.color);
+          g.roundRect(0, 0, w, 32, 8).fill({ color: tint.color, alpha: 0.22 });
+          g.rect(0, 0, 4, 32).fill({ color: tint.color, alpha: 0.9 });
+        }
+      }
+
+      // Selection ring
+      const rh = el.collapsed ? 32 : h;
+      if (isSelected) {
+        g.roundRect(-2, -2, w + 4, rh + 4, 10).stroke({ color: 0x4a9eff, width: 2 });
+      } else {
+        g.roundRect(0, 0, w, rh, 8).stroke({ color: isLight ? 0xcccccc : 0x333333, width: 1 });
+      }
+
+      // Pinned indicator — small pin icon dot top-right
+      if (el.pinned) {
+        g.circle(w - 8, 8, 3).fill({ color: 0x4a9eff, alpha: 0.8 });
+      }
+      // Locked indicator — small dot top-right (offset from pin if both)
+      if (el.locked) {
+        g.circle(w - (el.pinned ? 16 : 8), 8, 3).fill({ color: 0xe8440a, alpha: 0.8 });
       }
     }
     return g;
   }
 
+  function extractTiptapText(doc, maxLen = 140) {
+    if (!doc?.content) return '';
+    const lines = [];
+    function walk(node) {
+      if (node.type === 'text') { lines.push(node.text || ''); return; }
+      if (node.content) node.content.forEach(walk);
+      if (['paragraph','heading','bulletList','orderedList','listItem','taskItem'].includes(node.type)) lines.push(' ');
+    }
+    doc.content.forEach(walk);
+    return lines.join('').replace(/\s+/g, ' ').trim().slice(0, maxLen);
+  }
+
   function buildTextPreview(el) {
+    if (el.collapsed) return null; // collapsed = title only, handled in bg
+
     let text = '';
     if (el.type === 'note' || el.type === 'ai-note') {
-      const blocks = el.content?.blocks || [];
-      text = blocks.map(b => b.text || '').join(' ').slice(0, 120);
+      text = extractTiptapText(el.content?.blocks);
     } else if (el.type === 'todo') {
-      text = el.content?.todoTitle || 'to-do';
+      const items = el.content?.todoItems || [];
+      const title = el.content?.todoTitle || 'to-do';
+      const done = items.filter(i => i.done).length;
+      text = `${title}${items.length ? `  ${done}/${items.length}` : ''}`;
     }
     if (!text) return null;
+
+    const isLight = document.body.classList.contains('light');
+    const fontSize = Math.max(10, Math.min(18, el.content?.fontSize || 12));
     return new Text({
       text,
       style: new TextStyle({
-        fontSize: 12, fill: 0xaaaaaa,
-        wordWrap: true, wordWrapWidth: (el.width || 240) - 24,
+        fontSize,
+        fill: isLight ? 0x444444 : 0xaaaaaa,
+        wordWrap: true,
+        wordWrapWidth: (el.width || 240) - 24,
         fontFamily: 'Barlow Condensed, sans-serif',
+        lineHeight: fontSize * 1.4,
       }),
       x: 12, y: 12,
     });
@@ -962,9 +1029,11 @@
       if (e.key === 'd') { e.preventDefault(); duplicateSelected(); return; }
       if (e.key === 'c') { e.preventDefault(); copySelected(); return; }
       if (e.key === 'v') { e.preventDefault(); pasteClipboard(); return; }
+      if (e.key === 'g') { e.preventDefault(); groupSelected(); return; }
     }
 
     if (e.key === 'Escape')   { clearSelection(); return; }
+    if (e.key === 'z' && !e.ctrlKey && !e.metaKey) { if (selected.size) zoomToSelection(); else zoomToFit(); return; }
     if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelected(); return; }
     if (e.key === '0')        { zoomToFit(); return; }
     if (e.key === '+' || e.key === '=') { doZoom(1/0.92, app.screen.width/2, app.screen.height/2); return; }
@@ -1226,6 +1295,17 @@
     closeCtxMenu();
   }
 
+  function ctxToggleCollapse(elId) {
+    snapshot();
+    elementsStore.update(els => {
+      const el = els.find(e => e.id === elId);
+      if (el) el.collapsed = !el.collapsed;
+      return els;
+    });
+    snapshot();
+    closeCtxMenu();
+  }
+
   function ctxDelete(elId) {
     snapshot();
     elementsStore.update(els => els.filter(e => e.id !== elId));
@@ -1236,15 +1316,76 @@
     closeCtxMenu();
   }
 
+  // ── Group / Ungroup ──────────────────────────
+
+  function groupSelected() {
+    if (selected.size < 2) return;
+    snapshot();
+    const els = $elementsStore.filter(e => selected.has(e.id));
+    const PAD = 16;
+    const minX = Math.min(...els.map(e => e.x)) - PAD;
+    const minY = Math.min(...els.map(e => e.y)) - PAD;
+    const maxX = Math.max(...els.map(e => e.x + e.width))  + PAD;
+    const maxY = Math.max(...els.map(e => e.y + e.height)) + PAD;
+    const frameId = 'frame_' + Date.now();
+    const frame = {
+      id: frameId, type: 'frame',
+      x: minX, y: minY,
+      width: maxX - minX, height: maxY - minY,
+      zIndex: Math.min(...els.map(e => e.zIndex ?? 0)) - 1,
+      pinned: false, locked: false, votes: 0, reactions: [],
+      color: null,
+      content: { frameColor: 0, frameLabel: '', groupIds: [...selected] },
+    };
+    elementsStore.update(all => [frame, ...all]);
+    selected = new Set([frameId]);
+    setSelected(new Set([frameId]));
+    snapshot();
+    window.showToast?.('grouped');
+  }
+
+  function ungroupSelected() {
+    if (!selected.size) return;
+    const frames = $elementsStore.filter(e => selected.has(e.id) && e.type === 'frame' && e.content?.groupIds?.length);
+    if (!frames.length) return;
+    snapshot();
+    const frameIds = new Set(frames.map(f => f.id));
+    const childIds = new Set(frames.flatMap(f => f.content.groupIds));
+    elementsStore.update(all => all.filter(e => !frameIds.has(e.id)));
+    selected = childIds;
+    setSelected(new Set(childIds));
+    snapshot();
+    window.showToast?.('ungrouped');
+  }
+
+  // ── Zoom to selection ────────────────────────
+
+  function zoomToSelection() {
+    if (!selected.size) return;
+    const els = $elementsStore.filter(e => selected.has(e.id));
+    if (!els.length) return;
+    const minX = Math.min(...els.map(e => e.x - WORLD_OFFSET));
+    const minY = Math.min(...els.map(e => e.y - WORLD_OFFSET));
+    const maxX = Math.max(...els.map(e => e.x + e.width  - WORLD_OFFSET));
+    const maxY = Math.max(...els.map(e => e.y + e.height - WORLD_OFFSET));
+    const PAD = 80;
+    const fw = app?.screen.width || 1200, fh = app?.screen.height || 800;
+    const newScale = Math.min((fw - PAD*2) / (maxX - minX || 1), (fh - PAD*2) / (maxY - minY || 1), ZOOM_MAX);
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    zoomTarget = { scale: newScale, px: fw/2 - cx * newScale, py: fh/2 - cy * newScale };
+    if (!zoomRaf) zoomRaf = requestAnimationFrame(animateZoom);
+  }
+
   // ── Expose to legacy bridge ──────────────────
   $effect(() => {
     window._pixiCanvas = {
       serializePixiCanvas, restorePixiCanvas,
       makeNote, makeAiNote, makeTodo, makeLabel,
-      zoomToFit, resetView,
+      zoomToFit, resetView, zoomToSelection,
       deleteSelected, selectAll, duplicateSelected,
       copySelected, pasteClipboard,
       alignSelected, distributeSelected,
+      groupSelected, ungroupSelected,
       snapshot, clearSelection,
     };
   });
@@ -1312,6 +1453,11 @@
         {/each}
       </div>
       <div class="ctx-divider"></div>
+      {#if ctxEl?.type === 'note' || ctxEl?.type === 'ai-note' || ctxEl?.type === 'todo'}
+        <button class="ctx-item" onclick={() => ctxToggleCollapse(ctxMenu.elId)}>
+          {ctxEl?.collapsed ? 'expand' : 'collapse'}
+        </button>
+      {/if}
       <button class="ctx-item" onclick={() => ctxToggleLock(ctxMenu.elId)}>
         {ctxEl?.locked ? 'unlock' : 'lock'}
       </button>
