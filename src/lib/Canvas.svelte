@@ -52,6 +52,22 @@
   let zoomTarget = null;
   let zoomRaf = null;
 
+  // Resize state
+  let resizing = false;
+  let resizeHandle = null;   // 'n'|'ne'|'e'|'se'|'s'|'sw'|'w'|'nw'
+  let resizeEl = null;       // element id being resized
+  let resizeOrigin = null;   // { el snapshot, startClientX, startClientY }
+
+  // Context menu state
+  let ctxMenu = $state(null); // { x, y, elId } or null
+
+  // Clipboard
+  let _clipboard = [];
+
+  // Element color palette
+  const EL_COLORS = [null, '#1e1e1e', '#2a2a1e', '#1e2a1e', '#1e1e2e', '#2e1e1e', '#1e2a2a', '#2a1e2a'];
+  const EL_COLORS_LIGHT = [null, '#fff8e7', '#fffde7', '#f1f8e9', '#e8f0fe', '#fce4ec', '#e0f2f1', '#f3e5f5'];
+
   // ── Coordinate helpers ───────────────────────
   function c2w(clientX, clientY) {
     const r = canvasEl.getBoundingClientRect();
@@ -258,6 +274,11 @@
 
     // Interaction
     c.on('pointerdown', e => onElPointerDown(e, el.id));
+    c.on('rightdown', e => {
+      e.stopPropagation();
+      // PixiJS FederatedPointerEvent wraps the native event
+      openCtxMenu(e.nativeEvent ?? e, el.id);
+    });
 
     // Double-click opens editor for text elements
     if (el.type === 'note' || el.type === 'ai-note' || el.type === 'label') {
@@ -935,6 +956,8 @@
       if ((e.key === 'z' && e.shiftKey) || e.key === 'y') { e.preventDefault(); if (redo()) syncUndoButtons(); return; }
       if (e.key === 'a') { e.preventDefault(); selectAll(); return; }
       if (e.key === 'd') { e.preventDefault(); duplicateSelected(); return; }
+      if (e.key === 'c') { e.preventDefault(); copySelected(); return; }
+      if (e.key === 'v') { e.preventDefault(); pasteClipboard(); return; }
     }
 
     if (e.key === 'Escape')   { clearSelection(); return; }
@@ -1004,9 +1027,222 @@
     }
   }
 
+  // ── Resize handles ───────────────────────────
+  const RESIZE_HANDLES = ['n','ne','e','se','s','sw','w','nw'];
+  const MIN_W = 60, MIN_H = 40;
+
+  function startResize(e, id, handle) {
+    e.stopPropagation(); e.preventDefault();
+    const el = $elementsStore.find(x => x.id === id);
+    if (!el) return;
+    resizing = true;
+    resizeHandle = handle;
+    resizeEl = id;
+    resizeOrigin = {
+      x: el.x, y: el.y, w: el.width, h: el.height,
+      startX: e.clientX, startY: e.clientY,
+    };
+    window.addEventListener('pointermove', onResizeMove);
+    window.addEventListener('pointerup', onResizeUp);
+  }
+
+  function onResizeMove(e) {
+    if (!resizing || !resizeEl || !resizeOrigin) return;
+    const dx = (e.clientX - resizeOrigin.startX) / scale;
+    const dy = (e.clientY - resizeOrigin.startY) / scale;
+    const h = resizeHandle;
+    let { x, y, w, h: ht } = resizeOrigin;
+
+    if (h.includes('e')) { w = Math.max(MIN_W, resizeOrigin.w + dx); }
+    if (h.includes('w')) { const nw = Math.max(MIN_W, resizeOrigin.w - dx); x = resizeOrigin.x + (resizeOrigin.w - nw); w = nw; }
+    if (h.includes('s')) { ht = Math.max(MIN_H, resizeOrigin.h + dy); }
+    if (h.includes('n')) { const nh = Math.max(MIN_H, resizeOrigin.h - dy); y = resizeOrigin.y + (resizeOrigin.h - nh); ht = nh; }
+
+    if (snapEnabled) { w = snap(w); ht = snap(ht); x = snap(x); y = snap(y); }
+
+    elementsStore.update(els => {
+      const el = els.find(e => e.id === resizeEl);
+      if (el) { el.x = x; el.y = y; el.width = w; el.height = ht; }
+      return els;
+    });
+  }
+
+  function onResizeUp() {
+    if (!resizing) return;
+    resizing = false;
+    snapshot();
+    resizeEl = null; resizeHandle = null; resizeOrigin = null;
+    window.removeEventListener('pointermove', onResizeMove);
+    window.removeEventListener('pointerup', onResizeUp);
+  }
+
+  function resizeHandlePos(el, handle, s) {
+    const sx = (el.x - WORLD_OFFSET) * s + px;
+    const sy = (el.y - WORLD_OFFSET) * s + py;
+    const ew = el.width * s, eh = el.height * s;
+    const hw = 8; // handle half-width
+    const map = {
+      n:  { left: sx + ew/2 - hw, top: sy - hw, cursor: 'n-resize' },
+      ne: { left: sx + ew - hw,   top: sy - hw,   cursor: 'ne-resize' },
+      e:  { left: sx + ew - hw,   top: sy + eh/2 - hw, cursor: 'e-resize' },
+      se: { left: sx + ew - hw,   top: sy + eh - hw,   cursor: 'se-resize' },
+      s:  { left: sx + ew/2 - hw, top: sy + eh - hw,   cursor: 's-resize' },
+      sw: { left: sx - hw,        top: sy + eh - hw,   cursor: 'sw-resize' },
+      w:  { left: sx - hw,        top: sy + eh/2 - hw, cursor: 'w-resize' },
+      nw: { left: sx - hw,        top: sy - hw,        cursor: 'nw-resize' },
+    };
+    return map[handle];
+  }
+
+  // ── Copy/Paste ───────────────────────────────
+
+  function copySelected() {
+    if (!selected.size) return;
+    _clipboard = $elementsStore
+      .filter(e => selected.has(e.id))
+      .map(e => structuredClone(e));
+  }
+
+  function pasteClipboard() {
+    if (!_clipboard.length) return;
+    snapshot();
+    const now = Date.now();
+    const newIds = new Set();
+    const newEls = _clipboard.map((el, i) => {
+      const newId = el.id.split('_')[0] + '_' + (now + i) + '_' + Math.random().toString(36).slice(2,6);
+      newIds.add(newId);
+      return { ...structuredClone(el), id: newId, x: el.x + 20, y: el.y + 20, zIndex: now + i };
+    });
+    elementsStore.update(els => [...els, ...newEls]);
+    selected = newIds;
+    setSelected(new Set(newIds));
+    snapshot();
+  }
+
+  // ── Alignment ────────────────────────────────
+
+  function alignSelected(dir) {
+    if (selected.size < 2) return;
+    snapshot();
+    const els = $elementsStore.filter(e => selected.has(e.id));
+    const minX = Math.min(...els.map(e => e.x));
+    const maxX = Math.max(...els.map(e => e.x + e.width));
+    const minY = Math.min(...els.map(e => e.y));
+    const maxY = Math.max(...els.map(e => e.y + e.height));
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+
+    elementsStore.update(all => {
+      for (const el of all) {
+        if (!selected.has(el.id)) continue;
+        if (dir === 'left')    el.x = minX;
+        if (dir === 'right')   el.x = maxX - el.width;
+        if (dir === 'centerH') el.x = cx - el.width / 2;
+        if (dir === 'top')     el.y = minY;
+        if (dir === 'bottom')  el.y = maxY - el.height;
+        if (dir === 'centerV') el.y = cy - el.height / 2;
+      }
+      return all;
+    });
+    snapshot();
+  }
+
+  function distributeSelected(axis) {
+    if (selected.size < 3) return;
+    snapshot();
+    const els = [...$elementsStore.filter(e => selected.has(e.id))];
+    if (axis === 'H') {
+      els.sort((a, b) => a.x - b.x);
+      const total = els[els.length-1].x + els[els.length-1].width - els[0].x;
+      const sumW = els.reduce((s, e) => s + e.width, 0);
+      const gap = (total - sumW) / (els.length - 1);
+      let cx = els[0].x + els[0].width;
+      elementsStore.update(all => {
+        for (let i = 1; i < els.length - 1; i++) {
+          const el = all.find(e => e.id === els[i].id);
+          if (el) { el.x = cx + gap; cx += gap + el.width; }
+        }
+        return all;
+      });
+    } else {
+      els.sort((a, b) => a.y - b.y);
+      const total = els[els.length-1].y + els[els.length-1].height - els[0].y;
+      const sumH = els.reduce((s, e) => s + e.height, 0);
+      const gap = (total - sumH) / (els.length - 1);
+      let cy = els[0].y + els[0].height;
+      elementsStore.update(all => {
+        for (let i = 1; i < els.length - 1; i++) {
+          const el = all.find(e => e.id === els[i].id);
+          if (el) { el.y = cy + gap; cy += gap + el.height; }
+        }
+        return all;
+      });
+    }
+    snapshot();
+  }
+
+  // ── Context menu ─────────────────────────────
+
+  function openCtxMenu(e, elId) {
+    e.preventDefault(); e.stopPropagation();
+    ctxMenu = { x: e.clientX, y: e.clientY, elId };
+  }
+
+  function closeCtxMenu() { ctxMenu = null; }
+
+  function ctxSetColor(elId, color) {
+    snapshot();
+    elementsStore.update(els => {
+      const el = els.find(e => e.id === elId);
+      if (el) el.color = color;
+      return els;
+    });
+    snapshot();
+    closeCtxMenu();
+  }
+
+  function ctxToggleLock(elId) {
+    snapshot();
+    elementsStore.update(els => {
+      const el = els.find(e => e.id === elId);
+      if (el) el.locked = !el.locked;
+      return els;
+    });
+    snapshot();
+    closeCtxMenu();
+  }
+
+  function ctxTogglePin(elId) {
+    snapshot();
+    elementsStore.update(els => {
+      const el = els.find(e => e.id === elId);
+      if (el) el.pinned = !el.pinned;
+      return els;
+    });
+    snapshot();
+    closeCtxMenu();
+  }
+
+  function ctxDelete(elId) {
+    snapshot();
+    elementsStore.update(els => els.filter(e => e.id !== elId));
+    relationsStore.update(rs => rs.filter(r => r.elAId !== elId && r.elBId !== elId));
+    selected.delete(elId);
+    selected = new Set(selected);
+    setSelected(new Set(selected));
+    closeCtxMenu();
+  }
+
   // ── Expose to legacy bridge ──────────────────
   $effect(() => {
-    window._pixiCanvas = { serializePixiCanvas, restorePixiCanvas, makeNote, makeAiNote, makeTodo, makeLabel, zoomToFit, resetView, deleteSelected, snapshot, clearSelection };
+    window._pixiCanvas = {
+      serializePixiCanvas, restorePixiCanvas,
+      makeNote, makeAiNote, makeTodo, makeLabel,
+      zoomToFit, resetView,
+      deleteSelected, selectAll, duplicateSelected,
+      copySelected, pasteClipboard,
+      alignSelected, distributeSelected,
+      snapshot, clearSelection,
+    };
   });
 </script>
 
@@ -1020,6 +1256,7 @@
   onpointermove={onPointerMove}
   onpointerup={onPointerUp}
   onwheel={onWheel}
+  oncontextmenu={e => { e.preventDefault(); if (ctxMenu) closeCtxMenu(); }}
   style="position:relative;width:100%;height:100%;overflow:hidden;"
 >
   <canvas bind:this={canvasEl} style="display:block;width:100%;height:100%;"></canvas>
@@ -1035,6 +1272,61 @@
     <MediaOverlay />
   </div>
 
+  <!-- Resize handles — rendered for each selected element in select tool -->
+  {#if curTool === 'select'}
+    {#each $elementsStore.filter(el => selected.has(el.id)) as el (el.id)}
+      {#each RESIZE_HANDLES as handle}
+        {@const pos = resizeHandlePos(el, handle, scale)}
+        <div
+          class="resize-handle"
+          style="left:{pos.left}px;top:{pos.top}px;cursor:{pos.cursor};"
+          onpointerdown={e => startResize(e, el.id, handle)}
+          role="none"
+        ></div>
+      {/each}
+    {/each}
+  {/if}
+
+  <!-- Element context menu -->
+  {#if ctxMenu}
+    {@const ctxEl = $elementsStore.find(e => e.id === ctxMenu.elId)}
+    {@const isLight = false}
+    <div
+      class="el-ctx-menu"
+      style="left:{ctxMenu.x}px;top:{ctxMenu.y}px;"
+      role="menu"
+    >
+      <div class="ctx-color-row">
+        {#each (document.body.classList.contains('light') ? EL_COLORS_LIGHT : EL_COLORS) as c}
+          <button
+            class="ctx-color-swatch"
+            class:active={ctxEl?.color === c}
+            style="background:{c ?? 'transparent'};{!c ? 'border:1px solid #555' : ''}"
+            onclick={() => ctxSetColor(ctxMenu.elId, c)}
+            aria-label={c ?? 'default color'}
+          ></button>
+        {/each}
+      </div>
+      <div class="ctx-divider"></div>
+      <button class="ctx-item" onclick={() => ctxToggleLock(ctxMenu.elId)}>
+        {ctxEl?.locked ? 'unlock' : 'lock'}
+      </button>
+      <button class="ctx-item" onclick={() => ctxTogglePin(ctxMenu.elId)}>
+        {ctxEl?.pinned ? 'unpin' : 'pin'}
+      </button>
+      <div class="ctx-divider"></div>
+      <button class="ctx-item danger" onclick={() => ctxDelete(ctxMenu.elId)}>delete</button>
+    </div>
+
+    <!-- Click outside to close -->
+    <div
+      style="position:fixed;inset:0;z-index:999;"
+      onclick={closeCtxMenu}
+      onkeydown={() => {}}
+      role="none"
+    ></div>
+  {/if}
+
   <!-- Brainstorm panel (outside DOM overlay so it's not clipped) -->
   <BrainstormPanel />
 </div>
@@ -1045,4 +1337,49 @@
     touch-action: none;
     user-select: none;
   }
+
+  /* ── Resize handles ── */
+  .resize-handle {
+    position: absolute;
+    width: 10px; height: 10px;
+    background: var(--accent, #4a9eff);
+    border: 1px solid rgba(0,0,0,0.4);
+    border-radius: 2px;
+    z-index: 1200;
+    pointer-events: all;
+  }
+
+  /* ── Element context menu ── */
+  .el-ctx-menu {
+    position: fixed;
+    z-index: 2000;
+    background: var(--card-bg, #1e1e1e);
+    border: 1px solid var(--border, #2a2a2a);
+    border-radius: 6px;
+    padding: 6px;
+    min-width: 120px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    pointer-events: all;
+  }
+  .ctx-color-row {
+    display: flex; gap: 4px; flex-wrap: wrap;
+    padding: 2px 0;
+  }
+  .ctx-color-swatch {
+    width: 14px; height: 14px;
+    border-radius: 3px;
+    border: 1px solid transparent;
+    cursor: pointer; padding: 0;
+  }
+  .ctx-color-swatch.active { outline: 2px solid var(--accent, #4a9eff); }
+  .ctx-divider { height: 1px; background: var(--border, #2a2a2a); margin: 4px 0; }
+  .ctx-item {
+    display: block; width: 100%;
+    padding: 5px 8px; text-align: left;
+    background: none; border: none; border-radius: 3px;
+    color: var(--text-primary, #e0e0e0);
+    font-size: 12px; cursor: pointer;
+  }
+  .ctx-item:hover { background: var(--hover-bg, #252525); }
+  .ctx-item.danger { color: #e8440a; }
 </style>

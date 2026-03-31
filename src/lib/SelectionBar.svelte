@@ -5,9 +5,13 @@
   let selected = $derived($selectedStore);
   let hasSelection = $derived(selected.size > 0);
 
-  function deleteSelected() { window._pixiCanvas?.deleteSelected?.(); }
+  function deleteSelected()    { window._pixiCanvas?.deleteSelected?.(); }
   function duplicateSelected() { window._pixiCanvas?.duplicateSelected?.(); }
-  function clearSelection() { window._pixiCanvas?.clearSelection?.(); }
+  function clearSelection()    { window._pixiCanvas?.clearSelection?.(); }
+  function align(dir)          { window._pixiCanvas?.alignSelected?.(dir); }
+  function distribute(axis)    { window._pixiCanvas?.distributeSelected?.(axis); }
+
+  let multiSelect = $derived(selected.size >= 2);
 
   function lockToggle() {
     const ids = [...selected];
@@ -52,6 +56,19 @@
     <button class="sel-btn" class:on={allPinned} title="pin/unpin" onclick={pinToggle}>
       <svg viewBox="0 0 12 12"><line x1="6" y1="2" x2="6" y2="7"/><circle cx="6" cy="9" r="2"/></svg>
     </button>
+    {#if multiSelect}
+      <div class="sel-sep"></div>
+      <button class="sel-btn" title="align left"    onclick={() => align('left')}   ><svg viewBox="0 0 12 12"><line x1="1" y1="1" x2="1" y2="11"/><rect x="3" y="2" width="7" height="2.5" rx="0.5"/><rect x="3" y="7" width="5" height="2.5" rx="0.5"/></svg></button>
+      <button class="sel-btn" title="center H"      onclick={() => align('centerH')}><svg viewBox="0 0 12 12"><line x1="6" y1="1" x2="6" y2="11"/><rect x="2" y="2" width="8" height="2.5" rx="0.5"/><rect x="3" y="7" width="6" height="2.5" rx="0.5"/></svg></button>
+      <button class="sel-btn" title="align right"   onclick={() => align('right')}  ><svg viewBox="0 0 12 12"><line x1="11" y1="1" x2="11" y2="11"/><rect x="2" y="2" width="7" height="2.5" rx="0.5"/><rect x="4" y="7" width="5" height="2.5" rx="0.5"/></svg></button>
+      <button class="sel-btn" title="align top"     onclick={() => align('top')}    ><svg viewBox="0 0 12 12"><line x1="1" y1="1" x2="11" y2="1"/><rect x="2" y="3" width="2.5" height="7" rx="0.5"/><rect x="7" y="3" width="2.5" height="5" rx="0.5"/></svg></button>
+      <button class="sel-btn" title="center V"      onclick={() => align('centerV')}><svg viewBox="0 0 12 12"><line x1="1" y1="6" x2="11" y2="6"/><rect x="2" y="2" width="2.5" height="8" rx="0.5"/><rect x="7" y="3" width="2.5" height="6" rx="0.5"/></svg></button>
+      <button class="sel-btn" title="align bottom"  onclick={() => align('bottom')} ><svg viewBox="0 0 12 12"><line x1="1" y1="11" x2="11" y2="11"/><rect x="2" y="2" width="2.5" height="7" rx="0.5"/><rect x="7" y="4" width="2.5" height="5" rx="0.5"/></svg></button>
+      {#if selected.size >= 3}
+        <button class="sel-btn" title="distribute H" onclick={() => distribute('H')}><svg viewBox="0 0 12 12"><line x1="1" y1="2" x2="1" y2="10"/><line x1="11" y1="2" x2="11" y2="10"/><rect x="4" y="3" width="4" height="6" rx="0.5"/></svg></button>
+        <button class="sel-btn" title="distribute V" onclick={() => distribute('V')}><svg viewBox="0 0 12 12"><line x1="2" y1="1" x2="10" y2="1"/><line x1="2" y1="11" x2="10" y2="11"/><rect x="3" y="4" width="6" height="4" rx="0.5"/></svg></button>
+      {/if}
+    {/if}
     <div class="sel-sep"></div>
     <button class="sel-btn danger" title="delete  Del" onclick={deleteSelected}>
       <svg viewBox="0 0 12 12"><polyline points="1,3 11,3"/><path d="M2,3l1,8h6l1-8"/><line x1="4" y1="1" x2="8" y2="1"/></svg>
