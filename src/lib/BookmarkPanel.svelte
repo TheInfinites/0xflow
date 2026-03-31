@@ -1,18 +1,26 @@
 <script>
   import { scaleStore, pxStore, pyStore } from '../stores/canvas.js';
+  import { activeProjectIdStore } from '../stores/projects.js';
 
   let scale = $derived($scaleStore);
   let px    = $derived($pxStore);
   let py    = $derived($pyStore);
+  let projectId = $derived($activeProjectIdStore);
 
   let open      = $state(false);
   let bookmarks = $state([]);
   let labelInput = $state('');
 
+  function storageKey() { return 'freeflow_bkmarks_' + (projectId ?? 'default'); }
+
+  function loadBookmarks() {
+    try { bookmarks = JSON.parse(window.store?.get?.(storageKey()) ?? localStorage.getItem(storageKey()) ?? 'null') || []; } catch { bookmarks = []; }
+  }
+
   function togglePanel() { open = !open; }
 
-  function save() {
-    const label = labelInput.trim() || `view ${bookmarks.length + 1}`;
+  function save(customLabel = '') {
+    const label = (customLabel || labelInput).trim() || `view ${bookmarks.length + 1}`;
     bookmarks = [...bookmarks, { label, scale, px, py, ts: Date.now() }];
     labelInput = '';
     persist();
@@ -20,13 +28,6 @@
 
   function jump(bm) {
     window._applyViewportTo?.(bm.scale, bm.px, bm.py);
-    // Fallback: direct store update
-    if (window._pixiApp) {
-      import('../stores/canvas.js').then(({ setScale, setPx, setPy }) => {
-        setScale(bm.scale); setPx(bm.px); setPy(bm.py);
-        window._applyViewport?.();
-      });
-    }
   }
 
   function remove(i) {
@@ -35,17 +36,21 @@
   }
 
   function persist() {
-    try { localStorage.setItem('0xflow_bookmarks', JSON.stringify(bookmarks)); } catch {}
+    const json = JSON.stringify(bookmarks);
+    try {
+      if (window.store?.set) { window.store.set(storageKey(), json); }
+      else { localStorage.setItem(storageKey(), json); }
+    } catch {}
   }
 
-  // Load on mount
-  try {
-    const stored = localStorage.getItem('0xflow_bookmarks');
-    if (stored) bookmarks = JSON.parse(stored);
-  } catch {}
+  // Reload bookmarks when project changes
+  $effect(() => { projectId; loadBookmarks(); });
 
-  // Expose toggle for legacy toolbar
-  $effect(() => { window.toggleBookmarkPanel = togglePanel; });
+  // Expose for legacy toolbar buttons and canvas.js bridge
+  $effect(() => {
+    window.toggleBookmarkPanel = togglePanel;
+    window.addViewBookmark = (label = '') => save(label);
+  });
 </script>
 
 {#if open}

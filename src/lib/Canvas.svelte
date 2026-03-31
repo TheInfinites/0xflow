@@ -118,6 +118,10 @@
     window._pixiElemLayer   = elemLayer;
     window._pixiStrokeLayer = strokeLayer;
     window._applyViewport   = applyViewport;
+    window._applyViewportTo = (newScale, newPx, newPy) => {
+      zoomTarget = { scale: newScale, px: newPx, py: newPy };
+      if (!zoomRaf) zoomRaf = requestAnimationFrame(animateZoom);
+    };
 
     // Subscribe to store changes
     const unsubEl  = elementsStore.subscribe(renderElements);
