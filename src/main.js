@@ -1,6 +1,10 @@
-// Load legacy scripts in order (preserves current behavior)
+// ── Bootstrap ────────────────────────────────
+// Projects service replaces legacy/storage.js
+import { mountProjectsBridge } from './lib/projects-service.js';
+mountProjectsBridge();
+
+// Legacy canvas, editor, media (still needed — Svelte Canvas coexists)
 import './legacy/tauri-mock.js';
-import './legacy/storage.js';
 import './legacy/editor.js';
 import './legacy/canvas.js';
 import './legacy/images.js';

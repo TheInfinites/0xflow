@@ -4,6 +4,11 @@
   import TopBar from './TopBar.svelte';
   import ProjectGrid from './ProjectGrid.svelte';
 
+  // Service functions — imported at runtime via window bridge (set up by projects-service.js)
+  // We call window.* so that the service is guaranteed to be mounted before Dashboard renders.
+  function _svc(name, ...args) { return window[name]?.(...args); }
+
+
   // Reactive state from stores
   let projects = $derived($projectsStore);
   let folders  = $derived($foldersStore);
@@ -87,12 +92,11 @@
 
   // ── actions ─────────────────────────────────
   function openNewModal() {
-    // delegate to legacy for now (creates project + triggers inline rename)
-    window.showNewModal?.();
+    _svc('showNewModal');
   }
 
   function openProject(id) {
-    window.openProject?.(id);
+    _svc('openProject', id);
   }
 
   function setSort(s) {
@@ -104,7 +108,7 @@
   }
 
   function setFolder(fid) {
-    window.setFolder?.(fid);
+    _svc('setFolder', fid);
   }
 
   // ── folder modal helpers ─────────────────────
@@ -133,23 +137,21 @@
     if (modalMode === 'new-folder') {
       const name = val || 'new folder';
       const f = { id: 'fold_' + Date.now(), name, parentId: null };
-      window.folders.push(f);
-      window.saveFolders(window.folders);
-      window.renderSidebar?.();
-      window.showToast?.(`folder "${name}" created`);
+      const curFolders = [...folders, f];
+      _svc('saveFolders', curFolders);
+      _svc('showToast', `folder "${name}" created`);
     } else if (modalMode === 'new-subfolder' && modalTarget) {
       const name = val || 'new folder';
       const f = { id: 'fold_' + Date.now(), name, parentId: modalTarget };
-      window.folders.push(f);
-      window.saveFolders(window.folders);
-      window.renderSidebar?.();
-      window.showToast?.(`subfolder "${name}" created`);
+      const curFolders = [...folders, f];
+      _svc('saveFolders', curFolders);
+      _svc('showToast', `subfolder "${name}" created`);
     } else if (modalMode === 'rename-folder' && modalTarget) {
-      const f = window.folders.find(x => x.id === modalTarget);
+      const f = folders.find(x => x.id === modalTarget);
       if (f && val) {
-        f.name = val;
-        window.saveFolders(window.folders);
-        window.showToast?.('folder renamed');
+        const updatedFolders = folders.map(x => x.id === modalTarget ? { ...x, name: val } : x);
+        _svc('saveFolders', updatedFolders);
+        _svc('showToast', 'folder renamed');
       }
     }
   }
@@ -169,14 +171,14 @@
 
   function ctxAction(action) {
     const id = ctxId; closeCtxMenu();
-    if      (action === 'open')    window.openProject?.(id);
-    else if (action === 'rename')  window.startInlineRename?.(id);
-    else if (action === 'dup')     window.dupProject?.(id);
-    else if (action === 'delete')  window.showInlineDelete?.(id);
+    if      (action === 'open')    _svc('openProject', id);
+    else if (action === 'rename')  _svc('startInlineRename', id);
+    else if (action === 'dup')     _svc('dupProject', id);
+    else if (action === 'delete')  _svc('showInlineDelete', id);
   }
 
   function ctxMoveToFolder(fid) {
-    window.moveToFolder?.(ctxId, fid); closeCtxMenu();
+    _svc('moveToFolder', ctxId, fid); closeCtxMenu();
   }
 
   // Close ctx on outside click
@@ -215,7 +217,7 @@
     on:newFolder={openNewFolderModal}
     on:newSubfolder={e => openNewSubfolderModal(e.detail)}
     on:renameFolder={e => openRenameFolderModal(e.detail)}
-    on:deleteFolder={e => window.deleteFolderPrompt?.(e.detail)}
+    on:deleteFolder={e => _svc('deleteFolderPrompt', e.detail)}
   />
 
   <div id="dash-main">

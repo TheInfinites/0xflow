@@ -1,0 +1,465 @@
+// ════════════════════════════════════════════
+// projects-service.js — project CRUD + navigation
+// ════════════════════════════════════════════
+// Pure Svelte replacement for legacy/storage.js.
+// Provides all window.* bridge functions that the app needs:
+//   openProject, goToDashboard, createProject, showToast,
+//   saveProjects, saveFolders, store, markDbReady, dashRender, etc.
+// ════════════════════════════════════════════
+import { get } from 'svelte/store';
+import { dbSet, dbRemove, dbGetAllSettings, dbSaveProject, dbDeleteProject, dbSaveFolder, dbDeleteFolder } from './db.js';
+import {
+  projectsStore, foldersStore,
+  setProjects, setFolders,
+  setActiveProjectId, getActiveProjectId,
+  setCurrentFolderId, getCurrentFolderId,
+} from '../stores/projects.js';
+import { elementsStore } from '../stores/elements.js';
+import { saveCanvasV2, loadCanvasV2, applyCanvasState, clearCanvasState } from './canvas-persistence.js';
+
+const IS_TAURI_STORAGE = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
+
+// ── Key-value store (localStorage / SQLite) ───
+
+const _memStore = {};
+let _dbReady = false;
+
+function markDbReady(allSettings) {
+  allSettings.forEach(r => { _memStore[r.key] = r.value; });
+  _dbReady = true;
+}
+
+const store = {
+  get(k) {
+    if (IS_TAURI_STORAGE && _dbReady) return _memStore[k] || null;
+    try { return localStorage.getItem(k); } catch { return _memStore[k] || null; }
+  },
+  set(k, v) {
+    _memStore[k] = v;
+    if (IS_TAURI_STORAGE && _dbReady) {
+      dbSet(k, v).catch(e => console.warn('[store] dbSet:', e));
+    } else {
+      try {
+        localStorage.setItem(k, v);
+      } catch (e) {
+        if (e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014)) {
+          try {
+            const keys = [];
+            for (let i = 0; i < localStorage.length; i++) keys.push(localStorage.key(i));
+            keys.filter(key => key && key.startsWith('freeflow_canvas_') && key !== k)
+                .sort((a, b) => (localStorage.getItem(a) || '').length - (localStorage.getItem(b) || '').length)
+                .slice(0, 3)
+                .forEach(key => localStorage.removeItem(key));
+            localStorage.setItem(k, v);
+          } catch {
+            showToast('Storage full — changes saved in memory only.');
+          }
+        }
+      }
+    }
+  },
+  remove(k) {
+    delete _memStore[k];
+    if (IS_TAURI_STORAGE && _dbReady) {
+      dbRemove(k).catch(e => console.warn('[store] dbRemove:', e));
+    } else {
+      try { localStorage.removeItem(k); } catch {}
+    }
+  },
+};
+
+// ── Toast ─────────────────────────────────────
+
+let _toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  if (!t) { console.info('[toast]', msg); return; }
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+// ── Project persistence ───────────────────────
+
+const STORAGE_KEY  = 'freeflow_projects';
+const FOLDERS_KEY  = 'freeflow_folders';
+
+function loadProjects() {
+  if (IS_TAURI_STORAGE && _dbReady) return get(projectsStore);
+  try { return JSON.parse(store.get(STORAGE_KEY)) || []; } catch { return []; }
+}
+
+function saveProjects(p) {
+  setProjects([...p]);
+  if (IS_TAURI_STORAGE && _dbReady) {
+    p.forEach(proj => dbSaveProject(proj).catch(e => console.warn('[store] dbSaveProject:', e)));
+  } else {
+    store.set(STORAGE_KEY, JSON.stringify(p));
+  }
+}
+
+function loadFolders() {
+  if (IS_TAURI_STORAGE && _dbReady) return get(foldersStore);
+  try { return JSON.parse(store.get(FOLDERS_KEY)) || []; } catch { return []; }
+}
+
+function saveFolders(f) {
+  setFolders([...f]);
+  if (IS_TAURI_STORAGE && _dbReady) {
+    f.forEach(folder => dbSaveFolder(folder).catch(e => console.warn('[store] dbSaveFolder:', e)));
+  } else {
+    store.set(FOLDERS_KEY, JSON.stringify(f));
+  }
+}
+
+// ── Project CRUD ──────────────────────────────
+
+const ACCENT_COLORS = [null, null, null,
+  'rgba(180,100,100,0.8)', 'rgba(100,140,180,0.8)',
+  'rgba(120,160,120,0.8)', 'rgba(160,120,80,0.8)', 'rgba(130,100,170,0.8)',
+];
+
+function createProject(name) {
+  const id = 'proj_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+  const fid = getCurrentFolderId() === '__unfiled__' ? null : (getCurrentFolderId() || null);
+  const p = {
+    id, name: (name || '').trim() || 'untitled canvas',
+    createdAt: Date.now(), updatedAt: Date.now(),
+    noteCount: 0,
+    accent: ACCENT_COLORS[Math.floor(Math.random() * ACCENT_COLORS.length)],
+    folderId: fid,
+  };
+  const projects = loadProjects();
+  projects.unshift(p);
+  saveProjects(projects);
+  showToast(`"${p.name}" created`);
+  return p;
+}
+
+function dupProject(id) {
+  const projects = loadProjects();
+  const p = projects.find(x => x.id === id); if (!p) return;
+  const copy = {
+    ...p,
+    id: 'proj_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+    name: p.name + ' (copy)',
+    createdAt: Date.now(), updatedAt: Date.now(),
+  };
+  const idx = projects.findIndex(x => x.id === id);
+  projects.splice(idx + 1, 0, copy);
+  saveProjects(projects);
+  showToast(`"${copy.name}" created`);
+}
+
+function deleteProject(id) {
+  let projects = loadProjects();
+  const p = projects.find(x => x.id === id);
+  projects = projects.filter(x => x.id !== id);
+  store.remove('freeflow_canvas_' + id);
+  store.remove('freeflow_canvas_v2_' + id);
+  if (IS_TAURI_STORAGE && _dbReady) dbDeleteProject(id).catch(e => console.warn('[store] dbDeleteProject:', e));
+  saveProjects(projects);
+  if (p) showToast(`"${p.name}" deleted`);
+}
+
+// ── Canvas save (v2) ──────────────────────────
+
+async function _saveCurrentCanvas() {
+  const id = getActiveProjectId();
+  if (!id) return;
+  await saveCanvasV2(id);
+  // Update note count from elements store
+  const els = get(elementsStore);
+  const projects = loadProjects();
+  const p = projects.find(x => x.id === id);
+  if (p) {
+    p.noteCount = els.filter(e => e.type === 'note' || e.type === 'ai-note').length;
+    p.updatedAt = Date.now();
+    saveProjects(projects);
+  }
+}
+
+// ── Navigation ────────────────────────────────
+
+async function openProject(id, e) {
+  if (e) e.stopPropagation();
+  const projects = loadProjects();
+  const p = projects.find(x => x.id === id); if (!p) return;
+
+  p.updatedAt = Date.now();
+  saveProjects(projects);
+  setActiveProjectId(id);
+
+  // Update legacy project-title bar
+  const titleEl = document.getElementById('project-title');
+  if (titleEl) titleEl.textContent = p.name;
+
+  document.body.classList.add('on-canvas');
+  const bd = document.getElementById('dash-backdrop');
+  if (bd) { bd.style.opacity = '0'; bd.style.pointerEvents = 'none'; }
+
+  // Load canvas state — try v2 first, fall back to legacy v1
+  clearCanvasState();
+  const state = await loadCanvasV2(id);
+  if (state) {
+    applyCanvasState(state);
+  } else {
+    // Fall back: let legacy loadCanvasState run if available
+    // No v2 state — fall back to legacy v1 DOM canvas restore
+    await window.loadCanvasState?.(id);
+  }
+}
+
+function goToDashboard() {
+  _saveCurrentCanvas();
+  document.body.classList.remove('on-canvas');
+  const bd = document.getElementById('dash-backdrop');
+  if (bd) { bd.style.opacity = '1'; bd.style.pointerEvents = 'all'; }
+  dashRender();
+}
+
+function toggleDashboard() {
+  if (document.body.classList.contains('on-canvas')) {
+    goToDashboard();
+  } else {
+    const id = getActiveProjectId() || createProject('untitled canvas').id;
+    setActiveProjectId(id);
+    openProject(id);
+  }
+}
+
+// ── Dashboard render (no-op stub) ─────────────
+// The Svelte Dashboard.svelte renders the dashboard reactively from stores.
+// This stub exists so legacy code that calls dashRender() doesn't throw.
+function dashRender() {
+  // Reactive Svelte dashboard auto-updates from projectsStore / foldersStore.
+  // Nothing to do here.
+}
+
+// ── Folder helpers ────────────────────────────
+
+function setFolder(fid) {
+  setCurrentFolderId(fid);
+  dashRender();
+}
+
+function moveToFolder(pid, fid) {
+  const projects = loadProjects();
+  const p = projects.find(x => x.id === pid); if (!p) return;
+  p.folderId = fid || null;
+  saveProjects(projects);
+  const folders = loadFolders();
+  const fname = fid ? (folders.find(f => f.id === fid)?.name || 'folder') : 'unfiled';
+  showToast(fid ? `moved to "${fname}"` : 'moved to unfiled');
+}
+
+function deleteFolderById(fid) {
+  let folders = loadFolders();
+  let projects = loadProjects();
+  function collectIds(id) {
+    return [id, ...folders.filter(x => x.parentId === id).flatMap(c => collectIds(c.id))];
+  }
+  const ids = collectIds(fid);
+  const f = folders.find(x => x.id === fid);
+  projects.forEach(p => { if (ids.includes(p.folderId)) p.folderId = null; });
+  folders = folders.filter(x => !ids.includes(x.id));
+  if (IS_TAURI_STORAGE && _dbReady) ids.forEach(id => dbDeleteFolder(id).catch(() => {}));
+  saveFolders(folders);
+  saveProjects(projects);
+  if (ids.includes(getCurrentFolderId())) setFolder(null);
+  if (f) showToast(`"${f.name}" deleted, canvases moved to unfiled`);
+}
+
+// ── Inline rename (for project cards) ────────
+
+function startInlineRename(id) {
+  const card = document.querySelector(`.project-card[data-id="${id}"]`);
+  if (!card) return;
+  const nameEl = card.querySelector('.card-name');
+  if (!nameEl) return;
+  const projects = loadProjects();
+  const p = projects.find(x => x.id === id); if (!p) return;
+
+  const input = document.createElement('input');
+  input.value = p.name === 'untitled canvas' ? '' : p.name;
+  input.placeholder = 'untitled canvas';
+  input.style.cssText = `background:none;border:none;border-bottom:1px solid rgba(255,255,255,0.3);outline:none;
+    font-family:'Barlow Condensed',sans-serif;font-size:22px;font-weight:600;text-transform:uppercase;
+    letter-spacing:0.03em;color:rgba(255,255,255,0.88);width:100%;padding:0;line-height:1.05;`;
+  nameEl.replaceWith(input);
+  input.focus(); input.select();
+
+  function commit() {
+    const val = input.value.trim() || 'untitled canvas';
+    p.name = val; p.updatedAt = Date.now();
+    saveProjects(projects);
+    if (getActiveProjectId() === id) {
+      const titleEl = document.getElementById('project-title');
+      if (titleEl) titleEl.textContent = val;
+    }
+  }
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { input.value = p.name; input.blur(); }
+    e.stopPropagation();
+  });
+}
+
+function showNewModal() {
+  const p = createProject('untitled canvas');
+  setTimeout(() => startInlineRename(p.id), 80);
+}
+
+function showInlineDelete(id) {
+  const card = document.querySelector(`.project-card[data-id="${id}"]`);
+  if (!card) return;
+  const projects = loadProjects();
+  const p = projects.find(x => x.id === id); if (!p) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'card-delete-confirm';
+  overlay.innerHTML = `
+    <div class="card-delete-msg">DELETE <span>"${escHtml(p.name)}"</span>?</div>
+    <div class="card-delete-sub">this cannot be undone</div>
+    <div class="card-delete-btns">
+      <button class="card-del-cancel">CANCEL</button>
+      <button class="card-del-confirm">DELETE</button>
+    </div>`;
+  card.appendChild(overlay);
+  card.classList.add('confirming');
+
+  overlay.querySelector('.card-del-cancel').onclick = e => {
+    e.stopPropagation(); overlay.remove(); card.classList.remove('confirming');
+  };
+  overlay.querySelector('.card-del-confirm').onclick = e => {
+    e.stopPropagation();
+    deleteProject(id);
+    overlay.remove(); card.classList.remove('confirming');
+  };
+  overlay.addEventListener('click', e => e.stopPropagation());
+}
+
+// ── Init ──────────────────────────────────────
+
+function initProjectsService() {
+  // Load initial state from storage
+  const projects = (() => {
+    if (IS_TAURI_STORAGE) return get(projectsStore); // will be populated from SQLite after db init
+    try { return JSON.parse(store.get(STORAGE_KEY)) || []; } catch { return []; }
+  })();
+  const folders = (() => {
+    if (IS_TAURI_STORAGE) return get(foldersStore);
+    try { return JSON.parse(store.get(FOLDERS_KEY)) || []; } catch { return []; }
+  })();
+
+  setProjects(projects);
+  setFolders(folders);
+
+  if (!IS_TAURI_STORAGE) {
+    // Seed demo project in browser mode
+    const cur = get(projectsStore);
+    if (cur.length === 0) {
+      const p = { id: 'demo_0', name: 'untitled', createdAt: Date.now(), updatedAt: Date.now(), noteCount: 0, accent: null, folderId: null };
+      saveProjects([p]);
+    }
+    // Restore theme
+    if (store.get('freeflow_dash_theme') === 'light') {
+      document.body.classList.add('dash-light');
+    }
+  }
+
+  // Auto-save canvas every 30s when on canvas (v2 format)
+  setInterval(() => {
+    if (document.body.classList.contains('on-canvas')) {
+      _saveCurrentCanvas();
+    }
+  }, 30000);
+
+  // Save on page unload
+  window.addEventListener('beforeunload', () => {
+    if (document.body.classList.contains('on-canvas')) {
+      const id = getActiveProjectId();
+      if (id) saveCanvasV2(id).catch(() => {});
+    }
+  });
+}
+
+// ── Helpers ───────────────────────────────────
+
+function escHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function fmtDate(ts) {
+  const d = new Date(ts), now = new Date(), diff = (now - d) / 1000;
+  if (diff < 60)     return 'just now';
+  if (diff < 3600)   return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400)  return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function fmtDateShort(ts) {
+  const d = new Date(ts), now = new Date(), diff = (now - d) / 1000;
+  if (diff < 60)    return 'now';
+  if (diff < 3600)  return `${Math.floor(diff / 60)}m`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+// ── Window bridge ─────────────────────────────
+// Expose everything legacy code and Svelte components need via window.*
+
+export function mountProjectsBridge() {
+  initProjectsService();
+
+  Object.assign(window, {
+    // state accessors (for legacy canvas.js / images.js)
+    get projects()        { return loadProjects(); },
+    set projects(v)       { saveProjects(v); },
+    get folders()         { return loadFolders(); },
+    set folders(v)        { saveFolders(v); },
+    get activeProjectId() { return getActiveProjectId(); },
+    set activeProjectId(v){ setActiveProjectId(v); },
+    get currentFolderId() { return getCurrentFolderId(); },
+    set currentFolderId(v){ setCurrentFolderId(v); },
+    get _dbReady()        { return _dbReady; },
+    get _memStore()       { return _memStore; },
+    get IS_TAURI_STORAGE(){ return IS_TAURI_STORAGE; },
+
+    // functions
+    store,
+    markDbReady,
+    showToast,
+    dashRender,
+    // Svelte sidebar/theme render reactively — these are no-ops
+    renderSidebar: () => {},
+    toggleDashTheme: () => {
+      const isLight = document.body.classList.toggle('dash-light');
+      store.set('freeflow_dash_theme', isLight ? 'light' : 'dark');
+    },
+    createProject,
+    dupProject,
+    deleteProject,
+    openProject,
+    goToDashboard,
+    toggleDashboard,
+    saveProjects,
+    saveFolders,
+    loadProjects,
+    loadFolders,
+    setFolder,
+    moveToFolder,
+    deleteFolderPrompt: deleteFolderById,
+    startInlineRename,
+    showNewModal,
+    showInlineDelete,
+    escHtml,
+    fmtDate,
+    fmtDateShort,
+    ACCENT_COLORS,
+    IS_TAURI_STORAGE,
+  });
+}
