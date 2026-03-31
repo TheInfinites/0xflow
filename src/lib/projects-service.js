@@ -233,10 +233,12 @@ async function openProject(id, e) {
       // Persist as v2 so we never need to migrate again
       await saveCanvasV2(id);
       showToast('canvas migrated to new format');
-    } else {
-      // No canvas data at all — nothing to show
     }
+    // No canvas data — blank canvas, nothing to show
   }
+
+  // Restore project directory button (was previously done in legacy loadCanvasState)
+  window.loadProjectDir?.();
 }
 
 function goToDashboard() {

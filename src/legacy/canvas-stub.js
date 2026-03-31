@@ -51,6 +51,7 @@ export function syncUndoButtons() { /* CanvasBar.svelte is reactive */ }
 // ── Relation handles — no-ops (relations live in relationsStore) ─
 export function addRelHandle(_el) {}
 export function startConnDrag(_e, _el) {}
+export function cleanupElConnections(_el) {}
 
 // ── Element drag — images.js calls onElemMouseDown for img-card drag ─
 // We provide a thin DOM-drag handler so media cards remain draggable.
@@ -130,7 +131,7 @@ export function setSnapEnabled(_v) {}
 // ── Expose all as window globals (bare identifiers in images.js resolve here) ─
 Object.assign(window, {
   cv, world, c2w, snapshot, selected, updateSelBar, syncUndoButtons,
-  addRelHandle, startConnDrag, onElemMouseDown,
+  addRelHandle, startConnDrag, cleanupElConnections, onElemMouseDown,
   makeResizeHandles, startEdgeResize,
   loadViewBookmarks, saveViewBookmarks,
   tool, setSnapEnabled,

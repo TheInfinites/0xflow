@@ -958,7 +958,28 @@ legacy DOM canvas — both are active at the same time.
 - `legacy/images.js` — media cards, AI brainstorm (DOM-based, pending MediaOverlay replacement)
 - `legacy/folder-browser.js` — file system ops (pending FolderBrowser.svelte)
 
-**Next: Phase 9h** — replace `legacy/images.js` with MediaOverlay + media-service
+### Phase 9h — Gut images.js UI sections, wire to Svelte stores ✅
+
+- Removed ~1440 lines (3788 → 2350): keydown handler, command palette, brainstorm, radial menu, minimap, summary/cluster, export panel, dock, title rename, legacy shortcuts
+- `toggleBrainstorm` → `brainstormOpenStore.update(v => !v)`
+- `toggleMinimap` → `minimapVisibleStore.update(v => !v)`
+- `confirmClear` → calls `clearCanvasState()` for PixiJS elements + removes DOM `.img-card`
+- Export functions stubbed with `showToast` messages
+- Tauri window controls + auto-updater kept (Rust-specific)
+
+### Phase 9i — folder-browser.js audit + fixes ✅
+
+- `folder-browser.js` has no broken dependencies — reads `#cv`/`#world` by DOM id, `selected` from canvas-stub, `activeProjectId`/`store`/`showToast` from window
+- Added `cleanupElConnections` no-op stub to `canvas-stub.js` (was in removed canvas.js, called by `imgDelete`)
+- `openProject()` in projects-service.js now calls `window.loadProjectDir?.()` after load (was previously called from legacy `loadCanvasState`)
+- Deleted stale `src/canvas.js` (pre-migration leftover, not imported anywhere)
+
+**Still running (legacy):**
+- `legacy/images.js` (~2350 lines) — media cards, blob storage, import panel, shared canvas, timer, search, theme
+- `legacy/folder-browser.js` (913 lines) — project dir, file ops, folder tree, batch rename, img context menu
+- `legacy/canvas-stub.js` (~125 lines) — bridge for images.js/folder-browser.js
+
+**Next: Phase 9j** — media cards into elementsStore (image/video/audio as v2 elements), then `canvas-stub.js` can shrink further
 
 ---
 
