@@ -3,10 +3,10 @@
 import { mountProjectsBridge } from './lib/projects-service.js';
 mountProjectsBridge();
 
-// Legacy canvas, editor, media (still needed — Svelte Canvas coexists)
+// Legacy media + folder browser (still needed — MediaOverlay not yet complete)
+// canvas.js and editor.js replaced by canvas-stub.js + Canvas.svelte / NoteOverlay.svelte
 import './legacy/tauri-mock.js';
-import './legacy/editor.js';
-import './legacy/canvas.js';
+import './legacy/canvas-stub.js';
 import './legacy/images.js';
 import './legacy/folder-browser.js';
 

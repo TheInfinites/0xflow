@@ -934,7 +934,31 @@ legacy DOM canvas — both are active at the same time.
 
 **Strokes note:** v1 stores strokes as raw SVG innerHTML strings. A future pass could parse `<path d="...">` elements into stroke objects, but this is low priority (most canvases have few strokes relative to notes).
 
-**Next: Phase 9g** — remove `legacy/canvas.js` and `legacy/editor.js`
+### Phase 9g — Remove legacy/canvas.js and legacy/editor.js ✅
+
+**What was done:**
+- `legacy/canvas.js` (3089 lines) — replaced by `legacy/canvas-stub.js` (~120 lines)
+- `legacy/editor.js` (470 lines) — deleted entirely (TipTap editor lives in NoteOverlay.svelte)
+- `main.js` — imports `canvas-stub.js` instead of `canvas.js` + `editor.js`
+
+**canvas-stub.js provides** only what `images.js` and `folder-browser.js` still need as bare identifiers:
+- `cv`, `world` — DOM refs (from index.html)
+- `scale`, `px`, `py`, `isLight` — getter properties on window forwarding to Svelte stores
+- `c2w(clientX, clientY)` — coord conversion using stores
+- `snapshot()` — delegates to `pixiSnapshot()` from elements store
+- `selected` — stub Set (images.js calls `selected.delete(card)`)
+- `updateSelBar()`, `syncUndoButtons()` — no-ops (Svelte components are reactive)
+- `addRelHandle()`, `startConnDrag()` — no-ops (relations in relationsStore)
+- `onElemMouseDown(e)` — thin DOM drag handler for media cards
+- `makeResizeHandles()`, `startEdgeResize()` — full implementations (media card resizing still DOM-based)
+- `loadViewBookmarks()`, `saveViewBookmarks()` — no-ops (BookmarkPanel.svelte)
+- `saveCanvasState`, `loadCanvasState`, `serializeCanvas`, `restoreCanvas` — no-ops
+
+**Still running (legacy):**
+- `legacy/images.js` — media cards, AI brainstorm (DOM-based, pending MediaOverlay replacement)
+- `legacy/folder-browser.js` — file system ops (pending FolderBrowser.svelte)
+
+**Next: Phase 9h** — replace `legacy/images.js` with MediaOverlay + media-service
 
 ---
 
