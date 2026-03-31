@@ -872,30 +872,49 @@ legacy DOM canvas — both are active at the same time.
 - Canvas.svelte exposes `window._applyViewportTo(scale, px, py)` for animated viewport jump
 - BookmarkPanel.svelte: per-project storage key (`freeflow_bkmarks_<id>` via `window.store`), reloads on project change, exposes `window.addViewBookmark(label)` for legacy toolbar
 
-### Remaining legacy removal (Phase 9d+)
+### Phase 9d — Canvas.svelte visual polish + selection tools ✅
 
-**Feature gap — Canvas.svelte vs canvas.js (approximate):**
+**Added:**
+- `buildElBackground`: color tinting + left accent strip, collapsed 32px strip, pinned/locked dot indicators
+- `extractTiptapText`: recursive TipTap JSON walker for text preview
+- `buildTextPreview`: uses `el.content.fontSize`, proper TipTap extraction
+- `updateElContainer`: collapsed title text + dynamic `hitArea`
+- `ctxToggleCollapse`: collapse/expand via context menu (label shows current state)
+- `groupSelected` / `ungroupSelected`: frame-wrap multi-select with `content.groupIds`, `Ctrl+G`
+- `zoomToSelection`: animated zoom to selection bounding box, `Z` key
+- SelectionBar: zoom-to-selection button, group/ungroup buttons, font size ±2 for single note/label
+
+**Feature gap — Canvas.svelte vs canvas.js (updated):**
 - ✅ Core rendering, pan/zoom, tools, undo/redo, serialization, strokes, relations
-- ✅ Resize handles, context menu, copy/paste, alignment, bookmarks (added Phase 9b/c)
-- ❌ Collapse/expand notes
-- ❌ Multi-select scale box (uniform group resize from corners)
-- ❌ Note font size control
-- ❌ Group/ungroup (frame-based)
+- ✅ Resize handles, context menu, copy/paste, alignment, bookmarks
+- ✅ Collapse/expand notes
+- ✅ Note font size control
+- ✅ Group/ungroup (frame-based)
+- ✅ Note color on PixiJS background render
+- ✅ Zoom-to-selection in selection bar
+- ❌ Multi-select uniform scale box
 - ❌ Pin-to-viewport (sticky notes)
 - ❌ Vote/reaction system
 - ❌ Connection wires (AI note source links)
-- ❌ Note color on PixiJS background render
 - ❌ Shape stroke/fill context menu
-- ❌ Zoom-to-selection in selection bar
 
-**Blocker:** `legacy/canvas.js` still provides all DOM note rendering (create, bind, editor, resize, context menu). Until Canvas.svelte renders notes without DOM backing (i.e., renders rich text preview + handles all note interactions natively in PixiJS), legacy/canvas.js cannot be removed.
+### Phase 9e — New note creation → PixiJS ✅
 
-**Next steps to unblock legacy/canvas.js removal:**
-1. Implement note color rendering in `buildElBackground()` (use `el.color` for background fill)
-2. Add collapse/expand state to element model + Canvas.svelte render
-3. Add group/ungroup via frame wrapping
-4. Implement note font size: store in `el.content.fontSize`, apply in `buildTextPreview()`
-5. Once Canvas.svelte reaches ~80% parity, flip the switch: new notes go to PixiJS only, legacy DOM notes remain read-only until migrated via import/export
+**Switch flipped:** All new note/todo/ai-note creation now routes to PixiJS exclusively.
+
+- `window.addNote/addTodo/addAiNote` overridden in `main.js` (after legacy imports) → call `window._pixiCanvas.makeNote/makeTodo/makeAiNote`
+- Legacy canvas `cv` dblclick intercepted via capture-phase listener → `stopImmediatePropagation`, then calls `_pixiCanvas.makeNote`
+- Keyboard shortcuts `n`, `i`, `o` already handled in Canvas.svelte
+- Coord conversion uses Svelte stores (`scaleStore`, `pxStore`, `pyStore`) — authoritative source
+- Legacy `makeNote`/`makeTodo`/`makeAiNote` in canvas.js remain for v1 format load/bind only
+
+**Still running (legacy):**
+- `legacy/canvas.js` — still needed for v1 DOM note rendering (read-only for old projects)
+- `legacy/editor.js` — still needed by canvas.js for DOM note TipTap binding
+- `legacy/images.js` — media and AI brainstorm
+- `legacy/folder-browser.js` — file system ops
+
+**Next: Phase 9f** — v1→v2 canvas migration pass + drop legacy/canvas.js
 
 ---
 

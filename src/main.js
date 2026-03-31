@@ -67,3 +67,67 @@ mount(BookmarkPanel, { target: bookmarkMount });
 const updateMount = document.createElement('div');
 document.body.appendChild(updateMount);
 mount(UpdateBanner, { target: updateMount });
+
+// ── Phase 9e: redirect new note creation to PixiJS ─────────────────────────
+// Override the global addNote/addTodo/addAiNote that toolbar buttons call.
+// The legacy canvas.js versions are now unreachable via toolbar — they remain
+// only as fallback for any legacy internal calls (e.g. paste from v1 format).
+import { get } from 'svelte/store';
+import { scaleStore, pxStore, pyStore } from './stores/canvas.js';
+
+const WORLD_OFFSET = 3000;
+
+function _clientToWorld(clientX, clientY, rect) {
+  const s  = get(scaleStore);
+  const wpx = get(pxStore);
+  const wpy = get(pyStore);
+  return {
+    x: (clientX - rect.left - wpx) / s + WORLD_OFFSET,
+    y: (clientY - rect.top  - wpy) / s + WORLD_OFFSET,
+  };
+}
+
+function _screenCenter() {
+  const app = window._pixiApp;
+  return {
+    cx: app ? app.screen.width  / 2 : 600,
+    cy: app ? app.screen.height / 2 : 400,
+  };
+}
+
+window.addNote = () => {
+  const pixi = window._pixiCanvas; if (!pixi) return;
+  const { cx, cy } = _screenCenter();
+  const rect = { left: 0, top: 0 };
+  const { x, y } = _clientToWorld(cx, cy, rect);
+  pixi.makeNote(x - 120, y - 64);
+};
+window.addTodo = () => {
+  const pixi = window._pixiCanvas; if (!pixi) return;
+  const { cx, cy } = _screenCenter();
+  const rect = { left: 0, top: 0 };
+  const { x, y } = _clientToWorld(cx, cy, rect);
+  pixi.makeTodo(x - 120, y - 80);
+};
+window.addAiNote = () => {
+  const pixi = window._pixiCanvas; if (!pixi) return;
+  const { cx, cy } = _screenCenter();
+  const rect = { left: 0, top: 0 };
+  const { x, y } = _clientToWorld(cx, cy, rect);
+  pixi.makeAiNote(x - 160, y - 100);
+};
+
+// Intercept legacy canvas dblclick-to-create-note.
+// canvas.js attaches its dblclick handler without capture, so a capture
+// listener fires first and can stopImmediatePropagation before canvas.js runs.
+const _cv = document.getElementById('cv');
+if (_cv) {
+  _cv.addEventListener('dblclick', e => {
+    if (e.target.closest('.note,.lbl,.ai-note,.img-card,.frame,.todo-card,.stroke-wrap')) return;
+    const pixi = window._pixiCanvas; if (!pixi) return;
+    e.stopImmediatePropagation();
+    const r = _cv.getBoundingClientRect();
+    const { x, y } = _clientToWorld(e.clientX, e.clientY, r);
+    pixi.makeNote(x - 120, y - 64);
+  }, true); // capture phase
+}
