@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.7.30**
+> Current version: **v0.7.31**
 
 ---
 

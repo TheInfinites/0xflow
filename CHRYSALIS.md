@@ -987,6 +987,8 @@ legacy DOM canvas — both are active at the same time.
 
 **Phase 9m — COMPLETE** — `images.js` store-aligned: `confirmClear` no longer touches DOM cards; search (`doSearch`/`searchNav`/`panToNote`) rewritten to query `elementsStore` + call `window._pixiCanvas.zoomToElement(id)`; `exportSharedCanvas` reads `elementsStore`/`strokesStore`/`relationsStore` instead of DOM cards and serializes v2 format; `Canvas.svelte` adds `zoomToElement(id)` exposed on `_pixiCanvas`; `strokesStore`/`relationsStore` added to images.js imports.
 
+**Phase 10a — COMPLETE** — `FolderBrowser.svelte` replaces `legacy/folder-browser.js` (959 lines → deleted) and `folder-browser.css` (580 lines → deleted): img right-click context menu, rename panel, batch rename modal, cascading folder tree with hover-expand, new folder creation, move/copy/export file ops, project dir picker — all reactive Svelte with scoped CSS; mounted at body level in `main.js`; exposes `window.openImgCtxMenu`, `window.openBatchRenameModal`, `window.pickProjectDir`, etc.; legacy DOM blocks removed from `index.html`.
+
 **Phase 9n — COMPLETE** — All `onclick=` globals wired: `addDrawCard`, `alignSelFrame`, `distributeSelFrame`, `gridSelected`, `changeSelectedFontSize`, `deleteMenuNote`, `deleteMenuFrame`, `zoomToMenuNote`, `zoomToMenuFrame`, `togglePinNote`, `toggleLockNote`, `togglePinSelected`, `toggleLockSelected`, `toggleSnap`, `saveLink`, `doZoom`, `saveCanvasToFile` added to `images.js` + exported on `window`; `Canvas.svelte` exposes `doZoom` and `toggleSnap` on `_pixiCanvas`; `vc-fs-overlay` IIFE (~140 lines) removed from `images.js` + DOM block removed from `index.html` + CSS purged from `style.css` (VideoPlayer.svelte handles video fullscreen).
 
 ---

@@ -3,12 +3,12 @@
 import { mountProjectsBridge } from './lib/projects-service.js';
 mountProjectsBridge();
 
-// Legacy media + folder browser (still needed — MediaOverlay not yet complete)
+// Legacy media (still needed — MediaOverlay not yet complete)
 // canvas.js and editor.js replaced by canvas-stub.js + Canvas.svelte / NoteOverlay.svelte
+// folder-browser.js replaced by FolderBrowser.svelte (mounted below)
 import './legacy/tauri-mock.js';
 import './legacy/canvas-stub.js';
 import './legacy/images.js';
-import './legacy/folder-browser.js';
 
 import { mount } from 'svelte';
 
@@ -67,6 +67,11 @@ mount(BookmarkPanel, { target: bookmarkMount });
 const updateMount = document.createElement('div');
 document.body.appendChild(updateMount);
 mount(UpdateBanner, { target: updateMount });
+
+import FolderBrowser from './lib/FolderBrowser.svelte';
+const folderBrowserMount = document.createElement('div');
+document.body.appendChild(folderBrowserMount);
+mount(FolderBrowser, { target: folderBrowserMount });
 
 // ── Phase 9e: redirect new note creation to PixiJS ─────────────────────────
 // Override the global addNote/addTodo/addAiNote that toolbar buttons call.

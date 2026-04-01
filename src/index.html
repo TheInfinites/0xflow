@@ -448,65 +448,6 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
 <div id="toast"></div>
 
 
-<!-- ══════════════════════════════════════════
-     IMG RIGHT-CLICK CONTEXT MENU + FOLDER BROWSER
-══════════════════════════════════════════ -->
-<div id="img-ctx-menu">
-  <div class="ictx-item" id="ictx-rename-file" style="position:relative;">
-    <svg viewBox="0 0 12 12" style="width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:1.4;stroke-linecap:round;"><path d="M2 9l1-1 5-5 1 1-5 5-2 1z"/><line x1="7" y1="3" x2="9" y2="5"/></svg>
-    rename file
-    <div id="ictx-rename-panel">
-      <input id="ictx-rename-stem" type="text" spellcheck="false" />
-      <span id="ictx-rename-ext"></span>
-      <button id="ictx-rename-confirm">rename</button>
-    </div>
-  </div>
-  <div class="ictx-item" id="ictx-batch-rename" style="display:none">
-    <svg viewBox="0 0 12 12" style="width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:1.4;stroke-linecap:round;">
-      <path d="M1 3h10M1 6h7M1 9h5"/><path d="M9 7l1-1 1.5 1.5-2 2L8 8l1-1z"/>
-    </svg>
-    batch rename
-  </div>
-  <div class="ictx-sep"></div>
-  <div class="ictx-item" id="ictx-zoom-to">
-    <span class="ictx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><polyline points="1,4.5 1,1 4.5,1"/><polyline points="9.5,1 13,1 13,4.5"/><polyline points="13,9.5 13,13 9.5,13"/><polyline points="4.5,13 1,13 1,9.5"/><rect x="4" y="4" width="6" height="6" rx="0.5" stroke-dasharray="1.5,1"/></svg></span>
-    Zoom to
-  </div>
-  <div class="ictx-sep"></div>
-  <div class="ictx-item" id="ictx-open-location" style="display:none">
-    <span class="ictx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5A1.5 1.5 0 013.5 2h3l1.5 2H12a1 1 0 011 1v6a1 1 0 01-1 1H3.5A1.5 1.5 0 012 10.5z"/></svg></span>
-    open file location
-  </div>
-  <div class="ictx-sep"></div>
-  <div class="ictx-item" data-action="move-copy">
-    <span class="ictx-icon">
-      <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M3 7h8M7 3l4 4-4 4"/>
-      </svg>
-    </span>
-    Move / Copy to folder
-    <span class="ictx-chevron">›</span>
-  </div>
-  <div class="ictx-sep"></div>
-  <div class="ictx-item" data-action="export" id="ictx-export">
-    <span class="ictx-icon">
-      <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M7 2v7M4 6l3 3 3-3"/><path d="M2 10v1.5A.5.5 0 002.5 12h9a.5.5 0 00.5-.5V10"/>
-      </svg>
-    </span>
-    Export as…
-    <span class="ictx-chevron">›</span>
-    <div class="ictx-submenu" id="ictx-export-submenu">
-      <div class="ictx-item" onclick="openFolderBrowserForExport('png')">PNG</div>
-      <div class="ictx-item" onclick="openFolderBrowserForExport('jpeg')">JPEG</div>
-      <div class="ictx-item" onclick="openFolderBrowserForExport('webp')">WebP</div>
-      <div class="ictx-item" onclick="openFolderBrowserForExport('tiff')">TIFF</div>
-      <div class="ictx-item" onclick="openFolderBrowserForExport('exr')">EXR</div>
-    </div>
-  </div>
-</div>
-
-<div id="folder-browser"></div>
 
 <!-- ══════════════════════════════════════════
      STROKE / SHAPE RIGHT-CLICK CONTEXT MENU
@@ -576,40 +517,6 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
   </div>
 </div>
 
-<!-- ══════════════════════════════════════════
-     BATCH RENAME MODAL
-══════════════════════════════════════════ -->
-<div id="batch-rename-overlay">
-  <div id="batch-rename-modal">
-    <div id="brm-title">batch rename</div>
-    <div id="brm-fields">
-      <div class="brm-row">
-        <label class="brm-label">find</label>
-        <input class="brm-input" id="brm-find" placeholder="text to find (leave empty to skip)" spellcheck="false">
-      </div>
-      <div class="brm-row">
-        <label class="brm-label">replace</label>
-        <input class="brm-input" id="brm-replace" placeholder="replacement text" spellcheck="false">
-      </div>
-      <div class="brm-row">
-        <label class="brm-label">prefix</label>
-        <input class="brm-input" id="brm-prefix" placeholder="add before filename" spellcheck="false">
-      </div>
-      <div class="brm-row">
-        <label class="brm-label">suffix</label>
-        <input class="brm-input" id="brm-suffix" placeholder="add before extension" spellcheck="false">
-      </div>
-    </div>
-    <div id="brm-preview-label">preview <span id="brm-count"></span></div>
-    <div id="brm-preview-list"></div>
-    <div id="brm-actions">
-      <button id="brm-cancel">cancel</button>
-      <button id="brm-confirm">rename</button>
-    </div>
-  </div>
-</div>
-
-<link rel="stylesheet" href="./folder-browser.css">
 
 <script type="module" src="./main.js"></script>
 </body>
