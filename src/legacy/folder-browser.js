@@ -1,8 +1,30 @@
 // ══════════════════════════════════════════
 // PROJECT DIRECTORY + FILE OPERATIONS
 // ══════════════════════════════════════════
+import { get } from 'svelte/store';
+import { elementsStore, snapshot as storeSnapshot } from '../stores/elements.js';
 
 let _projectDir = null; // absolute path set by user
+
+// ── Store helpers: media elements use elementsStore, not DOM cards ──
+function _getElById(id) {
+  return get(elementsStore).find(e => e.id === id) ?? null;
+}
+function _updateElSourcePath(id, newPath) {
+  elementsStore.update(els => els.map(e =>
+    e.id === id ? { ...e, content: { ...e.content, sourcePath: newPath } } : e
+  ));
+  storeSnapshot();
+}
+// Get sourcePath from either a store element ID (string) or legacy card object
+function _getSourcePath(cardOrId) {
+  if (typeof cardOrId === 'string') return _getElById(cardOrId)?.content?.sourcePath ?? null;
+  return cardOrId?.dataset?.sourcePath ?? null;
+}
+function _setSourcePath(cardOrId, newPath) {
+  if (typeof cardOrId === 'string') { _updateElSourcePath(cardOrId, newPath); return; }
+  if (cardOrId?.dataset) cardOrId.dataset.sourcePath = newPath;
+}
 
 function _projDirKey() { return 'freeflow_projdir_' + (activeProjectId || '_default'); }
 
@@ -135,9 +157,10 @@ async function uniqueDestPath(dir, fileName, sep) {
   return candidate;
 }
 
-// Copy or move a file on disk, update the canvas card's sourcePath
-async function execFileOpSingle(op, card, destDir) {
-  const sourcePath = card.dataset.sourcePath;
+// Copy or move a file on disk, update the canvas element's sourcePath
+// cardOrId: either a legacy DOM card object or an element store ID string
+async function execFileOpSingle(op, cardOrId, destDir) {
+  const sourcePath = _getSourcePath(cardOrId);
   if (!sourcePath) return;
   const fileName = sourcePath.split(/[\\/]/).pop();
   const sep = destDir.includes('\\') ? '\\' : '/';
@@ -148,17 +171,24 @@ async function execFileOpSingle(op, card, destDir) {
     const { copyFile, remove } = window.__TAURI__.fs;
     await copyFile(sourcePath, destPath);
     if (op === 'move') await remove(sourcePath);
-    card.dataset.sourcePath = newSourcePath;
+    _setSourcePath(cardOrId, newSourcePath);
   } else {
-    card.dataset.sourcePath = newSourcePath;
+    _setSourcePath(cardOrId, newSourcePath);
   }
   return destPath;
 }
 
-async function execFileOp(op, card, destDir) {
-  // Operate on all selected img-cards, or fall back to the single _fileOpCard
-  const imgCards = [...selected].filter(e => e.classList && e.classList.contains('img-card') && e.dataset.sourcePath);
-  const targets = imgCards.length > 0 ? imgCards : (card && card.dataset && card.dataset.sourcePath ? [card] : []);
+async function execFileOp(op, cardOrId, destDir) {
+  // Gather targets: selected media elements from store, or fall back to cardOrId
+  const storeEls = get(elementsStore).filter(e =>
+    ['image','video','audio'].includes(e.type) && e.content?.sourcePath
+  );
+  // Use selected store element IDs if any are selected and have a sourcePath
+  const selectedIds = [...(window.selectedElIds ?? [])];
+  const selectedMediaIds = selectedIds.filter(id => storeEls.some(e => e.id === id));
+  const targets = selectedMediaIds.length > 0
+    ? selectedMediaIds
+    : (cardOrId ? [cardOrId] : []);
   if (!targets.length) {
     showToast('No source path — image was not imported from disk');
     closeAllFolderUI();
@@ -235,9 +265,9 @@ function cardCenter(card) {
   return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
 }
 
-function openRenamePanel(card) {
-  if (!card) return;
-  const sourcePath = card.dataset.sourcePath;
+function openRenamePanel(cardOrId) {
+  if (!cardOrId) return;
+  const sourcePath = _getSourcePath(cardOrId);
   if (!sourcePath) { showToast('No source path — file was not imported from disk'); return; }
   const oldName = sourcePath.split(/[\\/]/).pop();
   // Split into stem + ext, preserving original extension
@@ -261,9 +291,9 @@ function closeRenamePanel() {
   panel.classList.remove('show');
 }
 
-async function performRenameFromPanel(card) {
-  if (!card) return;
-  const sourcePath = card.dataset.sourcePath;
+async function performRenameFromPanel(cardOrId) {
+  if (!cardOrId) return;
+  const sourcePath = _getSourcePath(cardOrId);
   if (!sourcePath) return;
   const oldName = sourcePath.split(/[\\/]/).pop();
   const dotIdx = oldName.lastIndexOf('.');
@@ -283,13 +313,13 @@ async function performRenameFromPanel(card) {
     try {
       const { rename } = window.__TAURI__.fs;
       await rename(sourcePath, newPath);
-      card.dataset.sourcePath = newPath;
+      _setSourcePath(cardOrId, newPath);
       showToast('renamed to ' + newName);
     } catch(e) {
       showToast('rename failed: ' + (e.message || String(e)));
     }
   } else {
-    card.dataset.sourcePath = newPath;
+    _setSourcePath(cardOrId, newPath);
     showToast('renamed (preview): ' + newName);
   }
 }
@@ -351,27 +381,36 @@ function startImgRightDrag(e, card) {
 // ══════════════════════════════════════════
 
 const imgCtxMenu = document.getElementById('img-ctx-menu');
+// _ctxElId: element store ID (string) or null. Legacy _ctxCard kept for non-store callers.
+let _ctxElId = null;
 let _ctxCard = null;
-let _fileOpCard = null; // persists while folder browser is open
+let _fileOpElId = null; // persists while folder browser is open
+let _fileOpCard = null;
 let _menuJustClosed = false; // cooldown flag to prevent hover from immediately reopening
 
-function openImgCtxMenu(x, y, card) {
-  // Store card first, before closeAllFolderUI wipes state
-  _ctxCard = card;
-  _fileOpCard = card;
+// openImgCtxMenu accepts either a DOM card (legacy) or an element store ID (string)
+function openImgCtxMenu(x, y, cardOrId) {
+  const isId = typeof cardOrId === 'string';
+  _ctxElId   = isId ? cardOrId : null;
+  _ctxCard   = isId ? null : cardOrId;
+  _fileOpElId = _ctxElId;
+  _fileOpCard = _ctxCard;
 
-  // Close any open folder UI (but don't wipe _fileOpCard)
+  // Close any open folder UI (but don't wipe _fileOp*)
   imgCtxMenu.classList.remove('show');
   const fb = document.getElementById('folder-browser');
   fb.classList.remove('show');
   fb.innerHTML = '';
 
-  // Show batch-rename when multiple img-cards are selected
-  const selImgCards = [...selected].filter(e => e.classList && e.classList.contains('img-card') && e.dataset.sourcePath);
+  // Count selected media elements with a sourcePath
+  const selMediaCount = get(elementsStore).filter(e =>
+    ['image','video','audio'].includes(e.type) && e.content?.sourcePath &&
+    (window.selectedElIds ?? []).includes(e.id)
+  ).length;
   const batchBtn = document.getElementById('ictx-batch-rename');
   const singleBtn = document.getElementById('ictx-rename-file');
   if (batchBtn && singleBtn) {
-    if (selImgCards.length > 1) {
+    if (selMediaCount > 1) {
       batchBtn.style.display = 'flex';
       singleBtn.style.display = 'none';
     } else {
@@ -380,9 +419,10 @@ function openImgCtxMenu(x, y, card) {
     }
   }
 
-  // Show "open file location" only when the card has a source path on disk
+  // Show "open file location" only when element has a source path on disk
+  const sourcePath = _getSourcePath(cardOrId);
   const locBtn = document.getElementById('ictx-open-location');
-  if (locBtn) locBtn.style.display = card.dataset.sourcePath ? 'flex' : 'none';
+  if (locBtn) locBtn.style.display = sourcePath ? 'flex' : 'none';
 
   // Position — keep on screen
   imgCtxMenu.style.left = '0px';
@@ -410,7 +450,7 @@ document.getElementById('ictx-zoom-to')?.addEventListener('click', () => {
 });
 
 document.getElementById('ictx-open-location')?.addEventListener('click', async () => {
-  const path = _ctxCard?.dataset.sourcePath;
+  const path = _getSourcePath(_ctxElId ?? _ctxCard);
   if (!path) return;
   closeImgCtxMenu();
   if (IS_TAURI) {
@@ -430,12 +470,12 @@ document.getElementById('ictx-open-location')?.addEventListener('click', async (
 
 function closeAllFolderUI() {
   imgCtxMenu.classList.remove('show');
-  _ctxCard = null;
+  _ctxElId = null; _ctxCard = null;
   const fb = document.getElementById('folder-browser');
   fb.classList.remove('show');
   fb.innerHTML = '';
   _activeFolderPath = null;
-  _fileOpCard = null;
+  _fileOpElId = null; _fileOpCard = null;
   clearDragLine();
   closeRenamePanel();
   // Brief cooldown so mouseover can't immediately reopen
@@ -472,16 +512,16 @@ imgCtxMenu.addEventListener('mouseover', e => {
   const renameConfirm = document.getElementById('ictx-rename-confirm');
 
   renameItem?.addEventListener('mouseenter', () => {
-    openRenamePanel(_ctxCard);
+    openRenamePanel(_ctxElId ?? _ctxCard);
   });
 
   stemInput?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') performRenameFromPanel(_ctxCard);
+    if (e.key === 'Enter') performRenameFromPanel(_ctxElId ?? _ctxCard);
     if (e.key === 'Escape') closeAllFolderUI();
   });
 
   renameConfirm?.addEventListener('click', () => {
-    performRenameFromPanel(_ctxCard);
+    performRenameFromPanel(_ctxElId ?? _ctxCard);
   });
 }
 
@@ -648,7 +688,12 @@ function applyBatchPattern(name, find, replace, prefix, suffix) {
 }
 
 function openBatchRenameModal() {
-  const cards = [...selected].filter(e => e.classList && e.classList.contains('img-card') && e.dataset.sourcePath);
+  // Gather selected media elements from the store
+  const selectedIds = [...(window.selectedElIds ?? [])];
+  const cards = get(elementsStore).filter(e =>
+    ['image','video','audio'].includes(e.type) && e.content?.sourcePath &&
+    selectedIds.includes(e.id)
+  );
   if (cards.length < 2) { showToast('Select 2+ files to batch rename'); return; }
 
   const overlay  = document.getElementById('batch-rename-overlay');
@@ -671,8 +716,8 @@ function openBatchRenameModal() {
 
     listEl.innerHTML = '';
     let changedCount = 0;
-    for (const card of cards) {
-      const oldName = card.dataset.sourcePath.split(/[\\/]/).pop();
+    for (const el of cards) {
+      const oldName = el.content.sourcePath.split(/[\\/]/).pop();
       const newName = applyBatchPattern(oldName, find, replace, prefix, suffix);
       const unchanged = newName === oldName;
       if (!unchanged) changedCount++;
@@ -698,8 +743,8 @@ function openBatchRenameModal() {
     const suffix  = suffixEl.value;
 
     let ok = 0, fail = 0;
-    for (const card of cards) {
-      const sourcePath = card.dataset.sourcePath;
+    for (const el of cards) {
+      const sourcePath = el.content.sourcePath;
       const oldName = sourcePath.split(/[\\/]/).pop();
       const newName = applyBatchPattern(oldName, find, replace, prefix, suffix);
       if (newName === oldName) continue;
@@ -710,14 +755,14 @@ function openBatchRenameModal() {
         try {
           const { rename } = window.__TAURI__.fs;
           await rename(sourcePath, newPath);
-          card.dataset.sourcePath = newPath;
+          _updateElSourcePath(el.id, newPath);
           ok++;
         } catch (e) {
           console.error('Batch rename failed:', e);
           fail++;
         }
       } else {
-        card.dataset.sourcePath = newPath;
+        _updateElSourcePath(el.id, newPath);
         ok++;
       }
     }
@@ -788,9 +833,10 @@ async function buildFolderPanel(dirPath, depth, x, y) {
     exportBtn.textContent = 'Export here';
     exportBtn.addEventListener('click', () => {
       const fmt = _fbExportFmt;
-      const card = _fileOpCard;
+      const cardOrId = _fileOpElId ?? _fileOpCard;
       closeAllFolderUI();
-      imgExport(card, fmt, dirPath);
+      // imgExport removed — stub until MediaOverlay export is implemented
+      showToast('Export to folder: not yet implemented in this version');
     });
     actionRow.appendChild(exportBtn);
   } else {

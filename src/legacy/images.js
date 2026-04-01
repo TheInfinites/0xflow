@@ -1,9 +1,11 @@
 // ════════════════════════════════════════════
 // IMAGE STORE — Tauri filesystem (with IndexedDB fallback for browser)
 // ════════════════════════════════════════════
+import { get as _getStore } from 'svelte/store';
 import { setIsLight, minimapVisibleStore } from '../stores/canvas.js';
 import { brainstormOpenStore } from '../stores/ui.js';
 import { clearCanvasState } from '../lib/canvas-persistence.js';
+import { elementsStore, strokesStore, relationsStore, snapshot as storeSnapshot } from '../stores/elements.js';
 
 const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 
@@ -402,907 +404,107 @@ async function placeImageBlob(blob, wx, wy, sourcePath) {
   else if (!IS_TAURI) card.dataset.sourcePath = 'D:\\art\\test\\' + (blob.name || id + '.png');
 }
 
-function imgCardResizeFn(el, nw) {
-  const nwMax = parseInt(el.dataset.nw)||99999;
-  const actualW = Math.min(nw, nwMax);
-  el.style.width = actualW + 'px';
-  el.style.height = 'auto';
-}
-
-function rebindImgCard(card) {
-  card.querySelectorAll('.rh').forEach(h => h.remove());
-  makeResizeHandles(card, 60, 60, imgCardResizeFn, ['ne','e','se','sw','w','nw']);
-  bindImgCard(card);
-}
 
 function makeImgCard(id, url, x, y, w, h, nw, nh) {
-  const card = document.createElement('div');
-  card.className = 'img-card';
-  card.style.cssText = `left:${x}px;top:${y}px;width:${w}px`;
-  card.dataset.imgId = id;
-  card.dataset.nw = nw; // native width
-  card.dataset.nh = nh; // native height
-
-  // image tag
-  const img = document.createElement('img');
-  img.src = url;
-  img.style.width = '100%';
-  img.draggable = false;
-  card.appendChild(img);
-
-  // floating toolbar (shown when selected)
-  const tb = document.createElement('div');
-  tb.className = 'img-toolbar';
-  tb.innerHTML = `
-    <button class="img-tb-btn" title="actual size" onclick="imgActualSize(this.closest('.img-card'))">1:1</button>
-    <button class="img-tb-btn" title="fit to view" onclick="imgFitView(this.closest('.img-card'))">fit</button>
-    <button class="img-tb-btn" title="50%" onclick="imgScale(this.closest('.img-card'),0.5)">50%</button>
-    <button class="img-tb-btn danger" title="delete" onclick="imgDelete(this.closest('.img-card'))">delete</button>
-  `;
-  tb.addEventListener('mousedown', e => e.stopPropagation());
-  card.appendChild(tb);
-
-  // collapse button
-  const collapseBtn = makeCollapseBtn(card, () => { const sp=card.dataset.sourcePath||card.dataset.imgId||''; return sp.split(/[\\/]/).pop(); });
-  card.appendChild(collapseBtn);
-
-  // all-edge resize handles
-  makeResizeHandles(card, 60, 60, imgCardResizeFn, ['ne','e','se','sw','w','nw']);
-
-  // connector output port (for AI note wiring)
-  const connPort = document.createElement('div');
-  connPort.className = 'conn-port';
-  connPort.addEventListener('mousedown', e => { e.stopPropagation(); startConnDrag(e, card); });
-  card.appendChild(connPort);
-
-  addRelHandle(card);
-  bindImgCard(card);
-  world.appendChild(card);
-
-  // entrance animation
-  card.style.opacity = '0'; card.style.transform = 'scale(0.95)';
-  card.style.transition = 'opacity 0.18s, transform 0.18s';
-  requestAnimationFrame(() => { card.style.opacity = '1'; card.style.transform = 'scale(1)'; });
-  return card; // always return so callers can set dataset attributes
-}
-
-function bindImgCard(card) {
-  if (card._imgBound) return;
-  card._imgBound = true;
-  card.addEventListener('mousedown', e => {
-    if (e.target.classList.contains('rh') || e.target.closest('.img-toolbar') || e.target.classList.contains('collapse-btn') || e.target.closest('.collapse-btn')) return;
-    // For video cards: entire footer (buttons, seek bar, frame steps) handles itself
-    if (card.classList.contains('video-card') && e.target.closest('.vc-footer')) return;
-    if (e.button === 2) { startImgRightDrag(e, card); return; }
-    onElemMouseDown(e);
+  // Route through elementsStore — MediaOverlay + ImageCard.svelte render this
+  const el = {
+    id:      'img_' + id,
+    type:    'image',
+    x, y,
+    width:   w,
+    height:  h || Math.round((nh || 300) * (w / (nw || 400))),
+    zIndex:  Date.now(),
+    pinned:  false, locked: false, votes: 0, reactions: [],
+    color:   null,
+    content: {
+      imgId:      id,
+      sourcePath: null,
+      nativeW:    nw || 0,
+      nativeH:    nh || 0,
+    },
+  };
+  elementsStore.update(els => [...els, el]);
+  // Return a proxy object so callers can set card.dataset.sourcePath
+  const proxy = { dataset: { imgId: id, nw, nh }, _elId: el.id };
+  Object.defineProperty(proxy.dataset, 'sourcePath', {
+    set(v) {
+      elementsStore.update(els => els.map(e => e.id === el.id
+        ? { ...e, content: { ...e.content, sourcePath: v } }
+        : e));
+    },
+    get() { return el.content.sourcePath; },
+    configurable: true,
   });
-}
-
-// ── resize ──
-let _resizeCard = null, _resizeStartX = 0, _resizeStartW = 0;
-function startImgResize(e, card) {
-  e.stopPropagation(); e.preventDefault();
-  _resizeCard = card;
-  _resizeStartX = e.clientX;
-  _resizeStartW = parseFloat(card.querySelector('img').style.width) || 200;
-}
-document.addEventListener('mousemove', e => {
-  if (!_resizeCard) return;
-  const dx = (e.clientX - _resizeStartX) / scale;
-  const nw = parseInt(_resizeCard.dataset.nw) || 99999;
-  const newW = Math.max(80, Math.min(_resizeStartW + dx, nw)); // never exceed native
-  _resizeCard.querySelector('img').style.width = newW + 'px';
-  _resizeCard.style.width = (newW + 12) + 'px';
-});
-document.addEventListener('mouseup', () => { if (_resizeCard) { snapshot(); _resizeCard = null; } });
-
-// ── image toolbar actions ──
-function imgActualSize(card) {
-  card.style.width = (parseInt(card.dataset.nw) || 400) + 'px';
-  snapshot();
-}
-function imgFitView(card) {
-  card.style.width = Math.min(cv.offsetWidth * 0.7 / scale, 1200) + 'px';
-  snapshot();
-}
-function imgScale(card, factor) {
-  const cur = card.offsetWidth || 300;
-  const nw = parseInt(card.dataset.nw) || 99999;
-  card.style.width = Math.max(80, Math.min(Math.round(cur * factor), nw)) + 'px';
-  snapshot();
-}
-async function imgExport(card, fmt, destDir) {
-  if (!card) return;
-  closeImgCtxMenu();
-  const imgEl = card.querySelector('img');
-  if (!imgEl) return;
-
-  // Draw to canvas at native resolution
-  const nw = parseInt(card.dataset.nw) || imgEl.naturalWidth || imgEl.width;
-  const nh = parseInt(card.dataset.nh) || imgEl.naturalHeight || imgEl.height;
-  const c = document.createElement('canvas');
-  c.width = nw; c.height = nh;
-  const ctx = c.getContext('2d');
-  ctx.drawImage(imgEl, 0, 0, nw, nh);
-
-  const baseName = (card.dataset.sourcePath || card.dataset.imgId || 'image').split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
-
-  // Save blob to destDir via Tauri fs, or fall back to browser download
-  async function saveBlob(blob, fileName) {
-    if (destDir && IS_TAURI) {
-      const sep = destDir.includes('\\') ? '\\' : '/';
-      const filePath = destDir.replace(/[\\/]$/, '') + sep + fileName;
-      const { writeFile } = window.__TAURI__.fs;
-      const buf = await blob.arrayBuffer();
-      await writeFile(filePath, new Uint8Array(buf));
-      showToast('Exported → ' + destDir.split(/[\\/]/).pop() + sep + fileName);
-    } else {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = fileName;
-      a.click(); URL.revokeObjectURL(url);
-    }
-  }
-
-  if (fmt === 'exr') {
-    const imageData = ctx.getImageData(0, 0, nw, nh);
-    const px = imageData.data; // Uint8ClampedArray RGBA 0-255
-
-    // Convert uint8 [0-255] to float32 linear (approx sRGB→linear)
-    function toLinear(v) { const f=v/255; return f<=0.04045?f/12.92:Math.pow((f+0.055)/1.055,2.4); }
-
-    // float32 to float16 (half) as uint16
-    function f32toF16(v) {
-      const f = new Float32Array(1); f[0] = v;
-      const b = new Uint32Array(f.buffer)[0];
-      const s = (b>>>31)&1, e = (b>>>23)&0xff, m = b&0x7fffff;
-      if (e===0xff) return (s<<15)|0x7c00|(m?1:0); // inf/nan
-      const ne = e-127+15;
-      if (ne>=31) return (s<<15)|0x7c00; // overflow→inf
-      if (ne<=0) { // denorm or underflow
-        if (ne<-10) return s<<15;
-        return (s<<15)|((m|0x800000)>>(1-ne+13));
-      }
-      return (s<<15)|(ne<<10)|(m>>13);
-    }
-
-    // EXR uses alphabetical channel order: A, B, G, R
-    const channels = ['A','B','G','R'];
-    const chanIdx  = { A:3, B:2, G:1, R:0 }; // index into RGBA px
-
-    // Build header as a sequence of null-terminated attribute strings
-    function encStr(s) {
-      const b = new TextEncoder().encode(s+'\0'); return b;
-    }
-    function encAttr(name, type, data) {
-      return [...encStr(name), ...encStr(type),
-        ...new Uint8Array(new Uint32Array([data.length]).buffer), ...data];
-    }
-
-    // channels attribute: list of channel records
-    function buildChannels() {
-      const bytes = [];
-      for (const ch of channels) {
-        bytes.push(...new TextEncoder().encode(ch+'\0')); // name + null
-        const rec = new ArrayBuffer(16);
-        const dv2 = new DataView(rec);
-        dv2.setUint32(0,1,true);  // HALF=1
-        dv2.setUint32(4,1,true);  // pLinear
-        dv2.setUint32(8,1,true);  // xSampling
-        dv2.setUint32(12,1,true); // ySampling
-        bytes.push(...new Uint8Array(rec));
-      }
-      bytes.push(0); // end of channel list
-      return new Uint8Array(bytes);
-    }
-
-    function int32LE(v){ const b=new ArrayBuffer(4);new DataView(b).setInt32(0,v,true);return new Uint8Array(b); }
-    function uint32LE(v){ const b=new ArrayBuffer(4);new DataView(b).setUint32(0,v,true);return new Uint8Array(b); }
-
-    // compression: NO_COMPRESSION=0
-    const compBuf = new Uint8Array([0]);
-    // dataWindow and displayWindow: box2i = xMin,yMin,xMax,yMax (int32 LE each)
-    function box2i(x0,y0,x1,y1){ const b=new ArrayBuffer(16);const d=new DataView(b);[x0,y0,x1,y1].forEach((v,i)=>d.setInt32(i*4,v,true));return new Uint8Array(b); }
-    // lineOrder: INCREASING_Y=0
-    const lineOrderBuf = new Uint8Array([0]);
-    // pixelAspectRatio: float32 1.0
-    const parBuf = new Uint8Array(new Float32Array([1.0]).buffer);
-    // screenWindowCenter: v2f 0,0
-    const swcBuf = new Uint8Array(new Float32Array([0,0]).buffer);
-    // screenWindowWidth: float32 1.0
-    const swwBuf = new Uint8Array(new Float32Array([1.0]).buffer);
-
-    const headerBytes = [
-      ...encAttr('channels','chlist',buildChannels()),
-      ...encAttr('compression','compression',compBuf),
-      ...encAttr('dataWindow','box2i',box2i(0,0,nw-1,nh-1)),
-      ...encAttr('displayWindow','box2i',box2i(0,0,nw-1,nh-1)),
-      ...encAttr('lineOrder','lineOrder',lineOrderBuf),
-      ...encAttr('pixelAspectRatio','float',parBuf),
-      ...encAttr('screenWindowCenter','v2f',swcBuf),
-      ...encAttr('screenWindowWidth','float',swwBuf),
-      0, // end of header
-    ];
-
-    // Offset table: one offset per scanline (uint64 LE)
-    // We'll compute offsets after knowing header+table size
-    const MAGIC = new Uint8Array([0x76,0x2f,0x31,0x01]);
-    const VERSION = new Uint8Array([0x02,0x00,0x00,0x00]); // version 2, single-part scanline
-    const headerArr = new Uint8Array(headerBytes);
-    const offsetTableSize = nh * 8; // nh uint64s
-    const dataStart = 8 + headerArr.length + offsetTableSize;
-
-    // Build scanline data
-    const scanlineSize = channels.length * nw * 2; // 4 channels * nw * 2 bytes (HALF)
-    const scanlines = []; // array of Uint8Array per scanline
-    for (let y = 0; y < nh; y++) {
-      const sl = new Uint8Array(scanlineSize);
-      const sdv = new DataView(sl.buffer);
-      for (let ci = 0; ci < channels.length; ci++) {
-        const srcCh = chanIdx[channels[ci]];
-        for (let x = 0; x < nw; x++) {
-          const i = (y*nw+x)*4 + srcCh;
-          const lin = srcCh===3 ? px[i]/255 : toLinear(px[i]); // alpha stays linear
-          sdv.setUint16((ci*nw+x)*2, f32toF16(lin), true);
-        }
-      }
-      scanlines.push(sl);
-    }
-
-    // Build offset table
-    const offsets = new BigUint64Array(nh);
-    let off = BigInt(dataStart);
-    for (let y = 0; y < nh; y++) {
-      offsets[y] = off;
-      off += BigInt(4+4+scanlineSize); // y-coord + byteCount + data
-    }
-
-    // Assemble final buffer
-    const totalSize = dataStart + nh*(4+4+scanlineSize);
-    const out = new Uint8Array(totalSize);
-    let pos = 0;
-    function write(arr){ out.set(arr,pos); pos+=arr.length; }
-
-    write(MAGIC); write(VERSION); write(headerArr);
-    write(new Uint8Array(offsets.buffer));
-    for (let y = 0; y < nh; y++) {
-      write(int32LE(y));
-      write(uint32LE(scanlineSize));
-      write(scanlines[y]);
-    }
-
-    const blob = new Blob([out], { type: 'image/x-exr' });
-    await saveBlob(blob, baseName + '.exr');
-    return;
-  }
-
-  if (fmt === 'tiff') {
-    // Write minimal uncompressed TIFF (RGBA, little-endian)
-    const imageData = ctx.getImageData(0, 0, nw, nh);
-    const pixels = imageData.data; // Uint8ClampedArray RGBA
-    const IFD_ENTRIES = 11;
-    const IFD_SIZE = 2 + IFD_ENTRIES * 12 + 4;
-    const headerSize = 8;
-    const ifdOffset = headerSize;
-    const pixelOffset = headerSize + IFD_SIZE;
-    const pixelBytes = pixels.length; // nw*nh*4
-    const buf = new ArrayBuffer(pixelOffset + pixelBytes);
-    const dv = new DataView(buf);
-    const LE = true;
-    // TIFF header
-    dv.setUint16(0, 0x4949, LE); // little-endian
-    dv.setUint16(2, 42, LE);     // magic
-    dv.setUint32(4, ifdOffset, LE); // offset to first IFD
-    // IFD
-    let p = ifdOffset;
-    dv.setUint16(p, IFD_ENTRIES, LE); p += 2;
-    function ifdEntry(tag, type, count, value) {
-      dv.setUint16(p, tag, LE); dv.setUint16(p+2, type, LE);
-      dv.setUint32(p+4, count, LE); dv.setUint32(p+8, value, LE);
-      p += 12;
-    }
-    ifdEntry(0x0100, 3, 1, nw);          // ImageWidth SHORT
-    ifdEntry(0x0101, 3, 1, nh);          // ImageLength SHORT
-    ifdEntry(0x0102, 3, 1, 8);           // BitsPerSample (8 per channel)
-    ifdEntry(0x0103, 3, 1, 1);           // Compression: none
-    ifdEntry(0x0106, 3, 1, 2);           // PhotometricInterpretation: RGB
-    ifdEntry(0x0111, 4, 1, pixelOffset); // StripOffsets
-    ifdEntry(0x0115, 3, 1, 4);           // SamplesPerPixel: 4 (RGBA)
-    ifdEntry(0x0116, 3, 1, nh);          // RowsPerStrip
-    ifdEntry(0x0117, 4, 1, pixelBytes);  // StripByteCounts
-    ifdEntry(0x011C, 3, 1, 1);           // PlanarConfiguration: chunky
-    ifdEntry(0x0152, 3, 1, 2);           // ExtraSamples: unassociated alpha
-    dv.setUint32(p, 0, LE); // next IFD offset = 0
-    // Pixel data
-    new Uint8Array(buf, pixelOffset).set(pixels);
-    const blob = new Blob([buf], { type: 'image/tiff' });
-    await saveBlob(blob, baseName + '.tiff');
-    return;
-  }
-
-  const mimeMap = { png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp' };
-  const extMap  = { png: '.png', jpeg: '.jpg', webp: '.webp' };
-  const mime = mimeMap[fmt] || 'image/png';
-  const ext  = extMap[fmt]  || '.png';
-  const quality = fmt === 'jpeg' ? 0.95 : undefined;
-
-  c.toBlob(async blob => {
-    await saveBlob(blob, baseName + ext);
-  }, mime, quality);
+  return proxy;
 }
 
 function imgDelete(card) {
   const imgId = card.dataset.imgId;
-  deleteImgBlob(imgId);
-  if(imgId && blobURLCache[imgId] && blobURLCache[imgId].startsWith('blob:')){
-    URL.revokeObjectURL(blobURLCache[imgId]);
-    delete blobURLCache[imgId];
+  // Remove from elementsStore (covers img_/vid_/aud_ prefixed IDs)
+  if (imgId) {
+    const elId = card._elId;
+    if (elId) {
+      elementsStore.update(els => els.filter(e => e.id !== elId));
+    } else {
+      // Fallback: remove any element whose content.imgId matches
+      elementsStore.update(els => els.filter(e => e.content?.imgId !== imgId));
+    }
+    deleteImgBlob(imgId);
+    if (blobURLCache[imgId] && blobURLCache[imgId].startsWith('blob:')) {
+      URL.revokeObjectURL(blobURLCache[imgId]);
+      delete blobURLCache[imgId];
+    }
   }
-  selected.delete(card); updateSelBar();
-  cleanupElConnections(card);
-  card.remove(); snapshot();
+  storeSnapshot();
 }
-
-// ── still placement: arrange around the video card without overlapping ──
-function findStillSlot(card, w, h) {
-  const GAP = 20;
-  if (!card._stills) card._stills = [];
-
-  const vx = parseFloat(card.style.left);
-  const vy = parseFloat(card.style.top);
-  const vw = card.offsetWidth;
-  const vh = card.offsetHeight;
-
-  const occupied = [{ x: vx, y: vy, w: vw, h: vh }, ...card._stills];
-
-  function free(x, y) {
-    for (const r of occupied) {
-      if (x < r.x + r.w + GAP && x + w + GAP > r.x &&
-          y < r.y + r.h + GAP && y + h + GAP > r.y) return false;
-    }
-    return true;
-  }
-
-  // Build a grid of candidate positions: rows along right side, then bottom, left, top
-  // Each side generates positions spaced by (still size + gap)
-  const candidates = [];
-  const maxSlots = 20;
-
-  // Right side — row of stills aligned to top of video, expanding right
-  for (let col = 0; col < maxSlots; col++) {
-    const x = vx + vw + GAP + col * (w + GAP);
-    for (let row = 0; row < maxSlots; row++) {
-      candidates.push({ x, y: vy + row * (h + GAP) });
-      if (row > 0) candidates.push({ x, y: vy - row * (h + GAP) });
-    }
-  }
-  // Bottom side
-  for (let row = 0; row < maxSlots; row++) {
-    const y = vy + vh + GAP + row * (h + GAP);
-    for (let col = 0; col < maxSlots; col++) {
-      candidates.push({ x: vx + col * (w + GAP), y });
-      if (col > 0) candidates.push({ x: vx - col * (w + GAP), y });
-    }
-  }
-  // Left side
-  for (let col = 0; col < maxSlots; col++) {
-    const x = vx - w - GAP - col * (w + GAP);
-    for (let row = 0; row < maxSlots; row++) {
-      candidates.push({ x, y: vy + row * (h + GAP) });
-      if (row > 0) candidates.push({ x, y: vy - row * (h + GAP) });
-    }
-  }
-
-  // Sort by a blend of: distance from video + distance from viewport center + jitter
-  // This makes stills prefer the open space the user is looking at
-  const vcx = vx + vw / 2, vcy = vy + vh / 2;
-  const cvR = cv.getBoundingClientRect();
-  const vport = c2w(cvR.left + cvR.width / 2, cvR.top + cvR.height / 2);
-  candidates.sort((a, b) => {
-    const ax = a.x + w/2, ay = a.y + h/2;
-    const bx = b.x + w/2, by = b.y + h/2;
-    const da = (ax - vcx) ** 2 + (ay - vcy) ** 2;
-    const db = (bx - vcx) ** 2 + (by - vcy) ** 2;
-    const va = (ax - vport.x) ** 2 + (ay - vport.y) ** 2;
-    const vb = (bx - vport.x) ** 2 + (by - vport.y) ** 2;
-    // weighted: 40% distance from video, 60% distance from viewport center, plus small jitter
-    const scoreA = 0.4 * da + 0.6 * va + Math.random() * (w * h * 0.1);
-    const scoreB = 0.4 * db + 0.6 * vb + Math.random() * (w * h * 0.1);
-    return scoreA - scoreB;
-  });
-
-  for (const s of candidates) {
-    if (free(s.x, s.y)) {
-      card._stills.push({ x: s.x, y: s.y, w, h });
-      return { x: s.x, y: s.y };
-    }
-  }
-
-  // absolute fallback
-  const pos = { x: vx + vw + GAP, y: vy + card._stills.length * (h + GAP) };
-  card._stills.push({ ...pos, w, h });
-  return pos;
-}
-
-// ── Custom fullscreen overlay — no browser native chrome, no frame shift ──
-(function() {
-  const overlay  = document.getElementById('vc-fs-overlay');
-  const fsVideo  = document.getElementById('vc-fs-video');
-  const fsUI     = document.getElementById('vc-fs-ui');
-  const exitBtn  = document.getElementById('vc-fs-exit');
-  const playBtn  = document.getElementById('vc-fs-play');
-  const muteBtn  = document.getElementById('vc-fs-mute');
-  const seekBar  = document.getElementById('vc-fs-seek');
-  const timeEl   = document.getElementById('vc-fs-time');
-  const durEl    = document.getElementById('vc-fs-dur');
-  const iconPlay  = playBtn.querySelector('.vc-fs-icon-play');
-  const iconPause = playBtn.querySelector('.vc-fs-icon-pause');
-  let _srcVideo  = null;
-  let _uiTimer   = null;
-  let _rafId     = null;
-  let _seekPending = false;
-
-  function fmtTime(s) {
-    if (!isFinite(s)) return '0:00';
-    const m = Math.floor(s / 60), sec = Math.floor(s % 60);
-    return m + ':' + String(sec).padStart(2, '0');
-  }
-
-  function syncPlayIcon() {
-    const playing = !fsVideo.paused && !fsVideo.ended;
-    iconPlay.style.display  = playing ? 'none' : '';
-    iconPause.style.display = playing ? '' : 'none';
-  }
-
-  function startRAF() {
-    if (_rafId) return;
-    function tick() {
-      if (!fsVideo.paused && !fsVideo.ended && fsVideo.duration) {
-        const pct = (fsVideo.currentTime / fsVideo.duration) * 100;
-        seekBar.value = pct * 10;
-        seekBar.style.setProperty('--pct', pct.toFixed(2) + '%');
-        timeEl.textContent = fmtTime(fsVideo.currentTime);
-        _rafId = requestAnimationFrame(tick);
-      } else {
-        _rafId = null;
-      }
-    }
-    _rafId = requestAnimationFrame(tick);
-  }
-
-  function showUI() {
-    overlay.classList.add('show-ui');
-    clearTimeout(_uiTimer);
-    _uiTimer = setTimeout(() => { if (!fsVideo.paused) overlay.classList.remove('show-ui'); }, 2500);
-  }
-
-  function closeOverlay() {
-    if (!_srcVideo) return;
-    _srcVideo.currentTime = fsVideo.currentTime;
-    if (!fsVideo.paused) { _srcVideo.play(); } else { _srcVideo.pause(); }
-    fsVideo.pause();
-    fsVideo.src = '';
-    if (_rafId) { cancelAnimationFrame(_rafId); _rafId = null; }
-    overlay.classList.remove('active', 'show-ui');
-    clearTimeout(_uiTimer);
-    _srcVideo = null;
-  }
-
-  window.openVideoFullscreen = function(video) {
-    _srcVideo = video;
-    fsVideo.src = video.src;
-    fsVideo.currentTime = video.currentTime;
-    fsVideo.muted = video.muted;
-    fsVideo.loop = video.loop;
-    muteBtn.classList.toggle('muted', video.muted);
-    seekBar.value = 0;
-    timeEl.textContent = fmtTime(video.currentTime);
-    durEl.textContent  = fmtTime(video.duration);
-    overlay.classList.add('active');
-    showUI();
-    if (!video.paused) {
-      fsVideo.play().catch(() => {});
-      video.pause();
-    }
-    syncPlayIcon();
-  };
-
-  // Click on overlay background = play/pause
-  overlay.addEventListener('click', e => {
-    if (fsUI.contains(e.target)) return;
-    fsVideo.paused ? fsVideo.play() : fsVideo.pause();
-    showUI();
-  });
-
-  playBtn.addEventListener('click', e => {
-    e.stopPropagation();
-    fsVideo.paused ? fsVideo.play() : fsVideo.pause();
-  });
-
-  muteBtn.addEventListener('click', e => {
-    e.stopPropagation();
-    fsVideo.muted = !fsVideo.muted;
-    muteBtn.classList.toggle('muted', fsVideo.muted);
-  });
-
-  seekBar.addEventListener('mousedown', e => e.stopPropagation());
-  seekBar.addEventListener('input', () => {
-    if (!fsVideo.duration) return;
-    seekBar.style.setProperty('--pct', (seekBar.value / 10).toFixed(2) + '%');
-    if (!_seekPending) {
-      _seekPending = true;
-      requestAnimationFrame(() => {
-        fsVideo.currentTime = (seekBar.value / 1000) * fsVideo.duration;
-        timeEl.textContent = fmtTime(fsVideo.currentTime);
-        _seekPending = false;
-      });
-    }
-  });
-
-  exitBtn.addEventListener('click', e => { e.stopPropagation(); closeOverlay(); });
-
-  fsVideo.addEventListener('play',  () => { syncPlayIcon(); startRAF(); });
-  fsVideo.addEventListener('pause', () => { syncPlayIcon(); });
-  fsVideo.addEventListener('ended', () => { syncPlayIcon(); overlay.classList.add('show-ui'); });
-  fsVideo.addEventListener('seeked', () => {
-    if (fsVideo.duration) {
-      const pct = (fsVideo.currentTime / fsVideo.duration) * 100;
-      seekBar.value = pct * 10;
-      seekBar.style.setProperty('--pct', pct.toFixed(2) + '%');
-    }
-    timeEl.textContent = fmtTime(fsVideo.currentTime);
-  });
-  fsVideo.addEventListener('loadedmetadata', () => {
-    durEl.textContent = fmtTime(fsVideo.duration);
-    seekBar.value = fsVideo.duration ? (fsVideo.currentTime / fsVideo.duration) * 1000 : 0;
-  });
-
-  document.addEventListener('keydown', e => {
-    if (!overlay.classList.contains('active')) return;
-    if (e.key === 'Escape') closeOverlay();
-    if (e.key === ' ') { e.preventDefault(); fsVideo.paused ? fsVideo.play() : fsVideo.pause(); }
-  });
-
-  overlay.addEventListener('mousemove', showUI);
-})();
 
 // ── video card ──
 function makeVideoCard(id, url, x, y, w) {
-  const card = document.createElement('div');
-  card.className = 'img-card video-card';
-  card.style.cssText = `left:${x}px;top:${y}px;width:${w}px`;
-  card.dataset.imgId = id;
-  card.dataset.mediaType = 'video';
-
-  // Video — no native controls, fills card width
-  const video = document.createElement('video');
-  video.crossOrigin = 'anonymous';
-  video.src = url;
-  video.controls = false;
-  video.draggable = false;
-  video.loop = false;
-  video.preload = 'auto';
-  video.setAttribute('playsinline', '');
-  video.className = 'vc-video';
-  // Wrap video + overlay together so overlay covers only the video area, not the footer
-  const videoWrap = document.createElement('div');
-  videoWrap.className = 'vc-video-wrap';
-  videoWrap.appendChild(video);
-  // Overlay captures pointer events — WebView2 native video layer eats them regardless of z-index
-  const videoOverlay = document.createElement('div');
-  videoOverlay.className = 'vc-video-overlay';
-  videoWrap.appendChild(videoOverlay);
-  card.appendChild(videoWrap);
-
-  // ── custom footer controls ──
-  const footer = document.createElement('div');
-  footer.className = 'vc-footer';
-
-  // Play/pause button
-  const playBtn = document.createElement('button');
-  playBtn.className = 'vc-btn vc-play';
-  playBtn.title = 'Play / Pause';
-  playBtn.innerHTML = '<svg class="vc-icon-play" viewBox="0 0 16 16" fill="currentColor" stroke="none"><path d="M5.5 3.2a.8.8 0 011.2-.7l6 4.8a.8.8 0 010 1.4l-6 4.8A.8.8 0 015.5 12.8z"/></svg><svg class="vc-icon-pause" viewBox="0 0 16 16" fill="currentColor" stroke="none" style="display:none"><rect x="4" y="3" width="2.5" height="10" rx="1.2"/><rect x="9.5" y="3" width="2.5" height="10" rx="1.2"/></svg>';
-  playBtn.addEventListener('mousedown', e => e.stopPropagation());
-  playBtn.addEventListener('click', e => { e.stopPropagation(); video.paused ? video.play() : video.pause(); });
-
-  // Seek bar
-  const seekBar = document.createElement('input');
-  seekBar.type = 'range'; seekBar.className = 'vc-seek'; seekBar.min = 0; seekBar.max = 1000; seekBar.value = 0; seekBar.step = 1;
-  seekBar.addEventListener('mousedown', e => e.stopPropagation());
-  // Throttle seeks to one per animation frame — prevents seek queue build-up and stutter
-  let _seekPending = false;
-  seekBar.addEventListener('input', () => {
-    if (!video.duration) return;
-    if (!_seekPending) {
-      _seekPending = true;
-      requestAnimationFrame(() => {
-        video.currentTime = (seekBar.value / 1000) * video.duration;
-        _seekPending = false;
-      });
-    }
+  // Route through elementsStore — MediaOverlay + VideoPlayer.svelte render this
+  const el = {
+    id:      'vid_' + id,
+    type:    'video',
+    x, y,
+    width:   w || 300,
+    height:  Math.round((w || 300) * 9 / 16),
+    zIndex:  Date.now(),
+    pinned:  false, locked: false, votes: 0, reactions: [],
+    color:   null,
+    content: { imgId: id, sourcePath: null, nativeW: 0, nativeH: 0 },
+  };
+  elementsStore.update(els => [...els, el]);
+  const proxy = { dataset: { imgId: id, mediaType: 'video' }, _elId: el.id };
+  Object.defineProperty(proxy.dataset, 'sourcePath', {
+    set(v) { elementsStore.update(els => els.map(e => e.id === el.id ? { ...e, content: { ...e.content, sourcePath: v } } : e)); },
+    get() { return el.content.sourcePath; },
+    configurable: true,
   });
-
-  // Volume button (toggle mute)
-  const volBtn = document.createElement('button');
-  volBtn.className = 'vc-btn vc-vol';
-  volBtn.title = 'Mute / Unmute';
-  volBtn.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h2.5L9 3.5v9L5.5 10H3a.5.5 0 01-.5-.5v-3A.5.5 0 013 6z" fill="currentColor" stroke="none"/><path class="vc-vol-wave" d="M11 6a3 3 0 010 4"/></svg>';
-  volBtn.addEventListener('mousedown', e => e.stopPropagation());
-  volBtn.addEventListener('click', e => { e.stopPropagation(); video.muted = !video.muted; volBtn.classList.toggle('muted', video.muted); });
-
-  // Fullscreen button
-  const fsBtn = document.createElement('button');
-  fsBtn.className = 'vc-btn vc-fs';
-  fsBtn.title = 'Fullscreen';
-  fsBtn.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6V3h3M10.5 3h3v3M13.5 10v3h-3M5.5 13h-3v-3"/></svg>';
-  fsBtn.addEventListener('mousedown', e => e.stopPropagation());
-  fsBtn.addEventListener('click', e => { e.stopPropagation(); openVideoFullscreen(video); });
-
-  // Grab-still button
-  const stillBtn = document.createElement('button');
-  stillBtn.className = 'vc-btn vc-still';
-  stillBtn.title = 'Grab still frame as image';
-  stillBtn.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 5.5A1.5 1.5 0 013 4h1.5l1-1.5h5L11.5 4H13a1.5 1.5 0 011.5 1.5v6A1.5 1.5 0 0113 13H3a1.5 1.5 0 01-1.5-1.5z"/><circle cx="8" cy="8.5" r="2"/></svg>';
-  stillBtn.addEventListener('mousedown', e => e.stopPropagation());
-  stillBtn.addEventListener('click', async e => {
-    e.stopPropagation();
-    if (!video || video.readyState < 2) { showToast('Video not ready'); return; }
-    try {
-      const c = document.createElement('canvas');
-      c.width = video.videoWidth; c.height = video.videoHeight;
-      c.getContext('2d').drawImage(video, 0, 0);
-      const blob = await new Promise(res => c.toBlob(res, 'image/png'));
-      const sid = await saveImgBlob(blob);
-      let srcPath = null;
-      if (IS_TAURI && typeof _projectDir !== 'undefined' && _projectDir) srcPath = await saveImgToProjectDir(blob, sid);
-      const dataURL = await new Promise((res, rej) => { const r = new FileReader(); r.onload = ev => res(ev.target.result); r.onerror = rej; r.readAsDataURL(blob); });
-      blobURLCache[sid] = dataURL;
-      const dispW = Math.min(video.videoWidth, 600);
-      const dispH = Math.round(video.videoHeight * (dispW / video.videoWidth));
-      const { x: cx, y: cy } = findStillSlot(card, dispW, dispH);
-      snapshot();
-      const imgCard = makeImgCard(sid, dataURL, cx, cy, dispW, dispH, video.videoWidth, video.videoHeight);
-      if (srcPath) imgCard.dataset.sourcePath = srcPath;
-      showToast('Still captured');
-    } catch(err) { console.error('still grab error', err); showToast('Could not grab still'); }
-  });
-
-  // Frame step buttons
-  const framePrev = document.createElement('button');
-  framePrev.className = 'vc-btn vc-frame-step';
-  framePrev.title = 'Previous frame (hold to repeat)';
-  framePrev.textContent = '‹';
-  const frameNext = document.createElement('button');
-  frameNext.className = 'vc-btn vc-frame-step';
-  frameNext.title = 'Next frame (hold to repeat)';
-  frameNext.textContent = '›';
-
-  function getFrameDur() { return 1 / (video._fps || 30); }
-  function stepFrame(dir) {
-    video.pause();
-    video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + dir * getFrameDur()));
-  }
-  function bindFrameBtn(btn, dir) {
-    let _hold = null;
-    btn.addEventListener('mousedown', e => { e.stopPropagation(); stepFrame(dir); _hold = setTimeout(function repeat(){ stepFrame(dir); _hold = setTimeout(repeat, 60); }, 350); });
-    btn.addEventListener('mouseup',   () => { clearTimeout(_hold); });
-    btn.addEventListener('mouseleave',() => { clearTimeout(_hold); });
-  }
-  bindFrameBtn(framePrev, -1);
-  bindFrameBtn(frameNext,  1);
-
-  // Shift+hover to scrub frame by frame
-  let _scrubLastX = null;
-  // Scrub and click-to-play go on the overlay (not the video element)
-  // because WebView2's native video compositor layer eats all pointer events regardless of z-index
-  videoOverlay.addEventListener('mousemove', e => {
-    if (!e.shiftKey) {
-      if (_scrubLastX !== null) { _scrubLastX = null; videoOverlay.classList.remove('scrubbing'); }
-      return;
-    }
-    videoOverlay.classList.add('scrubbing');
-    if (_scrubLastX === null) { _scrubLastX = e.clientX; return; }
-    const dx = e.clientX - _scrubLastX;
-    _scrubLastX = e.clientX;
-    if (Math.abs(dx) < 1) return;
-    video.pause();
-    video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + (dx / 4) * getFrameDur()));
-  });
-  videoOverlay.addEventListener('mouseleave', () => { _scrubLastX = null; videoOverlay.classList.remove('scrubbing'); });
-
-  // Click overlay to toggle play/pause
-  videoOverlay.addEventListener('mousedown', e => {
-    if (e.button !== 0) return;
-    if (e.shiftKey) { e.stopPropagation(); e.preventDefault(); return; }
-    const sx = e.clientX, sy = e.clientY;
-    let moved = false;
-    const onMove = m => { if (Math.abs(m.clientX-sx) > 3 || Math.abs(m.clientY-sy) > 3) moved = true; };
-    document.addEventListener('mousemove', onMove);
-    videoOverlay.addEventListener('click', ce => {
-      document.removeEventListener('mousemove', onMove);
-      if (moved) { ce.stopPropagation(); ce.preventDefault(); }
-      else { video.paused ? video.play() : video.pause(); }
-    }, { once: true });
-  });
-
-  // Sync play/pause icon
-  video.addEventListener('play',  () => { playBtn.querySelector('.vc-icon-play').style.display='none'; playBtn.querySelector('.vc-icon-pause').style.display=''; startSeekRAF(); });
-  video.addEventListener('pause', () => { playBtn.querySelector('.vc-icon-play').style.display=''; playBtn.querySelector('.vc-icon-pause').style.display='none'; });
-  video.addEventListener('ended', () => { playBtn.querySelector('.vc-icon-play').style.display=''; playBtn.querySelector('.vc-icon-pause').style.display='none'; });
-  video.addEventListener('loadedmetadata', () => { seekBar.value = 0; });
-  // Update seek bar via rAF while playing — smoother than timeupdate (which fires ~4Hz)
-  video.addEventListener('seeked', () => { if (video.duration) seekBar.value = (video.currentTime / video.duration) * 1000; });
-  let _rafId = null;
-  function startSeekRAF() {
-    if (_rafId) return;
-    function tick() {
-      if (!video.paused && !video.ended && video.duration) {
-        seekBar.value = (video.currentTime / video.duration) * 1000;
-        _rafId = requestAnimationFrame(tick);
-      } else {
-        _rafId = null;
-      }
-    }
-    _rafId = requestAnimationFrame(tick);
-  }
-
-  footer.appendChild(framePrev);
-  footer.appendChild(seekBar);
-  footer.appendChild(frameNext);
-  footer.appendChild(volBtn);
-  footer.appendChild(fsBtn);
-  footer.appendChild(stillBtn);
-  footer.appendChild(playBtn);
-  card.appendChild(footer);
-
-  makeResizeHandles(card, 160, 100, (el, nw) => {
-    el.style.width = nw + 'px';
-    requestAnimationFrame(() => { el.style.height = ''; });
-  });
-
-  const connPort = document.createElement('div'); connPort.className = 'conn-port';
-  connPort.addEventListener('mousedown', e => { e.stopPropagation(); startConnDrag(e, card); });
-  card.appendChild(connPort);
-
-  addRelHandle(card);
-  card._vcBound = true; // listeners already attached inline above; prevent bindVideoCard from doubling them
-  bindImgCard(card);
-  world.appendChild(card);
-
-  card.style.opacity='0'; card.style.transform='scale(0.95)';
-  card.style.transition='opacity 0.18s, transform 0.18s';
-  requestAnimationFrame(()=>{ card.style.opacity='1'; card.style.transform='scale(1)'; });
-  return card;
+  return proxy;
 }
 
 // ── audio card ──
 function makeAudioCard(id, url, x, y, filename) {
-  const card = document.createElement('div');
-  card.className = 'img-card audio-card';
-  card.style.cssText = `left:${x}px;top:${y}px;width:320px`;
-  card.dataset.imgId = id;
-  card.dataset.mediaType = 'audio';
-
-  const fname = filename || '';
-  const ext = (fname.match(/\.([^.]+)$/) || ['',''])[1].toUpperCase() || 'AUDIO';
-  const rawName = fname
-    ? fname.replace(/\.[^.]+$/, '').replace(/[_-]/g, ' ').trim()
-    : id.replace(/^(audio|media)_\d+_[a-z0-9]+_?/, '').replace(/\.[^.]+$/, '').replace(/[_-]/g, ' ').trim() || 'Untitled';
-
-  // hidden native audio element
-  const audio = document.createElement('audio');
-  audio.src = url;
-  audio.preload = 'metadata';
-  audio.style.display = 'none';
-  audio.addEventListener('mousedown', e => e.stopPropagation());
-  card.appendChild(audio);
-
-  card.insertAdjacentHTML('beforeend', `
-    <div class="ac-body">
-      <div class="ac-top">
-        <div class="ac-art">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-        </div>
-        <div class="ac-info">
-          <div class="ac-title">${rawName}</div>
-          <div class="ac-artist">${ext}</div>
-        </div>
-        <button class="ac-play">
-          <svg class="ac-icon-play" viewBox="0 0 24 24"><polygon points="6,3 20,12 6,21" fill="currentColor"/></svg>
-          <svg class="ac-icon-pause" viewBox="0 0 24 24" style="display:none"><rect x="5" y="3" width="4" height="18" rx="1.5" fill="currentColor"/><rect x="15" y="3" width="4" height="18" rx="1.5" fill="currentColor"/></svg>
-        </button>
-      </div>
-      <div class="ac-progress-bar"><div class="ac-progress-fill"><div class="ac-thumb"></div></div></div>
-      <div class="ac-timebar"><span class="ac-cur">0:00</span><span class="ac-dur">—</span></div>
-    </div>`);
-
-  bindAudioCard(card);
-
-  makeResizeHandles(card, 200, 80, (el, nw) => {
-    const body = el.querySelector('.ac-body');
-    if (body) body.style.width = (nw - 12) + 'px';
+  // Route through elementsStore — MediaOverlay + AudioPlayer.svelte render this
+  const el = {
+    id:      'aud_' + id,
+    type:    'audio',
+    x, y,
+    width:   320,
+    height:  100,
+    zIndex:  Date.now(),
+    pinned:  false, locked: false, votes: 0, reactions: [],
+    color:   null,
+    content: { imgId: id, sourcePath: filename || null, nativeW: 0, nativeH: 0 },
+  };
+  elementsStore.update(els => [...els, el]);
+  const proxy = { dataset: { imgId: id, mediaType: 'audio' }, _elId: el.id };
+  Object.defineProperty(proxy.dataset, 'sourcePath', {
+    set(v) { elementsStore.update(els => els.map(e => e.id === el.id ? { ...e, content: { ...e.content, sourcePath: v } } : e)); },
+    get() { return el.content.sourcePath; },
+    configurable: true,
   });
-
-  const tb = document.createElement('div'); tb.className = 'img-toolbar';
-  tb.innerHTML = `<button class="img-tb-btn danger" title="delete" onclick="imgDelete(this.closest('.img-card'))">delete</button>`;
-  tb.addEventListener('mousedown', e => e.stopPropagation());
-  card.appendChild(tb);
-
-  const connPort = document.createElement('div'); connPort.className = 'conn-port';
-  connPort.addEventListener('mousedown', e => { e.stopPropagation(); startConnDrag(e, card); });
-  card.appendChild(connPort);
-
-  addRelHandle(card);
-  bindImgCard(card);
-  world.appendChild(card);
-
-  card.style.opacity='0'; card.style.transform='scale(0.95)';
-  card.style.transition='opacity 0.18s, transform 0.18s';
-  requestAnimationFrame(()=>{ card.style.opacity='1'; card.style.transform='scale(1)'; });
-  return card;
+  return proxy;
 }
-
-function bindAudioCard(card) {
-  if (card._audBound) return;
-  card._audBound = true;
-  const aud = card.querySelector('audio');
-  if (!aud) return;
-  const playBtn = card.querySelector('.ac-play');
-  const iconPlay = card.querySelector('.ac-icon-play');
-  const iconPause = card.querySelector('.ac-icon-pause');
-  const fill = card.querySelector('.ac-progress-fill');
-  const cur = card.querySelector('.ac-cur');
-  const durEl = card.querySelector('.ac-dur');
-  const bar = card.querySelector('.ac-progress-bar');
-  if (!playBtn || !bar) return;
-
-  function fmt(s) {
-    if (!isFinite(s)) return '—';
-    const m = Math.floor(s / 60), ss = Math.floor(s % 60);
-    return `${m}:${ss.toString().padStart(2,'0')}`;
-  }
-
-  aud.addEventListener('loadedmetadata', () => { if(durEl) durEl.textContent = fmt(aud.duration); });
-  aud.addEventListener('timeupdate', () => {
-    if(cur) cur.textContent = fmt(aud.currentTime);
-    const pct = aud.duration ? (aud.currentTime / aud.duration) * 100 : 0;
-    if(fill) fill.style.width = pct + '%';
-  });
-  aud.addEventListener('ended', () => {
-    if(iconPlay) iconPlay.style.display = '';
-    if(iconPause) iconPause.style.display = 'none';
-  });
-
-  playBtn.addEventListener('mousedown', e => e.stopPropagation());
-  playBtn.addEventListener('click', e => {
-    e.stopPropagation();
-    if (aud.paused) { aud.play(); if(iconPlay) iconPlay.style.display = 'none'; if(iconPause) iconPause.style.display = ''; }
-    else { aud.pause(); if(iconPlay) iconPlay.style.display = ''; if(iconPause) iconPause.style.display = 'none'; }
-  });
-
-  const prevBtn = card.querySelector('.ac-btn-prev');
-  const nextBtn = card.querySelector('.ac-btn-next');
-  if (prevBtn) { prevBtn.addEventListener('mousedown', e => e.stopPropagation()); prevBtn.addEventListener('click', e => { e.stopPropagation(); if(aud.duration) aud.currentTime = Math.max(0, aud.currentTime - 10); }); }
-  if (nextBtn) { nextBtn.addEventListener('mousedown', e => e.stopPropagation()); nextBtn.addEventListener('click', e => { e.stopPropagation(); if(aud.duration) aud.currentTime = Math.min(aud.duration, aud.currentTime + 10); }); }
-
-  bar.addEventListener('mousedown', e => {
-    e.stopPropagation();
-    const seek = (ev) => {
-      const r = bar.getBoundingClientRect();
-      const pct = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width));
-      if (aud.duration) aud.currentTime = pct * aud.duration;
-    };
-    seek(e);
-    const onMove = ev => seek(ev);
-    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  });
-}
-
-// In-memory blob cache so we can recreate object URLs after undo/redo/restore
-const _mediaBlobs = {};
-
 // Tauri-only: place media directly from a filesystem path using convertFileSrc (no file read into memory)
 async function placeMediaFromPath(filePath, wx, wy, mediaType, mimeType) {
   const { convertFileSrc } = window.__TAURI__.core;
@@ -1392,228 +594,10 @@ async function placeMediaBlob(blob, wx, wy, sourcePath, mediaType) {
   else if (!IS_TAURI) card.dataset.sourcePath = 'D:\\art\\test\\' + (blob.name || id);
 }
 
-function bindVideoCard(card) {
-  if (card._vcBound) return;
-  card._vcBound = true;
-  const video = card.querySelector('.vc-video');
-  const playBtn = card.querySelector('.vc-play');
-  const seekBar = card.querySelector('.vc-seek');
-  const volBtn  = card.querySelector('.vc-vol');
-  const fsBtn   = card.querySelector('.vc-fs');
-  const stillBtn = card.querySelector('.vc-still');
-  if (!video) return;
-  // Ensure smooth playback attributes are set even on restored cards
-  video.crossOrigin = 'anonymous';
-  video.preload = 'auto';
-  video.setAttribute('playsinline', '');
-
-  function getFrameDurV() { return 1 / (video._fps || 30); }
-  function stepFrameV(dir) {
-    video.pause();
-    video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + dir * getFrameDurV()));
-  }
-
-  // Scrub and click-to-play go on the overlay — WebView2 native video layer eats pointer events
-  let overlayV = card.querySelector('.vc-video-overlay');
-  if (!overlayV) {
-    // Wrap the bare video element and inject overlay (old serialized cards pre-v0.7.26)
-    let wrapV = card.querySelector('.vc-video-wrap');
-    if (!wrapV && video) {
-      wrapV = document.createElement('div');
-      wrapV.className = 'vc-video-wrap';
-      video.parentNode.insertBefore(wrapV, video);
-      wrapV.appendChild(video);
-    }
-    if (wrapV) { overlayV = document.createElement('div'); overlayV.className = 'vc-video-overlay'; wrapV.appendChild(overlayV); }
-  }
-  let _scrubLastXV = null;
-  if (overlayV) {
-    overlayV.addEventListener('mousemove', e => {
-      if (!e.shiftKey) {
-        if (_scrubLastXV !== null) { _scrubLastXV = null; overlayV.classList.remove('scrubbing'); }
-        return;
-      }
-      overlayV.classList.add('scrubbing');
-      if (_scrubLastXV === null) { _scrubLastXV = e.clientX; return; }
-      const dx = e.clientX - _scrubLastXV;
-      _scrubLastXV = e.clientX;
-      if (Math.abs(dx) < 1) return;
-      video.pause();
-      video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + (dx / 4) * getFrameDurV()));
-    });
-    overlayV.addEventListener('mouseleave', () => { _scrubLastXV = null; overlayV.classList.remove('scrubbing'); });
-    overlayV.addEventListener('mousedown', e => {
-      if (e.button !== 0) return;
-      if (e.shiftKey) { e.stopPropagation(); e.preventDefault(); return; }
-      const sx = e.clientX, sy = e.clientY;
-      let moved = false;
-      const onMove = m => { if (Math.abs(m.clientX-sx) > 3 || Math.abs(m.clientY-sy) > 3) moved = true; };
-      document.addEventListener('mousemove', onMove);
-      overlayV.addEventListener('click', ce => {
-        document.removeEventListener('mousemove', onMove);
-        if (moved) { ce.stopPropagation(); ce.preventDefault(); }
-        else { video.paused ? video.play() : video.pause(); }
-      }, { once: true });
-    });
-  }
-
-  // Frame step buttons
-  const frameStepBtns = card.querySelectorAll('.vc-frame-step');
-  const framePrevB = frameStepBtns[0];
-  const frameNextB = frameStepBtns[1];
-  function bindFrameBtnV(btn, dir) {
-    if (!btn) return;
-    let _hold = null;
-    btn.addEventListener('mousedown', e => { e.stopPropagation(); stepFrameV(dir); _hold = setTimeout(function repeat(){ stepFrameV(dir); _hold = setTimeout(repeat, 60); }, 350); });
-    btn.addEventListener('mouseup',   () => clearTimeout(_hold));
-    btn.addEventListener('mouseleave',() => clearTimeout(_hold));
-  }
-  bindFrameBtnV(framePrevB, -1);
-  bindFrameBtnV(frameNextB,  1);
-
-  // rAF loop for seek bar — runs only while playing, 60fps updates
-  let _rafIdV = null;
-  function startSeekRAFV() {
-    if (_rafIdV) return;
-    function tick() {
-      if (!video.paused && !video.ended && video.duration) {
-        if (seekBar) seekBar.value = (video.currentTime / video.duration) * 1000;
-        _rafIdV = requestAnimationFrame(tick);
-      } else {
-        _rafIdV = null;
-      }
-    }
-    _rafIdV = requestAnimationFrame(tick);
-  }
-
-  if (playBtn) {
-    playBtn.addEventListener('mousedown', e => e.stopPropagation());
-    playBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      if (video.paused) { video.play().catch(() => {}); } else { video.pause(); }
-    });
-    video.addEventListener('play',  () => { playBtn.querySelector('.vc-icon-play').style.display='none'; playBtn.querySelector('.vc-icon-pause').style.display=''; startSeekRAFV(); });
-    video.addEventListener('pause', () => { playBtn.querySelector('.vc-icon-play').style.display=''; playBtn.querySelector('.vc-icon-pause').style.display='none'; });
-    video.addEventListener('ended', () => { playBtn.querySelector('.vc-icon-play').style.display=''; playBtn.querySelector('.vc-icon-pause').style.display='none'; });
-  }
-  if (seekBar) {
-    seekBar.addEventListener('mousedown', e => e.stopPropagation());
-    // Throttle seeks to one per animation frame — prevents seek queue build-up
-    let _seekPendingV = false;
-    seekBar.addEventListener('input', () => {
-      if (!video.duration) return;
-      if (!_seekPendingV) {
-        _seekPendingV = true;
-        requestAnimationFrame(() => {
-          video.currentTime = (seekBar.value / 1000) * video.duration;
-          _seekPendingV = false;
-        });
-      }
-    });
-    video.addEventListener('seeked', () => { if (video.duration && seekBar) seekBar.value = (video.currentTime / video.duration) * 1000; });
-    // On restore: reset to beginning (seek bar value from serialized HTML is stale)
-    if (seekBar) seekBar.value = 0;
-    video.addEventListener('loadedmetadata', () => { video.currentTime = 0; }, { once: true });
-  }
-  if (volBtn) {
-    volBtn.addEventListener('mousedown', e => e.stopPropagation());
-    volBtn.addEventListener('click', e => { e.stopPropagation(); video.muted = !video.muted; volBtn.classList.toggle('muted', video.muted); });
-  }
-  if (fsBtn) {
-    fsBtn.addEventListener('mousedown', e => e.stopPropagation());
-    fsBtn.addEventListener('click', e => { e.stopPropagation(); openVideoFullscreen(video); });
-  }
-  if (stillBtn) {
-    stillBtn.addEventListener('mousedown', e => e.stopPropagation());
-    stillBtn.addEventListener('click', async e => {
-      e.stopPropagation();
-      if (!video || video.readyState < 2) { showToast('Video not ready'); return; }
-      try {
-        const c = document.createElement('canvas');
-        c.width = video.videoWidth; c.height = video.videoHeight;
-        c.getContext('2d').drawImage(video, 0, 0);
-        const blob = await new Promise(res => c.toBlob(res, 'image/png'));
-        const sid = await saveImgBlob(blob);
-        let srcPath = null;
-        if (IS_TAURI && typeof _projectDir !== 'undefined' && _projectDir) srcPath = await saveImgToProjectDir(blob, sid);
-        const dataURL = await new Promise((res, rej) => { const r = new FileReader(); r.onload = ev => res(ev.target.result); r.onerror = rej; r.readAsDataURL(blob); });
-        blobURLCache[sid] = dataURL;
-        const dispW = Math.min(video.videoWidth, 600); const dispH = Math.round(video.videoHeight * (dispW / video.videoWidth));
-        const { x: cx, y: cy } = findStillSlot(card, dispW, dispH);
-        snapshot();
-        const imgCard = makeImgCard(sid, dataURL, cx, cy, dispW, dispH, video.videoWidth, video.videoHeight);
-        if (srcPath) imgCard.dataset.sourcePath = srcPath;
-        showToast('Still captured');
-      } catch(err) { console.error('still grab error', err); showToast('Could not grab still'); }
-    });
-  }
-}
 
 // ── restore img cards after undo/redo/load ──
-async function restoreImgCards() {
-  const cards = document.querySelectorAll('.img-card[data-img-id]');
-  for (const card of cards) {
-    const id = card.dataset.imgId;
-    if (!id) continue;
-    // try cache first
-    const mediaType = card.dataset.mediaType;
-    const mediaEl = mediaType === 'video' ? card.querySelector('video') : mediaType === 'audio' ? card.querySelector('audio') : card.querySelector('img');
-    if (!mediaEl) continue;
-    if (blobURLCache[id]) {
-      mediaEl.src = blobURLCache[id];
-    } else if (IS_TAURI && (mediaType === 'video' || mediaType === 'audio')) {
-      // In Tauri: resolve path in images dir and use convertFileSrc for direct streaming
-      try {
-        const { join } = window.__TAURI__.path;
-        const { convertFileSrc } = window.__TAURI__.core;
-        const dir = await getTauriImagesDir();
-        const exts = mediaType === 'video' ? ['.mp4', '.webm', '.mov', '.mkv'] : ['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a', '.opus'];
-        let assetURL = null;
-        for (const ext of exts) {
-          try {
-            const p = await join(dir, id + ext);
-            await window.__TAURI__.fs.stat(p); // throws if file doesn't exist
-            assetURL = convertFileSrc(p);
-            break;
-          } catch { /* try next ext */ }
-        }
-        if (assetURL) {
-          blobURLCache[id] = assetURL;
-          mediaEl.src = assetURL;
-        }
-      } catch (e) { console.warn('restoreImgCards Tauri media restore failed', e); }
-    } else {
-      const blob = await loadImgBlob(id);
-      if (blob) {
-        if (mediaType === 'video' || mediaType === 'audio') {
-          // Use object URL for media — streaming-capable, no base64 overhead
-          const objURL = URL.createObjectURL(blob);
-          blobURLCache[id] = objURL;
-          _mediaBlobs[id] = blob;
-          mediaEl.src = objURL;
-        } else {
-          const dataURL = await new Promise((res, rej) => {
-            const reader = new FileReader();
-            reader.onload = e => res(e.target.result);
-            reader.onerror = rej;
-            reader.readAsDataURL(blob);
-          });
-          blobURLCache[id] = dataURL;
-          mediaEl.src = dataURL;
-        }
-      } else {
-        if (mediaType !== 'video' && mediaType !== 'audio') {
-          mediaEl.style.opacity = '0.3';
-          mediaEl.alt = 'image not found';
-        }
-      }
-    }
-    if (mediaType === 'video') bindVideoCard(card);
-    bindImgCard(card);
-    const rh = card.querySelector('.img-resize');
-    if (rh) rh.addEventListener('mousedown', e => startImgResize(e, card));
-  }
-}
+// No-op: media cards now live in elementsStore; MediaOverlay.svelte handles restoration.
+async function restoreImgCards() {}
 
 // ── Import panel ──
 function toggleImportPanel(e) {
@@ -1730,18 +714,25 @@ async function exportSharedCanvas() {
     await mkdir(videosDir, { recursive: true });
     await mkdir(audioDir,  { recursive: true });
 
-    const state = serializeCanvas();
-    state.viewport = { scale, px, py };
-    state.shareFolder = true;
+    const state = {
+      format: 2,
+      elements:  _getStore(elementsStore),
+      strokes:   _getStore(strokesStore),
+      relations: _getStore(relationsStore),
+      viewport:  { scale, px, py },
+      shareFolder: true,
+    };
 
     const fileMap = {};
     const appImagesDir = await getTauriImagesDir();
 
-    for (const card of document.querySelectorAll('.img-card[data-img-id]')) {
-      const id = card.dataset.imgId;
+    // Gather media elements from elementsStore
+    const mediaEls = _getStore(elementsStore).filter(e => ['image','video','audio'].includes(e.type));
+    for (const el of mediaEls) {
+      const id = el.content?.imgId;
       if (!id) continue;
-      const mediaType  = card.dataset.mediaType;
-      const sourcePath = card.dataset.sourcePath || '';
+      const mediaType  = el.type;
+      const sourcePath = el.content?.sourcePath || '';
 
       let srcPath = null;
       if (sourcePath) {
@@ -1772,17 +763,13 @@ async function exportSharedCanvas() {
       } catch (e) { console.warn('share: copy failed', srcPath, e); }
     }
 
-    // Patch serialized HTML: update data-source-path to share-relative path
-    state.items = (state.items || []).map(item => {
-      if (!item || !item.html) return item;
-      let html = item.html;
-      for (const [id, relPath] of Object.entries(fileMap)) {
-        html = html.replace(
-          new RegExp('(data-img-id="' + id + '"[^>]*?)(?:\\s+data-source-path="[^"]*")?', 'g'),
-          '$1 data-source-path="' + relPath + '"'
-        );
-      }
-      return { ...item, html };
+    // Patch elementsStore sourcePaths to share-relative paths in the exported state
+    state.elements = (state.elements || []).map(el => {
+      if (!['image','video','audio'].includes(el.type)) return el;
+      const id = el.content?.imgId;
+      const relPath = id && fileMap[id];
+      if (!relPath) return el;
+      return { ...el, content: { ...el.content, sourcePath: relPath } };
     });
 
     state.fileMap = fileMap;
@@ -2200,20 +1187,31 @@ function clearAll(){ document.getElementById('clear-confirm').classList.add('sho
 function closeClearConfirm(){ document.getElementById('clear-confirm').classList.remove('show'); }
 function confirmClear(){
   closeClearConfirm();
-  // Clear PixiJS elements store (new notes live here)
   clearCanvasState();
-  // Clear legacy DOM media cards still in #world
-  document.querySelectorAll('.img-card').forEach(e=>{ cleanupElConnections(e); e.remove(); });
-  selected.clear(); updateSelBar();
 }
 
-// ── Search (DOM-based, kept minimal) ──
+// ── Search (store-based) ──
 let searchResults=[], searchIdx=0;
-function toggleSearch(){ const box=document.getElementById('search-box');if(!box)return;box.classList.toggle('show');if(box.classList.contains('show'))document.getElementById('search-input')?.focus();else{clearSearchHL();searchResults=[];} }
-function doSearch(){ clearSearchHL();searchResults=[];searchIdx=0; const q=document.getElementById('search-input')?.value.trim().toLowerCase(); if(!q){const sc=document.getElementById('search-count');if(sc)sc.textContent='';return;} document.querySelectorAll('.img-card').forEach(n=>{ const t=n.dataset.sourcePath||''; if(t.toLowerCase().includes(q)) searchResults.push(n); }); const sc=document.getElementById('search-count');if(sc)sc.textContent=searchResults.length?`${searchIdx+1}/${searchResults.length}`:'0 results'; }
-function searchNav(dir){ if(!searchResults.length)return; searchIdx=(searchIdx+dir+searchResults.length)%searchResults.length; const sc=document.getElementById('search-count');if(sc)sc.textContent=`${searchIdx+1}/${searchResults.length}`; }
-function clearSearchHL(){ document.querySelectorAll('.search-highlight').forEach(n=>n.classList.remove('search-highlight')); }
-function panToNote(note){ window._applyViewportTo?.(note.offsetLeft, note.offsetTop); }
+function toggleSearch(){ const box=document.getElementById('search-box');if(!box)return;box.classList.toggle('show');if(box.classList.contains('show'))document.getElementById('search-input')?.focus();else{searchResults=[];} }
+function doSearch(){
+  searchResults=[]; searchIdx=0;
+  const q=document.getElementById('search-input')?.value.trim().toLowerCase();
+  const sc=document.getElementById('search-count');
+  if(!q){if(sc)sc.textContent='';return;}
+  const els=_getStore(elementsStore);
+  searchResults=els.filter(e=>{
+    const sp=e.content?.sourcePath||'';
+    const txt=e.content?.text||'';
+    const blk=e.content?.blocks?.content?.map?.(n=>n.content?.map?.(t=>t.text||'').join(' ')||'').join(' ')||'';
+    const title=e.content?.todoTitle||'';
+    return sp.toLowerCase().includes(q)||txt.toLowerCase().includes(q)||blk.toLowerCase().includes(q)||title.toLowerCase().includes(q);
+  });
+  if(sc)sc.textContent=searchResults.length?`${searchIdx+1}/${searchResults.length}`:'0 results';
+  if(searchResults.length) panToNote(searchResults[0]);
+}
+function searchNav(dir){ if(!searchResults.length)return; searchIdx=(searchIdx+dir+searchResults.length)%searchResults.length; const sc=document.getElementById('search-count');if(sc)sc.textContent=`${searchIdx+1}/${searchResults.length}`; panToNote(searchResults[searchIdx]); }
+function clearSearchHL(){}
+function panToNote(el){ if(el?.id) window._pixiCanvas?.zoomToElement?.(el.id); }
 
 // ── Minimap — toggle store; Minimap.svelte renders reactively ──
 function toggleMinimap(){ minimapVisibleStore.update(v => !v); }
@@ -2272,6 +1270,163 @@ function openCmdPalette(){} function closeCmdPalette(){ document.getElementById(
 function renderBookmarkList(){} function addViewBookmark(){}
 function addSummaryAsNote(){} function closeSummary(){} function copySummary(){}
 
+// ── Canvas toolbar / selection bar / context menu delegates ──────────────────
+// These are wired via onclick= in index.html and delegate to Canvas.svelte's
+// _pixiCanvas API (exposed via $effect in Canvas.svelte).
+
+function addDrawCard() {
+  const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+  const pos = typeof c2w === 'function' ? c2w(cx, cy) : { x: 3000, y: 3000 };
+  const id = 'draw_' + Date.now();
+  elementsStore.update(els => [...els, {
+    id, type: 'draw', x: pos.x, y: pos.y,
+    width: 400, height: 300,
+    zIndex: Date.now(), pinned: false, locked: false, votes: 0, reactions: [],
+    color: null, content: { strokes: [] },
+  }]);
+  storeSnapshot();
+}
+
+function alignSelFrame(dir)        { window._pixiCanvas?.alignSelected?.(dir); }
+function distributeSelFrame(axis)  { window._pixiCanvas?.distributeSelected?.(axis); }
+function gridSelected() {
+  const sel = window.selectedElIds ?? [];
+  if (sel.length < 2) return;
+  const els = _getStore(elementsStore).filter(e => sel.includes(e.id));
+  if (!els.length) return;
+  const cols = Math.ceil(Math.sqrt(els.length));
+  const GAP = 24;
+  const maxW = Math.max(...els.map(e => e.width || 200));
+  const maxH = Math.max(...els.map(e => e.height || 150));
+  const ox = Math.min(...els.map(e => e.x)), oy = Math.min(...els.map(e => e.y));
+  elementsStore.update(all => all.map(e => {
+    const i = sel.indexOf(e.id);
+    if (i < 0) return e;
+    const col = i % cols, row = Math.floor(i / cols);
+    return { ...e, x: ox + col * (maxW + GAP), y: oy + row * (maxH + GAP) };
+  }));
+  storeSnapshot();
+}
+
+function changeSelectedFontSize(delta) {
+  elementsStore.update(els => {
+    const sel = window.selectedElIds ?? [];
+    return els.map(e => {
+      if (!sel.includes(e.id)) return e;
+      const cur = e.content?.fontSize ?? 12;
+      return { ...e, content: { ...(e.content ?? {}), fontSize: Math.max(8, Math.min(72, cur + delta)) } };
+    });
+  });
+  storeSnapshot();
+}
+
+// ── Note / Frame context menu (legacy DOM #note-menu / #frame-menu) ──────────
+// The active element ID is set by whatever code opens these menus.
+// We store it in _ctxMenuElId so the action buttons can find the right element.
+let _ctxMenuElId = null;
+function _openNoteMenu(elId, x, y) {
+  _ctxMenuElId = elId;
+  const m = document.getElementById('note-menu');
+  if (!m) return;
+  const el = _getStore(elementsStore).find(e => e.id === elId);
+  if (el) {
+    const pinLabel  = document.getElementById('nm-pin-label');
+    const lockLabel = document.getElementById('nm-lock-label');
+    if (pinLabel)  pinLabel.textContent  = el.pinned  ? 'unpin'   : 'pin';
+    if (lockLabel) lockLabel.textContent = el.locked  ? 'unlock'  : 'lock';
+  }
+  m.style.left = (x || 0) + 'px';
+  m.style.top  = (y || 0) + 'px';
+  m.classList.add('show');
+}
+function _closeNoteMenu() {
+  document.getElementById('note-menu')?.classList.remove('show');
+}
+function deleteMenuNote() {
+  if (_ctxMenuElId) { window._pixiCanvas?.deleteSelected?.(); }
+  _closeNoteMenu();
+}
+function deleteMenuFrame() {
+  if (_ctxMenuElId) { window._pixiCanvas?.deleteSelected?.(); }
+  document.getElementById('frame-menu')?.classList.remove('show');
+}
+function zoomToMenuNote()  { if (_ctxMenuElId) window._pixiCanvas?.zoomToElement?.(_ctxMenuElId); _closeNoteMenu(); }
+function zoomToMenuFrame() { if (_ctxMenuElId) window._pixiCanvas?.zoomToElement?.(_ctxMenuElId); document.getElementById('frame-menu')?.classList.remove('show'); }
+
+function togglePinNote() {
+  if (!_ctxMenuElId) return;
+  elementsStore.update(els => els.map(e => e.id === _ctxMenuElId ? { ...e, pinned: !e.pinned } : e));
+  storeSnapshot();
+  _closeNoteMenu();
+}
+function toggleLockNote() {
+  if (!_ctxMenuElId) return;
+  elementsStore.update(els => els.map(e => e.id === _ctxMenuElId ? { ...e, locked: !e.locked } : e));
+  storeSnapshot();
+  _closeNoteMenu();
+}
+
+function togglePinSelected() {
+  const sel = window.selectedElIds ?? [];
+  if (!sel.length) return;
+  const first = _getStore(elementsStore).find(e => e.id === sel[0]);
+  const nextPin = first ? !first.pinned : true;
+  elementsStore.update(els => els.map(e => sel.includes(e.id) ? { ...e, pinned: nextPin } : e));
+  storeSnapshot();
+}
+function toggleLockSelected() {
+  const sel = window.selectedElIds ?? [];
+  if (!sel.length) return;
+  const first = _getStore(elementsStore).find(e => e.id === sel[0]);
+  const nextLock = first ? !first.locked : true;
+  elementsStore.update(els => els.map(e => sel.includes(e.id) ? { ...e, locked: nextLock } : e));
+  storeSnapshot();
+}
+
+function toggleSnap() {
+  // snapEnabled lives in Canvas.svelte — we delegate so _pixiCanvas can expose a toggler
+  window._pixiCanvas?.toggleSnap?.();
+}
+
+function saveLink() {
+  const input = document.getElementById('note-link-input');
+  const url = input?.value?.trim() ?? '';
+  if (!_ctxMenuElId) return;
+  elementsStore.update(els => els.map(e =>
+    e.id === _ctxMenuElId ? { ...e, content: { ...(e.content ?? {}), link: url } } : e
+  ));
+  storeSnapshot();
+  _closeNoteMenu();
+}
+
+// ── Zoom delegations ─────────────────────────────────────────────────────────
+function doZoom(factor) {
+  // Canvas.svelte's doZoom(factor, cx, cy) — center of screen
+  window._pixiCanvas?.doZoom?.(factor, window.innerWidth / 2, window.innerHeight / 2);
+}
+
+// ── Save canvas to file (Tauri save dialog) ──────────────────────────────────
+async function saveCanvasToFile() {
+  if (!IS_TAURI) { showToast('Save to file is only available in the desktop app'); return; }
+  try {
+    const { save } = window.__TAURI__.dialog;
+    const { writeTextFile } = window.__TAURI__.fs;
+    const filePath = await save({ filters: [{ name: '0xflow canvas', extensions: ['json'] }] });
+    if (!filePath) return;
+    const state = {
+      format: 2,
+      elements:  _getStore(elementsStore),
+      strokes:   _getStore(strokesStore),
+      relations: _getStore(relationsStore),
+      viewport:  { scale, px, py },
+    };
+    await writeTextFile(filePath, JSON.stringify(state, null, 2));
+    showToast('Canvas saved to file');
+  } catch (e) {
+    showToast('Save failed: ' + e.message);
+  }
+}
+
 // ── Tauri window controls + auto-updater ──
 if (IS_TAURI) {
   (function () {
@@ -2329,9 +1484,7 @@ Object.assign(window, {
   restoreImgCards,
   triggerImg, onImgFiles, onPdfFiles,
   makeImgCard, makeVideoCard, makeAudioCard,
-  bindImgCard, rebindImgCard,
-  imgDelete, imgActualSize, imgFitView, imgScale,
-  imgExport,
+  imgDelete,
   getBlobURL, saveImgBlob, loadImgBlob, deleteImgBlob, duplicateImgBlob,
   saveImgToProjectDir,
   toggleSearch, doSearch, searchNav, clearSearchHL, panToNote,
@@ -2347,4 +1500,16 @@ Object.assign(window, {
   toggleCmdPalette, openCmdPalette, closeCmdPalette,
   summariseCanvas, clusterCanvas,
   openRadialMenu, closeRadialMenu,
+  addDrawCard,
+  alignSelFrame, distributeSelFrame, gridSelected,
+  changeSelectedFontSize,
+  deleteMenuNote, deleteMenuFrame,
+  zoomToMenuNote, zoomToMenuFrame,
+  togglePinNote, toggleLockNote,
+  togglePinSelected, toggleLockSelected,
+  toggleSnap, saveLink, doZoom,
+  saveCanvasToFile,
+  _openNoteMenu, _closeNoteMenu,
+  renderBookmarkList, addViewBookmark,
+  addSummaryAsNote, closeSummary, copySummary,
 });

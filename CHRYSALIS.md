@@ -975,11 +975,19 @@ legacy DOM canvas — both are active at the same time.
 - Deleted stale `src/canvas.js` (pre-migration leftover, not imported anywhere)
 
 **Still running (legacy):**
-- `legacy/images.js` (~2350 lines) — media cards, blob storage, import panel, shared canvas, timer, search, theme
-- `legacy/folder-browser.js` (913 lines) — project dir, file ops, folder tree, batch rename, img context menu
-- `legacy/canvas-stub.js` (~125 lines) — bridge for images.js/folder-browser.js
+- `legacy/images.js` (~1475 lines) — blob storage, import panel, shared canvas, timer, search, theme
+- `legacy/folder-browser.js` (~940 lines) — project dir, file ops, folder tree, batch rename, img context menu
+- `legacy/canvas-stub.js` (~70 lines) — minimal bridge: cv, c2w, snapshot, selected, no-ops
 
-**Next: Phase 9j** — media cards into elementsStore (image/video/audio as v2 elements), then `canvas-stub.js` can shrink further
+**Phase 9j — COMPLETE** — `makeImgCard`/`makeVideoCard`/`makeAudioCard` push into `elementsStore`; `restoreImgCards` is a no-op; `imgDelete` removes from store; migration uses correct `type` per mediaType.
+
+**Phase 9k — COMPLETE** — `canvas-stub.js` shrunk ~125→~70 lines; `images.js` ~580 dead DOM-card lines removed (`imgCardResizeFn`, `rebindImgCard`, `bindImgCard`, `imgActualSize`, `imgFitView`, `imgScale`, `imgExport`, DOM resize listeners, `findStillSlot`, `bindVideoCard`, `bindAudioCard`); stale `src/images.js` + `src/folder-browser.js` deleted.
+
+**Phase 9l — COMPLETE** — `folder-browser.js` ported to operate on `elementsStore` element IDs instead of DOM card refs: `execFileOpSingle`/`execFileOp`, `openRenamePanel`, `performRenameFromPanel`, `openImgCtxMenu`, `openBatchRenameModal`, `closeAllFolderUI` all use `_getSourcePath(cardOrId)`/`_setSourcePath(cardOrId, v)` helpers; `Canvas.svelte` exposes `window.selectedElIds` via `$effect` and adds "file ops…" context menu item for media elements; `folder-browser.js` imports `elementsStore` + `get` from svelte/store.
+
+**Phase 9m — COMPLETE** — `images.js` store-aligned: `confirmClear` no longer touches DOM cards; search (`doSearch`/`searchNav`/`panToNote`) rewritten to query `elementsStore` + call `window._pixiCanvas.zoomToElement(id)`; `exportSharedCanvas` reads `elementsStore`/`strokesStore`/`relationsStore` instead of DOM cards and serializes v2 format; `Canvas.svelte` adds `zoomToElement(id)` exposed on `_pixiCanvas`; `strokesStore`/`relationsStore` added to images.js imports.
+
+**Phase 9n — COMPLETE** — All `onclick=` globals wired: `addDrawCard`, `alignSelFrame`, `distributeSelFrame`, `gridSelected`, `changeSelectedFontSize`, `deleteMenuNote`, `deleteMenuFrame`, `zoomToMenuNote`, `zoomToMenuFrame`, `togglePinNote`, `toggleLockNote`, `togglePinSelected`, `toggleLockSelected`, `toggleSnap`, `saveLink`, `doZoom`, `saveCanvasToFile` added to `images.js` + exported on `window`; `Canvas.svelte` exposes `doZoom` and `toggleSnap` on `_pixiCanvas`; `vc-fs-overlay` IIFE (~140 lines) removed from `images.js` + DOM block removed from `index.html` + CSS purged from `style.css` (VideoPlayer.svelte handles video fullscreen).
 
 ---
 

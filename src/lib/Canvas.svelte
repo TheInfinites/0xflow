@@ -61,6 +61,9 @@
   // Context menu state
   let ctxMenu = $state(null); // { x, y, elId } or null
 
+  // Expose selected element IDs to legacy folder-browser.js for file ops
+  $effect(() => { window.selectedElIds = [...selected]; });
+
   // Clipboard
   let _clipboard = [];
 
@@ -1376,17 +1379,31 @@
     if (!zoomRaf) zoomRaf = requestAnimationFrame(animateZoom);
   }
 
+  function zoomToElement(id) {
+    const el = $elementsStore.find(e => e.id === id);
+    if (!el) return;
+    const fw = app?.screen.width || 1200, fh = app?.screen.height || 800;
+    const ex = el.x - WORLD_OFFSET, ey = el.y - WORLD_OFFSET;
+    const PAD = 80;
+    const newScale = Math.min((fw - PAD*2) / (el.width || 240), (fh - PAD*2) / (el.height || 180), ZOOM_MAX);
+    const cx = ex + (el.width || 240) / 2, cy = ey + (el.height || 180) / 2;
+    zoomTarget = { scale: newScale, px: fw/2 - cx * newScale, py: fh/2 - cy * newScale };
+    if (!zoomRaf) zoomRaf = requestAnimationFrame(animateZoom);
+  }
+
   // ── Expose to legacy bridge ──────────────────
   $effect(() => {
     window._pixiCanvas = {
       serializePixiCanvas, restorePixiCanvas,
       makeNote, makeAiNote, makeTodo, makeLabel,
-      zoomToFit, resetView, zoomToSelection,
+      zoomToFit, resetView, zoomToSelection, zoomToElement,
       deleteSelected, selectAll, duplicateSelected,
       copySelected, pasteClipboard,
       alignSelected, distributeSelected,
       groupSelected, ungroupSelected,
       snapshot, clearSelection,
+      doZoom: (factor, cx, cy) => doZoom(factor, cx ?? app?.screen.width/2 ?? 600, cy ?? app?.screen.height/2 ?? 400),
+      toggleSnap: () => { snapEnabled = !snapEnabled; },
     };
   });
 </script>
@@ -1457,6 +1474,13 @@
         <button class="ctx-item" onclick={() => ctxToggleCollapse(ctxMenu.elId)}>
           {ctxEl?.collapsed ? 'expand' : 'collapse'}
         </button>
+      {/if}
+      {#if ctxEl?.type === 'image' || ctxEl?.type === 'video' || ctxEl?.type === 'audio'}
+        {#if ctxEl?.content?.sourcePath}
+          <button class="ctx-item" onclick={() => { closeCtxMenu(); window.openImgCtxMenu?.(ctxMenu.x, ctxMenu.y, ctxMenu.elId); }}>
+            file ops…
+          </button>
+        {/if}
       {/if}
       <button class="ctx-item" onclick={() => ctxToggleLock(ctxMenu.elId)}>
         {ctxEl?.locked ? 'unlock' : 'lock'}

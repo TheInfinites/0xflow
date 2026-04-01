@@ -1680,56 +1680,6 @@ body.on-canvas.light .todo-progress { background: rgba(255,255,255,0.06); }
 .vc-video-overlay { position: absolute; inset: 0; z-index: 2; cursor: grab; }
 .vc-video-overlay.scrubbing { cursor: ew-resize; }
 .vc-video-overlay:active { cursor: grabbing; }
-/* ── Custom video fullscreen overlay ── */
-#vc-fs-overlay {
-  display: none;
-  position: fixed; inset: 0; z-index: 99999;
-  background: #000;
-  cursor: pointer;
-}
-#vc-fs-overlay.active { display: flex; align-items: center; justify-content: center; }
-#vc-fs-video {
-  width: 100%; height: 100%; object-fit: contain; display: block;
-  will-change: transform; transform: translateZ(0);
-}
-#vc-fs-ui {
-  position: absolute; bottom: 0; left: 0; right: 0;
-  opacity: 0; transition: opacity 0.2s; pointer-events: none;
-  background: linear-gradient(transparent, rgba(0,0,0,0.72));
-  padding: 32px 0 0;
-}
-#vc-fs-overlay.show-ui #vc-fs-ui { opacity: 1; pointer-events: auto; }
-#vc-fs-bar {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 18px 16px;
-}
-#vc-fs-bar button {
-  background: none; border: none; color: rgba(255,255,255,0.85);
-  cursor: pointer; padding: 4px; display: flex; align-items: center; flex-shrink: 0;
-}
-#vc-fs-bar button:hover { color: #fff; }
-#vc-fs-bar button svg { width: 18px; height: 18px; display: block; }
-#vc-fs-play svg { width: 20px; height: 20px; }
-#vc-fs-time, #vc-fs-dur {
-  font-size: 12px; color: rgba(255,255,255,0.7); white-space: nowrap;
-  font-variant-numeric: tabular-nums; flex-shrink: 0;
-  font-family: 'Geist Mono', monospace;
-}
-#vc-fs-seek {
-  flex: 1; height: 3px; appearance: none; -webkit-appearance: none;
-  background: linear-gradient(to right, rgba(255,255,255,0.85) var(--pct, 0%), rgba(255,255,255,0.25) var(--pct, 0%));
-  border-radius: 2px; cursor: pointer; outline: none;
-}
-#vc-fs-seek::-webkit-slider-thumb {
-  -webkit-appearance: none; width: 13px; height: 13px;
-  border-radius: 50%; background: #fff; cursor: pointer;
-}
-#vc-fs-seek::-moz-range-thumb {
-  width: 13px; height: 13px; border-radius: 50%; background: #fff;
-  border: none; cursor: pointer;
-}
-#vc-fs-mute .vc-fs-wave { transition: opacity 0.15s; }
-#vc-fs-mute.muted .vc-fs-wave { opacity: 0; }
 .vc-video:active { cursor: grabbing; }
 .vc-frame-step { font-family: 'Geist Mono', monospace; font-size: 9px; letter-spacing: 0.04em; }
 .vc-footer { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-top: 1px solid rgba(255,255,255,0.06); background: #0f0f0f; flex-shrink: 0; cursor: grab; }

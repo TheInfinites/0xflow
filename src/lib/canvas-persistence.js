@@ -261,13 +261,15 @@ export function migrateV1ToV2(raw) {
     };
 
     if (el.classList.contains('img-card')) {
-      // Media card — keep as placeholder (MediaOverlay handles actual media)
+      // Media card — MediaOverlay + ImageCard/VideoPlayer/AudioPlayer handle rendering
       const mediaType = el.dataset.mediaType || 'image';
+      const elType = mediaType === 'video' ? 'video' : mediaType === 'audio' ? 'audio' : 'image';
       const imgId = el.dataset.imgId || el.querySelector('img')?.dataset?.imgId || '';
+      const sourcePath = el.dataset.sourcePath || null;
       elements.push({
         ...base,
-        type: 'image',
-        content: { imgId, mediaType, alt: el.querySelector('img')?.alt || '' },
+        type: elType,
+        content: { imgId, sourcePath, nativeW: parseInt(el.dataset.nw)||0, nativeH: parseInt(el.dataset.nh)||0 },
       });
 
     } else if (el.classList.contains('lbl')) {
