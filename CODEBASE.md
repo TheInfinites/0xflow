@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.7.31**
+> Current version: **v0.7.32**
 
 ---
 
@@ -17,7 +17,7 @@
 │   ├── storage.js            Dashboard logic + localStorage store
 │   ├── canvas.js             Canvas, zoom, pan, selection, undo/redo, notes
 │   ├── editor.js             Block editor engine (contentEditable note editor)
-│   ├── images.js             Image/PDF/video/audio handling, AI features, updater
+│   ├── images.js             Thin bootstrap: imports from media-service.js, shared canvas export/import, window globals
 │   ├── folder-browser.js     File ops context menu + cascading folder browser
 │   ├── tauri-mock.js         Browser dev mode — stubs window.__TAURI__ APIs
 │   └── fonts/                14 bundled TTF files (Geist, Geist Mono, Barlow Condensed, DM Mono)
@@ -63,8 +63,11 @@ style.css            All CSS + @font-face declarations
 storage.js           Dashboard, projects, folders (nested), localStorage
 canvas.js            Pan/zoom, notes, selection, undo/redo, AI features
 editor.js            Block editor (paragraph, headings, lists, todo, code, divider)
-images.js            Image/PDF/video/audio handling, auto-updater, window controls
-folder-browser.js    Right-click context menu, cascading folder browser
+images.js            Thin bootstrap — shared canvas export/import, non-media window globals
+media-service.js     Blob storage, EXR parser, all media placement
+MediaDropHandler.svelte  Clipboard paste + Tauri drag-drop + browser drag-drop
+ImportPanel.svelte   Import button dropdown (image/EXR/PDF/video/audio/any)
+TimerPanel.svelte    Countdown timer with AudioContext beep
 ```
 
 ---

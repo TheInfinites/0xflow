@@ -73,6 +73,74 @@ const folderBrowserMount = document.createElement('div');
 document.body.appendChild(folderBrowserMount);
 mount(FolderBrowser, { target: folderBrowserMount });
 
+import MediaDropHandler from './lib/MediaDropHandler.svelte';
+const dropHandlerMount = document.createElement('div');
+document.body.appendChild(dropHandlerMount);
+mount(MediaDropHandler, { target: dropHandlerMount });
+
+import ImportPanel from './lib/ImportPanel.svelte';
+const importPanelMount = document.createElement('div');
+document.body.appendChild(importPanelMount);
+mount(ImportPanel, { target: importPanelMount });
+
+import TimerPanel from './lib/TimerPanel.svelte';
+const timerPanelMount = document.createElement('div');
+document.body.appendChild(timerPanelMount);
+mount(TimerPanel, { target: timerPanelMount });
+
+// ── Tauri window controls + auto-updater ──────────────────────────────────
+const _IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
+if (_IS_TAURI) {
+  (function () {
+    const invoke = window.__TAURI__.core.invoke;
+    const LABEL = 'main';
+    const winOps = {
+      minimize:       () => invoke('plugin:window|minimize',        { label: LABEL }),
+      toggleMaximize: () => invoke('plugin:window|toggle_maximize', { label: LABEL }),
+      close:          () => invoke('plugin:window|close',           { label: LABEL }),
+      startDragging:  () => invoke('plugin:window|start_dragging',  { label: LABEL }),
+    };
+    document.getElementById('win-controls').style.display = 'flex';
+    document.getElementById('win-min').addEventListener('click',   e => { e.stopPropagation(); winOps.minimize(); });
+    document.getElementById('win-max').addEventListener('click',   e => { e.stopPropagation(); winOps.toggleMaximize(); });
+    document.getElementById('win-close').addEventListener('click', e => { e.stopPropagation(); winOps.close(); });
+    document.querySelectorAll('.win-ctrl').forEach(btn => btn.addEventListener('mousedown', e => e.stopPropagation()));
+    function isDragTarget(e) {
+      if (e.target.closest('.win-ctrl, button, input, textarea, select, a')) return false;
+      return !!e.target.closest('#bar, #topbar');
+    }
+    document.addEventListener('mousedown', e => { if (isDragTarget(e)) winOps.startDragging(); });
+    document.addEventListener('dblclick',  e => { if (isDragTarget(e)) winOps.toggleMaximize(); });
+
+    async function checkForAppUpdate(silent) {
+      try {
+        const { Channel } = window.__TAURI__.core;
+        const meta = await invoke('plugin:updater|check', {});
+        if (meta && meta.version) {
+          const label = `\u2191 update to v${meta.version}`;
+          const dashBtn   = document.getElementById('update-btn');
+          const canvasBtn = document.getElementById('canvas-update-btn');
+          if (dashBtn)   { dashBtn.style.display = 'inline-flex';   dashBtn.textContent = label; }
+          if (canvasBtn) { canvasBtn.style.display = 'inline-flex'; canvasBtn.textContent = label; }
+          if (silent) { window.showToast?.(`v${meta.version} available \u2014 click the update button`); return; }
+          if (confirm(`Update v${meta.version} is available. Install now?`)) {
+            window.showToast?.('Downloading update\u2026');
+            const ch = new Channel();
+            await invoke('plugin:updater|download_and_install', { onEvent: ch, rid: meta.rid });
+            window.showToast?.('Update installed \u2014 restarting\u2026');
+            setTimeout(() => invoke('plugin:process|restart', {}), 1000);
+          }
+        } else if (!silent) { window.showToast?.("You're on the latest version"); }
+      } catch { if (!silent) window.showToast?.('Could not check for updates'); }
+    }
+    invoke('plugin:app|version', {}).then(ver => {
+      if (ver) { const el = document.getElementById('app-version'); if (el) el.textContent = 'v' + ver; }
+    }).catch(() => {});
+    setTimeout(() => checkForAppUpdate(true), 5000);
+    window.checkForAppUpdate = checkForAppUpdate;
+  })();
+}
+
 // ── Phase 9e: redirect new note creation to PixiJS ─────────────────────────
 // Override the global addNote/addTodo/addAiNote that toolbar buttons call.
 // The legacy canvas.js versions are now unreachable via toolbar — they remain

@@ -1,140 +1,729 @@
 // ════════════════════════════════════════════
 // media-service — unified media drop + storage
 // ════════════════════════════════════════════
+import { get as _getStore } from 'svelte/store';
 import { elementsStore, snapshot } from '../stores/elements.js';
 
-const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
-const WORLD_OFFSET = 3000;
+export const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 
-// Unique ID helper
-function uid(prefix) {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+// ── Tauri filesystem image store ──
+let _tauriImagesDir = null;
+export async function getTauriImagesDir() {
+  if (_tauriImagesDir) return _tauriImagesDir;
+  const { appDataDir, join } = window.__TAURI__.path;
+  const { mkdir } = window.__TAURI__.fs;
+  const appData = await appDataDir();
+  _tauriImagesDir = await join(appData, 'images');
+  try { await mkdir(_tauriImagesDir, { recursive: true }); } catch {}
+  return _tauriImagesDir;
 }
 
-/**
- * Handle a dropped/pasted File on the canvas.
- * wx, wy — world coordinates of drop point.
- */
-export async function handleDrop(file, wx, wy) {
-  const type = file.type ?? '';
-
-  if (type.startsWith('image/')) {
-    return handleImage(file, wx, wy);
+// Save an image blob to {projectDir}/images/ and return its path (or null)
+export async function saveImgToProjectDir(blob, id) {
+  if (!IS_TAURI || typeof window._projectDir === 'undefined' || !window._projectDir) return null;
+  try {
+    const { writeFile, mkdir } = window.__TAURI__.fs;
+    const { join } = window.__TAURI__.path;
+    const imagesDir = await join(window._projectDir, 'images');
+    try { await mkdir(imagesDir, { recursive: true }); } catch {}
+    const ext = blob.type === 'image/jpeg' ? '.jpg' : '.png';
+    const filename = id + ext;
+    const filePath = await join(imagesDir, filename);
+    const buf = await blob.arrayBuffer();
+    await writeFile(filePath, new Uint8Array(buf));
+    return filePath;
+  } catch (e) {
+    console.warn('saveImgToProjectDir failed:', e);
+    return null;
   }
-  if (type.startsWith('video/')) {
-    return handleVideo(file, wx, wy);
-  }
-  if (type.startsWith('audio/')) {
-    return handleAudio(file, wx, wy);
-  }
-
-  console.warn('media-service: unsupported file type', type);
-  return null;
 }
 
-// ── Image ────────────────────────────────────
-async function handleImage(file, wx, wy) {
-  const id = uid('img');
-  let dataUrl;
+// ── IndexedDB fallback (browser only) ──
+const IMG_DB_NAME = 'freeflow_images', IMG_DB_VER = 1, IMG_STORE = 'blobs';
+let imgDB = null;
+function openImgDB() {
+  return new Promise((res, rej) => {
+    if (imgDB) { res(imgDB); return; }
+    const req = indexedDB.open(IMG_DB_NAME, IMG_DB_VER);
+    req.onupgradeneeded = e => e.target.result.createObjectStore(IMG_STORE, { keyPath: 'id' });
+    req.onsuccess = e => { imgDB = e.target.result; res(imgDB); };
+    req.onerror = () => rej(req.error);
+  });
+}
 
-  if (IS_TAURI && window.saveImageToAppData) {
-    // Copy to appDataDir/images/
-    dataUrl = await window.saveImageToAppData(file, id);
+export async function saveImgBlob(blob) {
+  const id = 'img_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+  if (IS_TAURI) {
+    const { writeFile } = window.__TAURI__.fs;
+    const { join } = window.__TAURI__.path;
+    const dir = await getTauriImagesDir();
+    const path = await join(dir, id + '.png');
+    const arrayBuffer = await blob.arrayBuffer();
+    await writeFile(path, new Uint8Array(arrayBuffer));
   } else {
-    dataUrl = await readAsDataURL(file);
+    const db = await openImgDB();
+    await new Promise((res, rej) => {
+      const tx = db.transaction(IMG_STORE, 'readwrite');
+      tx.objectStore(IMG_STORE).put({ id, blob });
+      tx.oncomplete = () => res();
+      tx.onerror = () => rej(tx.error);
+    });
+  }
+  return id;
+}
+
+export async function loadImgBlob(id) {
+  if (IS_TAURI) {
+    const { readFile } = window.__TAURI__.fs;
+    const { join } = window.__TAURI__.path;
+    const dir = await getTauriImagesDir();
+    const exts = id.startsWith('media_') ? ['.mp4', '.mp3', '.webm', '.png'] : ['.png'];
+    for (const ext of exts) {
+      try {
+        const path = await join(dir, id + ext);
+        const data = await readFile(path);
+        return new Blob([data]);
+      } catch { /* try next */ }
+    }
+    return null;
+  } else {
+    const db = await openImgDB();
+    return new Promise((res, rej) => {
+      const tx = db.transaction(IMG_STORE, 'readonly');
+      const req = tx.objectStore(IMG_STORE).get(id);
+      req.onsuccess = () => res(req.result ? req.result.blob : null);
+      req.onerror = () => rej(req.error);
+    });
+  }
+}
+
+export async function duplicateImgBlob(id) {
+  if (!id) return null;
+  try {
+    const blob = await loadImgBlob(id);
+    if (!blob) return null;
+    const newId = await saveImgBlob(blob);
+    if (blobURLCache[id]) blobURLCache[newId] = blobURLCache[id];
+    return newId;
+  } catch { return null; }
+}
+
+export async function deleteImgBlob(id) {
+  if (!id) return;
+  if (IS_TAURI) {
+    try {
+      const { remove } = window.__TAURI__.fs;
+      const { join } = window.__TAURI__.path;
+      const dir = await getTauriImagesDir();
+      const path = await join(dir, id + '.png');
+      await remove(path);
+    } catch {}
+  } else {
+    const db = await openImgDB();
+    await new Promise(res => {
+      const tx = db.transaction(IMG_STORE, 'readwrite');
+      tx.objectStore(IMG_STORE).delete(id);
+      tx.oncomplete = res;
+    });
+  }
+}
+
+// blobURL cache so we don't re-fetch for same session
+export const blobURLCache = {};
+// In-memory blob store for media object URL recreation
+export const _mediaBlobs = {};
+
+export async function getBlobURL(id) {
+  if (blobURLCache[id]) return blobURLCache[id];
+  const blob = await loadImgBlob(id);
+  if (!blob) return null;
+  const url = URL.createObjectURL(blob);
+  blobURLCache[id] = url;
+  return url;
+}
+
+// Register blob URLs from an external cache (e.g. shared canvas import)
+export function registerBlobURLs(map) {
+  Object.assign(blobURLCache, map);
+}
+
+// ── EXR parser: ArrayBuffer → { dataURL, nw, nh } ──
+export function f16toF32(h) {
+  const s = (h >> 15) & 1, e = (h >> 10) & 0x1f, m = h & 0x3ff;
+  if (e === 0) return (m === 0) ? 0 : (s ? -1 : 1) * m / 1024 * Math.pow(2, -14);
+  if (e === 31) return m ? NaN : (s ? -Infinity : Infinity);
+  return (s ? -1 : 1) * (1 + m / 1024) * Math.pow(2, e - 15);
+}
+
+export async function parseExr(buf) {
+  const dv = new DataView(buf);
+  let off = 0;
+  function u8()  { return dv.getUint8(off++); }
+  function u32() { const v = dv.getUint32(off, true); off += 4; return v; }
+  function i32() { const v = dv.getInt32(off, true);  off += 4; return v; }
+  function str() {
+    let s = ''; let c;
+    while ((c = u8()) !== 0) s += String.fromCharCode(c);
+    return s;
   }
 
-  // Cache blob URL
-  if (!window.blobURLCache) window.blobURLCache = {};
-  window.blobURLCache[id] = dataUrl;
+  const magic = u32();
+  if (magic !== 20000630) throw new Error('Not an EXR file');
+  u32(); // version flags
 
-  // Natural dimensions
-  const { w: nw, h: nh } = await imageDimensions(dataUrl);
-  const dispW = Math.min(nw, 400);
+  let channels = null, dataWindow = null, compression = 0;
+  for (;;) {
+    const name = str();
+    if (name === '') break;
+    const type = str();
+    const size = u32();
+    if (name === 'channels') {
+      channels = {};
+      const end = off + size;
+      while (off < end) {
+        const cname = str();
+        if (cname === '') { off = end; break; }
+        const pixType = u32();
+        u8(); u8(); u8(); u8();
+        u32(); u32();
+        channels[cname] = { pixType };
+      }
+    } else if (name === 'dataWindow') {
+      const xMin = i32(), yMin = i32(), xMax = i32(), yMax = i32();
+      dataWindow = { xMin, yMin, xMax, yMax };
+    } else if (name === 'compression') {
+      compression = u8(); off += size - 1;
+    } else {
+      off += size;
+    }
+  }
+
+  if (!channels || !dataWindow) throw new Error('EXR: missing required attributes');
+  const nw = dataWindow.xMax - dataWindow.xMin + 1;
+  const nh = dataWindow.yMax - dataWindow.yMin + 1;
+  const chNames = Object.keys(channels).sort();
+  const hasA = chNames.includes('A');
+
+  const pixels = new Float32Array(nw * nh * 4);
+  pixels.fill(1);
+
+  if (compression !== 0 && compression !== 2 && compression !== 3) {
+    throw new Error(`EXR: unsupported compression type ${compression}`);
+  }
+
+  const numScanlines = (compression === 3) ? 16 : 1;
+  const numChunks = Math.ceil(nh / numScanlines);
+  const offsets = [];
+  for (let i = 0; i < numChunks; i++) {
+    const lo = u32(), hi = u32();
+    offsets.push(lo + hi * 4294967296);
+  }
+
+  for (let chunk = 0; chunk < numChunks; chunk++) {
+    off = Number(offsets[chunk]);
+    const scanY = i32();
+    const dataSize = u32();
+    const row = scanY - dataWindow.yMin;
+    const linesInChunk = Math.min(numScanlines, nh - row);
+
+    let scanData;
+    if (compression === 0) {
+      scanData = new Uint8Array(buf, off, dataSize);
+      off += dataSize;
+    } else {
+      const compressed = new Uint8Array(buf, off, dataSize);
+      off += dataSize;
+      if (typeof DecompressionStream !== 'undefined') {
+        const ds = new DecompressionStream('deflate-raw');
+        const writer = ds.writable.getWriter();
+        const reader = ds.readable.getReader();
+        writer.write(compressed);
+        writer.close();
+        const chunks = [];
+        let totalLen = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value); totalLen += value.length;
+        }
+        scanData = new Uint8Array(totalLen);
+        let p2 = 0;
+        for (const ch of chunks) { scanData.set(ch, p2); p2 += ch.length; }
+        const reord = new Uint8Array(scanData.length);
+        const half2 = Math.ceil(scanData.length / 2);
+        for (let i2 = 0; i2 < scanData.length; i2++) {
+          const src = (i2 < half2) ? i2 * 2 : (i2 - half2) * 2 + 1;
+          reord[src] = scanData[i2];
+        }
+        for (let i2 = 1; i2 < reord.length; i2++) reord[i2] = (reord[i2] + reord[i2-1]) & 0xff;
+        scanData = reord;
+      } else {
+        throw new Error('EXR: ZIP compression requires DecompressionStream');
+      }
+    }
+
+    let sdOff = 0;
+    for (let li = 0; li < linesInChunk; li++) {
+      const yr = row + li;
+      for (const cname of chNames) {
+        const pixType = channels[cname].pixType;
+        const bytesPerPix = pixType === 1 ? 2 : 4;
+        const rowBytes = nw * bytesPerPix;
+        for (let xi = 0; xi < nw; xi++) {
+          const pi = (yr * nw + xi) * 4;
+          let val;
+          if (pixType === 1) {
+            const h = scanData[sdOff + xi*2] | (scanData[sdOff + xi*2+1] << 8);
+            val = f16toF32(h);
+          } else {
+            const view = new DataView(scanData.buffer, scanData.byteOffset + sdOff + xi*4, 4);
+            val = view.getFloat32(0, true);
+          }
+          if (cname === 'R') pixels[pi]   = val;
+          else if (cname === 'G') pixels[pi+1] = val;
+          else if (cname === 'B') pixels[pi+2] = val;
+          else if (cname === 'A') pixels[pi+3] = val;
+        }
+        sdOff += rowBytes;
+      }
+    }
+  }
+
+  function linearToSrgb(v) {
+    if (v <= 0) return 0;
+    if (v >= 1) return 255;
+    return Math.round((v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1/2.4) - 0.055) * 255);
+  }
+  const imgData = new Uint8ClampedArray(nw * nh * 4);
+  for (let i = 0; i < nw * nh; i++) {
+    const r = pixels[i*4], g = pixels[i*4+1], b = pixels[i*4+2], a = pixels[i*4+3];
+    const tm = v => isFinite(v) && v > 0 ? v / (1 + v) : (v <= 0 ? 0 : 1);
+    imgData[i*4]   = linearToSrgb(tm(r));
+    imgData[i*4+1] = linearToSrgb(tm(g));
+    imgData[i*4+2] = linearToSrgb(tm(b));
+    imgData[i*4+3] = hasA ? Math.round(Math.min(1, Math.max(0, a)) * 255) : 255;
+  }
+
+  const oc = document.createElement('canvas');
+  oc.width = nw; oc.height = nh;
+  oc.getContext('2d').putImageData(new ImageData(imgData, nw, nh), 0, 0);
+  return { dataURL: oc.toDataURL('image/png'), nw, nh };
+}
+
+// ── Card factories ──
+// Return a proxy so callers can do card.dataset.sourcePath = path
+export function makeImgCard(id, url, x, y, w, h, nw, nh) {
+  const el = {
+    id:      'img_' + id,
+    type:    'image',
+    x, y,
+    width:   w,
+    height:  h || Math.round((nh || 300) * (w / (nw || 400))),
+    zIndex:  Date.now(),
+    pinned:  false, locked: false, votes: 0, reactions: [],
+    color:   null,
+    content: { imgId: id, sourcePath: null, nativeW: nw || 0, nativeH: nh || 0 },
+  };
+  elementsStore.update(els => [...els, el]);
+  const proxy = { dataset: { imgId: id, nw, nh }, _elId: el.id };
+  Object.defineProperty(proxy.dataset, 'sourcePath', {
+    set(v) {
+      elementsStore.update(els => els.map(e => e.id === el.id
+        ? { ...e, content: { ...e.content, sourcePath: v } } : e));
+    },
+    get() { return el.content.sourcePath; },
+    configurable: true,
+  });
+  return proxy;
+}
+
+export function makeVideoCard(id, url, x, y, w) {
+  const el = {
+    id:      'vid_' + id,
+    type:    'video',
+    x, y,
+    width:   w || 300,
+    height:  Math.round((w || 300) * 9 / 16),
+    zIndex:  Date.now(),
+    pinned:  false, locked: false, votes: 0, reactions: [],
+    color:   null,
+    content: { imgId: id, sourcePath: null, nativeW: 0, nativeH: 0 },
+  };
+  elementsStore.update(els => [...els, el]);
+  const proxy = { dataset: { imgId: id, mediaType: 'video' }, _elId: el.id };
+  Object.defineProperty(proxy.dataset, 'sourcePath', {
+    set(v) { elementsStore.update(els => els.map(e => e.id === el.id ? { ...e, content: { ...e.content, sourcePath: v } } : e)); },
+    get() { return el.content.sourcePath; },
+    configurable: true,
+  });
+  return proxy;
+}
+
+export function makeAudioCard(id, url, x, y, filename) {
+  const el = {
+    id:      'aud_' + id,
+    type:    'audio',
+    x, y,
+    width:   320,
+    height:  100,
+    zIndex:  Date.now(),
+    pinned:  false, locked: false, votes: 0, reactions: [],
+    color:   null,
+    content: { imgId: id, sourcePath: filename || null, nativeW: 0, nativeH: 0 },
+  };
+  elementsStore.update(els => [...els, el]);
+  const proxy = { dataset: { imgId: id, mediaType: 'audio' }, _elId: el.id };
+  Object.defineProperty(proxy.dataset, 'sourcePath', {
+    set(v) { elementsStore.update(els => els.map(e => e.id === el.id ? { ...e, content: { ...e.content, sourcePath: v } } : e)); },
+    get() { return el.content.sourcePath; },
+    configurable: true,
+  });
+  return proxy;
+}
+
+export function imgDelete(card) {
+  const imgId = card.dataset.imgId;
+  if (imgId) {
+    const elId = card._elId;
+    if (elId) {
+      elementsStore.update(els => els.filter(e => e.id !== elId));
+    } else {
+      elementsStore.update(els => els.filter(e => e.content?.imgId !== imgId));
+    }
+    deleteImgBlob(imgId);
+    if (blobURLCache[imgId] && blobURLCache[imgId].startsWith('blob:')) {
+      URL.revokeObjectURL(blobURLCache[imgId]);
+      delete blobURLCache[imgId];
+    }
+  }
+  snapshot();
+}
+
+// ── Placement helpers ──
+
+// c2w helper: converts client coords to world coords using current canvas transform
+function _c2w(clientX, clientY) {
+  if (typeof window.c2w === 'function') return window.c2w(clientX, clientY);
+  // Fallback using stores
+  const { get } = { get: v => { let r; v.subscribe(x => r = x)(); return r; } };
+  return { x: clientX, y: clientY };
+}
+
+function _canvasCentre() {
+  const cv = document.getElementById('cv');
+  if (cv) {
+    const r = cv.getBoundingClientRect();
+    return _c2w(r.left + r.width / 2, r.top + r.height / 2);
+  }
+  return { x: 3000, y: 3000 };
+}
+
+export async function placeExrBlob(blob, wx, wy, sourcePath) {
+  const buf = await blob.arrayBuffer();
+  let parsed;
+  try {
+    parsed = await parseExr(buf);
+  } catch (err) {
+    console.error('EXR parse error:', err);
+    window.showToast?.('Could not read EXR file');
+    return;
+  }
+  const { dataURL, nw, nh } = parsed;
+  const id = await saveImgBlob(blob);
+  blobURLCache[id] = dataURL;
+
+  const dispW = Math.min(nw, 600);
   const dispH = Math.round(nh * (dispW / nw));
 
-  snapshot();
-  elementsStore.update(els => [...els, {
-    id, type: 'image',
-    x: wx - dispW / 2, y: wy - dispH / 2,
-    width: dispW, height: dispH,
-    zIndex: Date.now(),
-    pinned: false, locked: false, votes: 0, reactions: [],
-    color: null,
-    content: {
-      imgId: id,
-      sourcePath: file.path ?? null,
-      nativeW: nw, nativeH: nh,
-    },
-  }]);
+  if (wx === undefined) {
+    const p = _canvasCentre();
+    wx = p.x - dispW / 2; wy = p.y - dispH / 2;
+  }
 
-  return id;
-}
-
-// ── Video ────────────────────────────────────
-async function handleVideo(file, wx, wy) {
-  const id = uid('video');
-  // Store path only — do NOT copy large video files
-  const srcPath = file.path ?? null;
-  // For browser mode: create object URL temporarily
-  const blobSrc = srcPath ? null : URL.createObjectURL(file);
+  let resolvedSourcePath = sourcePath;
+  if (!resolvedSourcePath && IS_TAURI && window._projectDir) {
+    resolvedSourcePath = await saveImgToProjectDir(blob, id);
+  }
 
   snapshot();
-  elementsStore.update(els => [...els, {
-    id, type: 'video',
-    x: wx - 240, y: wy - 150,
-    width: 480, height: 300,
-    zIndex: Date.now(),
-    pinned: false, locked: false, votes: 0, reactions: [],
-    color: null,
-    content: {
-      imgId: id,
-      sourcePath: srcPath ?? blobSrc,
-      nativeW: 0, nativeH: 0,
-    },
-  }]);
-
-  return id;
+  const card = makeImgCard(id, dataURL, wx, wy, dispW, dispH, nw, nh);
+  if (resolvedSourcePath) card.dataset.sourcePath = resolvedSourcePath;
+  card.dataset.isExr = '1';
 }
 
-// ── Audio ────────────────────────────────────
-async function handleAudio(file, wx, wy) {
-  const id = uid('audio');
-  const srcPath = file.path ?? null;
-  const blobSrc = srcPath ? null : URL.createObjectURL(file);
-
-  snapshot();
-  elementsStore.update(els => [...els, {
-    id, type: 'audio',
-    x: wx - 160, y: wy - 60,
-    width: 320, height: 100,
-    zIndex: Date.now(),
-    pinned: false, locked: false, votes: 0, reactions: [],
-    color: null,
-    content: {
-      imgId: id,
-      sourcePath: srcPath ?? blobSrc,
-    },
-  }]);
-
-  return id;
-}
-
-// ── Helpers ──────────────────────────────────
-function readAsDataURL(file) {
-  return new Promise((resolve, reject) => {
+export async function placeImageBlob(blob, wx, wy, sourcePath) {
+  const dataURL = await new Promise((res, rej) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
+    reader.onload = e => res(e.target.result);
+    reader.onerror = rej;
+    reader.readAsDataURL(blob);
   });
+
+  const { nw, nh } = await new Promise(res => {
+    const tmp = new Image();
+    tmp.onload = () => res({ nw: tmp.naturalWidth || 400, nh: tmp.naturalHeight || 300 });
+    tmp.onerror = () => res({ nw: 400, nh: 300 });
+    tmp.src = dataURL;
+  });
+
+  const id = await saveImgBlob(blob);
+  blobURLCache[id] = dataURL;
+
+  const dispW = Math.min(nw, 600);
+  const dispH = Math.round(nh * (dispW / nw));
+
+  if (wx === undefined) {
+    const p = _canvasCentre();
+    wx = p.x - dispW / 2; wy = p.y - dispH / 2;
+  }
+
+  let resolvedSourcePath = sourcePath;
+  if (!resolvedSourcePath && IS_TAURI && window._projectDir) {
+    resolvedSourcePath = await saveImgToProjectDir(blob, id);
+  }
+
+  snapshot();
+  const card = makeImgCard(id, dataURL, wx, wy, dispW, dispH, nw, nh);
+  if (resolvedSourcePath) card.dataset.sourcePath = resolvedSourcePath;
+  else if (!IS_TAURI) card.dataset.sourcePath = 'D:\\art\\test\\' + (blob.name || id + '.png');
 }
 
-function imageDimensions(src) {
-  return new Promise(resolve => {
-    const img = new Image();
-    img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
-    img.onerror = () => resolve({ w: 400, h: 300 });
-    img.src = src;
-  });
+export async function placeMediaFromPath(filePath, wx, wy, mediaType, mimeType) {
+  const { convertFileSrc } = window.__TAURI__.core;
+  const assetURL = convertFileSrc(filePath);
+  const id = 'media_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
+
+  try {
+    const ext = '.' + filePath.split('.').pop().toLowerCase();
+    const { copyFile, stat } = window.__TAURI__.fs;
+    const { join } = window.__TAURI__.path;
+    const dir = await getTauriImagesDir();
+    const destPath = await join(dir, id + ext);
+    if (!filePath.startsWith(dir)) {
+      const fileStat = await stat(filePath).catch(() => null);
+      const sizeBytes = fileStat?.size ?? 0;
+      const MB100 = 100 * 1024 * 1024;
+      if (sizeBytes < MB100) await copyFile(filePath, destPath);
+    }
+  } catch (e) { console.warn('placeMediaFromPath: copy failed', e); }
+
+  blobURLCache[id] = assetURL;
+
+  if (wx === undefined) {
+    const p = _canvasCentre();
+    wx = p.x - 150; wy = p.y - 80;
+  }
+
+  snapshot();
+  const card = mediaType === 'video'
+    ? makeVideoCard(id, assetURL, wx, wy, 300)
+    : makeAudioCard(id, assetURL, wx, wy, filePath.split(/[\\/]/).pop());
+  card.dataset.sourcePath = filePath;
+}
+
+export async function placeMediaBlob(blob, wx, wy, sourcePath, mediaType) {
+  const MB100 = 100 * 1024 * 1024;
+  if (IS_TAURI && blob.size > MB100) {
+    window.showToast?.('File too large to import this way — drag it onto the canvas instead');
+    return;
+  }
+  const id = 'media_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
+  if (!IS_TAURI) {
+    const db = await openImgDB();
+    await new Promise((res, rej) => {
+      const tx = db.transaction(IMG_STORE, 'readwrite');
+      tx.objectStore(IMG_STORE).put({ id, blob });
+      tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error);
+    });
+  } else {
+    const ext = mediaType === 'video' ? '.mp4' : '.mp3';
+    const { writeFile } = window.__TAURI__.fs;
+    const { join } = window.__TAURI__.path;
+    const dir = await getTauriImagesDir();
+    const path = await join(dir, id + ext);
+    const arrayBuffer = await blob.arrayBuffer();
+    await writeFile(path, new Uint8Array(arrayBuffer));
+  }
+
+  const objURL = URL.createObjectURL(blob);
+  blobURLCache[id] = objURL;
+  _mediaBlobs[id] = blob;
+
+  if (wx === undefined) {
+    const p = _canvasCentre();
+    wx = p.x - 150; wy = p.y - 80;
+  }
+
+  snapshot();
+  let card;
+  if (mediaType === 'video') {
+    card = makeVideoCard(id, objURL, wx, wy, 300);
+  } else {
+    card = makeAudioCard(id, objURL, wx, wy, blob.name || '');
+  }
+  if (sourcePath) card.dataset.sourcePath = sourcePath;
+  else if (!IS_TAURI) card.dataset.sourcePath = 'D:\\art\\test\\' + (blob.name || id);
+}
+
+export async function placeImagesGrid(blobs, sourcePaths, anchor) {
+  if (!blobs.length) return;
+  const GAP = 24;
+
+  const infos = await Promise.all(blobs.map(async (blob, i) => {
+    const dataURL = await new Promise((res, rej) => {
+      const r = new FileReader(); r.onload = e => res(e.target.result); r.onerror = rej;
+      r.readAsDataURL(blob);
+    });
+    const { nw, nh } = await new Promise(res => {
+      const tmp = new Image();
+      tmp.onload = () => res({ nw: tmp.naturalWidth || 400, nh: tmp.naturalHeight || 300 });
+      tmp.onerror = () => res({ nw: 400, nh: 300 });
+      tmp.src = dataURL;
+    });
+    const dispW = Math.min(nw, 600);
+    const dispH = Math.round(nh * (dispW / nw));
+    return { blob, dataURL, nw, nh, dispW, dispH, sourcePath: sourcePaths?.[i] };
+  }));
+
+  const n = infos.length;
+  const cols = Math.min(6, Math.max(1, Math.round(Math.sqrt(n))));
+  const rows = Math.ceil(n / cols);
+
+  const colW = Array.from({length: cols}, (_, c) =>
+    Math.max(...infos.filter((_, i) => i % cols === c).map(inf => inf.dispW)));
+  const rowH = Array.from({length: rows}, (_, r) =>
+    Math.max(...infos.slice(r * cols, r * cols + cols).map(inf => inf.dispH)));
+
+  const totalW = colW.reduce((a, b) => a + b, 0) + GAP * (cols - 1);
+  const totalH = rowH.reduce((a, b) => a + b, 0) + GAP * (rows - 1);
+
+  const centre = anchor ?? _canvasCentre();
+  const originX = centre.x - totalW / 2;
+  const originY = centre.y - totalH / 2;
+
+  snapshot();
+  const colX = colW.reduce((acc, w, i) => { acc.push(i === 0 ? originX : acc[i-1] + colW[i-1] + GAP); return acc; }, []);
+  const rowY = rowH.reduce((acc, h, i) => { acc.push(i === 0 ? originY : acc[i-1] + rowH[i-1] + GAP); return acc; }, []);
+
+  for (let i = 0; i < infos.length; i++) {
+    const { blob, dataURL, nw, nh, dispW, dispH, sourcePath } = infos[i];
+    const col = i % cols, row = Math.floor(i / cols);
+    const x = colX[col] + (colW[col] - dispW) / 2;
+    const y = rowY[row] + (rowH[row] - dispH) / 2;
+    const id = await saveImgBlob(blob);
+    blobURLCache[id] = dataURL;
+    let resolvedSourcePath = sourcePath;
+    if (!resolvedSourcePath && IS_TAURI && window._projectDir) {
+      resolvedSourcePath = await saveImgToProjectDir(blob, id);
+    }
+    const card = makeImgCard(id, dataURL, x, y, dispW, dispH, nw, nh);
+    if (resolvedSourcePath) card.dataset.sourcePath = resolvedSourcePath;
+    else if (!IS_TAURI) card.dataset.sourcePath = 'D:\\art\\test\\' + (blob.name || id + '.png');
+  }
+}
+
+export async function placePdf(file, sourcePath, wx, wy) {
+  try {
+    const lib = await window._pdfJsReady;
+    window.showToast?.('reading pdf…');
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await lib.getDocument({ data: arrayBuffer }).promise;
+    const numPages = pdf.numPages;
+
+    let center;
+    if (wx !== undefined && wy !== undefined) {
+      center = { x: wx, y: wy };
+    } else {
+      center = _canvasCentre();
+    }
+
+    const PAGE_SCALE = 2;
+    const DISP_MAX_W = 700;
+    const GAP = 24;
+
+    let colY = center.y;
+    let colX = null;
+
+    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+      const page = await pdf.getPage(pageNum);
+      const viewport = page.getViewport({ scale: PAGE_SCALE });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d');
+      await page.render({ canvasContext: ctx, viewport }).promise;
+
+      const dispW = Math.min(viewport.width / PAGE_SCALE, DISP_MAX_W);
+      const dispH = Math.round(viewport.height / PAGE_SCALE * (dispW / (viewport.width / PAGE_SCALE)));
+
+      if (colX === null) colX = center.x - dispW / 2;
+
+      const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+      blob.name = (file.name || 'page') + `_p${pageNum}.png`;
+
+      const dataURL = await new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = ev => res(ev.target.result);
+        reader.onerror = rej;
+        reader.readAsDataURL(blob);
+      });
+      const id = await saveImgBlob(blob);
+      blobURLCache[id] = dataURL;
+      const card = makeImgCard(id, dataURL, colX, colY, dispW, dispH, viewport.width, viewport.height);
+      if (sourcePath) card.dataset.sourcePath = sourcePath;
+      card.dataset.pdfPage = pageNum;
+      card.dataset.pdfName = file.name || 'document.pdf';
+
+      colY += dispH + GAP;
+    }
+    snapshot();
+    window.showToast?.(`placed ${numPages} page${numPages > 1 ? 's' : ''} from "${file.name}"`);
+  } catch (err) {
+    console.error('PDF render failed:', err);
+    window.showToast?.('could not read pdf: ' + (err.message || err));
+  }
+}
+
+// ── onImportFiles: handles files from the import panel file picker ──
+export async function onImportFiles(files) {
+  if (!files.length) return;
+
+  const exrFiles   = files.filter(f => f.name.toLowerCase().endsWith('.exr'));
+  const imgFiles   = files.filter(f => !f.name.toLowerCase().endsWith('.exr') && f.type.startsWith('image/') && !f.name.toLowerCase().endsWith('.pdf'));
+  const pdfFiles   = files.filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+  const videoFiles = files.filter(f => f.type.startsWith('video/'));
+  const audioFiles = files.filter(f => f.type.startsWith('audio/'));
+  const otherFiles = files.filter(f =>
+    !f.name.toLowerCase().endsWith('.exr') &&
+    !f.type.startsWith('image/') && !f.type.startsWith('video/') && !f.type.startsWith('audio/') &&
+    f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')
+  );
+
+  for (const f of exrFiles) await placeExrBlob(f);
+  if (imgFiles.length) await placeImagesGrid(imgFiles);
+  for (const f of pdfFiles) await placePdf(f);
+
+  const videoMime = { mp4:'video/mp4', webm:'video/webm', mov:'video/quicktime', avi:'video/x-msvideo', mkv:'video/x-matroska', ogv:'video/ogg' };
+  const audioMime = { mp3:'audio/mpeg', wav:'audio/wav', ogg:'audio/ogg', flac:'audio/flac', aac:'audio/aac', m4a:'audio/mp4', opus:'audio/opus' };
+
+  for (const f of videoFiles) {
+    if (IS_TAURI && f.path) {
+      const ext = f.name.split('.').pop().toLowerCase();
+      await placeMediaFromPath(f.path, undefined, undefined, 'video', videoMime[ext] || 'video/mp4');
+    } else {
+      await placeMediaBlob(f, undefined, undefined, undefined, 'video');
+    }
+  }
+  for (const f of audioFiles) {
+    if (IS_TAURI && f.path) {
+      const ext = f.name.split('.').pop().toLowerCase();
+      await placeMediaFromPath(f.path, undefined, undefined, 'audio', audioMime[ext] || 'audio/mpeg');
+    } else {
+      await placeMediaBlob(f, undefined, undefined, undefined, 'audio');
+    }
+  }
+  for (const f of otherFiles) {
+    try { await placeImagesGrid([f]); } catch {}
+  }
 }
