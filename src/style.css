@@ -1109,130 +1109,7 @@ body.light .be-slash-item:hover, body.light .be-slash-item.active { background: 
 #brainstorm-send-btn:disabled { opacity: 0.35; cursor: default; }
 #tb-brainstorm.active { color: #E8440A; }
 
-/* radial menu */
-#radial-menu {
-  position: fixed; z-index: 9000;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.12s;
-}
-#radial-menu.show {
-  opacity: 1;
-  pointer-events: all;
-}
-.radial-ring {
-  position: absolute;
-  transform: translate(-50%, -50%);
-}
-.radial-item {
-  position: absolute;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px 6px 8px;
-  border-radius: 8px;
-  font-family: 'Geist', sans-serif;
-  font-size: 11.5px;
-  letter-spacing: 0.01em;
-  color: rgba(255,255,255,0.72);
-  cursor: pointer;
-  white-space: nowrap;
-  background: rgba(13,13,14,0.96);
-  border: 1px solid rgba(255,255,255,0.08);
-  backdrop-filter: blur(40px);
-  -webkit-backdrop-filter: blur(40px);
-  transition: background 0.1s, color 0.1s, border-color 0.1s;
-  user-select: none;
-}
-.radial-item.radial-item-left {
-  flex-direction: row-reverse;
-}
-/* bookmark panel — shared container */
-.radial-panel {
-  position: absolute;
-  background: rgba(13,13,14,0.96);
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 8px;
-  backdrop-filter: blur(40px);
-  -webkit-backdrop-filter: blur(40px);
-  padding: 3px;
-  display: flex;
-  flex-direction: column;
-  min-width: 120px;
-}
-.radial-panel-item {
-  background: none !important;
-  border: none !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  border-radius: 6px !important;
-  position: static !important;
-}
-.radial-panel-body {
-  display: flex;
-  flex-direction: column;
-}
-.radial-panel-collapsed .radial-panel-body {
-  display: none !important;
-}
-.radial-panel-collapsed .radial-panel-header {
-  opacity: 0.7 !important;
-}
-.radial-panel-sep {
-  height: 1px;
-  background: rgba(255,255,255,0.06);
-  margin: 2px 6px;
-}
-.radial-bk-delete {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  margin-left: auto;
-  flex-shrink: 0;
-  border: none;
-  background: none;
-  border-radius: 4px;
-  cursor: pointer;
-  padding: 0;
-  opacity: 0;
-  transition: opacity 0.12s, background 0.12s;
-}
-.radial-bk-delete svg { width: 10px; height: 10px; color: rgba(255,255,255,0.35); }
-.radial-panel-item:hover .radial-bk-delete { opacity: 1; }
-.radial-bk-delete:hover { background: rgba(255,80,60,0.2); }
-.radial-bk-delete:hover svg { color: rgba(255,100,80,0.9); }
-.radial-item-icon {
-  width: 14px; height: 14px;
-  flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  color: rgba(255,255,255,0.22);
-  transition: color 0.1s;
-}
-.radial-item-icon svg {
-  width: 14px; height: 14px;
-  stroke: currentColor; fill: none;
-  stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
-}
-.radial-item:hover, .radial-item.hovered {
-  background: rgba(232,68,10,0.12);
-  border-color: rgba(232,68,10,0.35);
-  color: #fff;
-}
-.radial-item:hover .radial-item-icon,
-.radial-item.hovered .radial-item-icon {
-  color: #E8440A;
-}
-.radial-center {
-  position: absolute;
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  background: #E8440A;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-}
-.radial-spoke { display: none; }
+/* radial menu — removed (openRadialMenu/closeRadialMenu are no-ops) */
 
 /* note resize handle */
 .note-resize {
@@ -1569,40 +1446,7 @@ body.on-canvas.light .todo-progress { background: rgba(255,255,255,0.06); }
 }
 .ai-source-chip .chip-remove:hover { opacity: 1; color: #E8440A; }
 
-/* note context menu */
-#note-menu {
-  position: fixed; z-index: 3000; background: #111;
-  border: 1px solid rgba(255,255,255,0.12); border-radius: 0; padding: 5px;
-  box-shadow: 0 16px 48px rgba(0,0,0,0.6); display: none; min-width: 160px;
-}
-#note-menu.show { display: block; }
-.nm-section { padding: 3px 10px; font-family: 'Geist Mono', monospace; font-size: 9px; color: rgba(255,255,255,0.2); letter-spacing: 0.12em; text-transform: uppercase; margin-top: 4px; }
-.nm-btn { width: 100%; text-align: left; padding: 6px 10px; background: none; border: none; border-radius: 0; font-family: 'Geist Mono', monospace; font-size: 10px; letter-spacing: 0.05em; color: rgba(255,255,255,0.4); cursor: pointer; transition: all 0.1s; display: flex; align-items: center; gap: 8px; }
-.nm-btn:hover { background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.9); }
-.nm-btn.danger:hover { color: #E8440A; background: rgba(232,68,10,0.06); }
-.nm-divider { height: 1px; background: rgba(255,255,255,0.07); margin: 3px 0; }
-.color-row { display: flex; gap: 5px; padding: 5px 10px; }
-.color-dot { width: 14px; height: 14px; border-radius: 0; cursor: pointer; border: 1px solid transparent; transition: transform 0.1s, border-color 0.1s; }
-.color-dot:hover { transform: scale(1.15); }
-.color-dot.active { border-color: rgba(255,255,255,0.6); }
-.emoji-row { display: flex; gap: 4px; padding: 4px 10px; flex-wrap: wrap; }
-.emoji-btn { font-size: 14px; cursor: pointer; padding: 2px; border-radius: 0; transition: background 0.1s; }
-.emoji-btn:hover { background: rgba(255,255,255,0.06); }
-.link-row { display: flex; gap: 4px; padding: 4px 8px; }
-.link-row input { flex: 1; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 0; padding: 4px 8px; font-family: 'Geist Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.8); outline: none; }
-.link-row input:focus { border-color: rgba(255,255,255,0.2); }
-.link-row button { padding: 4px 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 0; font-family: 'Geist Mono', monospace; font-size: 9px; letter-spacing: 0.08em; color: rgba(255,255,255,0.7); cursor: pointer; text-transform: uppercase; }
-
-/* frame menu */
-#frame-menu {
-  position: fixed; z-index: 3000; background: #111;
-  border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 5px;
-  box-shadow: 0 16px 48px rgba(0,0,0,0.6); display: none; min-width: 160px;
-}
-#frame-menu.show { display: block; }
-.frame-align-row { display: flex; align-items: center; gap: 0; padding: 3px 6px; }
-.frame-align-row .sel-btn.sel-icon-btn { width: 22px; height: 22px; }
-.frame-align-sep { width: 1px; height: 14px; background: rgba(255,255,255,0.07); margin: 0 3px; }
+/* note-menu, frame-menu — removed (Canvas.svelte has built-in ctxMenu) */
 
 /* text label */
 .lbl {
@@ -1861,21 +1705,7 @@ body.has-sel-bar .img-toolbar { display: none !important; }
 .shape-fill-label input[type=color] { width: 18px; height: 14px; border: none; padding: 0; border-radius: 2px; cursor: pointer; background: none; }
 .shape-fill-label input[type=checkbox] { cursor: pointer; }
 
-/* search box */
-#search-box {
-  position: fixed; top: 50px; left: 50%; transform: translateX(-50%); z-index: 2000;
-  background: rgba(10,10,10,0.96); border: 1px solid rgba(255,255,255,0.12); border-radius: 0;
-  padding: 7px 12px; display: none; align-items: center; gap: 8px; min-width: 280px;
-  box-shadow: 0 16px 48px rgba(0,0,0,0.6);
-}
-#search-box::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: #E8440A; }
-#search-box.show { display: flex; }
-#search-input { flex: 1; background: none; border: none; outline: none; font-family: 'Geist', sans-serif; font-size: 13px; color: rgba(255,255,255,0.85); }
-#search-input::placeholder { color: rgba(255,255,255,0.2); }
-#search-count { font-family: 'Geist Mono', monospace; font-size: 9px; color: rgba(255,255,255,0.3); white-space: nowrap; letter-spacing: 0.08em; }
-.search-nav { background: none; border: none; color: rgba(255,255,255,0.3); cursor: pointer; padding: 2px 5px; border-radius: 0; font-size: 12px; transition: color 0.1s; }
-.search-nav:hover { color: rgba(255,255,255,0.8); }
-.search-highlight { outline: 1px solid rgba(232,68,10,0.85) !important; outline-offset: 2px; box-shadow: 0 0 0 3px rgba(232,68,10,0.1) !important; }
+/* search box — removed (SearchBox.svelte) */
 
 /* command palette */
 #cmd-palette {
@@ -1981,11 +1811,7 @@ body.on-canvas.light .note .be-todo-text:empty::before { color: rgba(255,255,255
 body.on-canvas.light .stroke-wrap.stroke-selected path:not(.stroke-hit) { stroke: rgba(0,0,0,0.75) !important; }
 body.on-canvas.light .stroke-wrap.stroke-selected { filter: drop-shadow(0 0 5px rgba(0,0,0,0.15)); }
 
-/* minimap */
-#minimap { position: fixed; bottom: 56px; right: 14px; z-index: 800; width: 160px; height: 100px; background: rgba(10,10,10,0.95); border: 1px solid rgba(255,255,255,0.08); border-radius: 0; overflow: hidden; pointer-events: none; opacity: 0; transition: opacity 0.2s; cursor: crosshair; }
-#minimap.show { opacity: 1; pointer-events: all; }
-#minimap-viewport { position: absolute; border: 1px solid rgba(232,68,10,0.6); border-radius: 0; background: rgba(232,68,10,0.04); pointer-events: none; }
-#minimap canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* minimap — removed (Minimap.svelte has scoped styles) */
 
 /* ── All-edge resize handles ──────────────────────────────── */
 .rh { position: absolute; z-index: 25; opacity: 0; transition: opacity 0.15s; }
@@ -2105,25 +1931,7 @@ body.on-canvas.light .stroke-wrap.stroke-selected { filter: drop-shadow(0 0 5px 
 #timer-progress-bar { height: 100%; background: rgba(255,255,255,0.3); transition: width 0.5s linear; }
 #timer-display.urgent + .timer-controls + .timer-presets + #timer-progress #timer-progress-bar { background: #E8440A; }
 
-/* clear confirm */
-#clear-confirm {
-  position: fixed; top: 50px; right: 14px; z-index: 3000;
-  background: rgba(10,10,10,0.96); border: 1px solid rgba(255,255,255,0.1); border-radius: 0;
-  padding: 14px 14px 12px; display: none; flex-direction: column; gap: 10px;
-  box-shadow: 0 16px 48px rgba(0,0,0,0.6); min-width: 190px;
-  animation: popIn 0.12s ease;
-}
-#clear-confirm::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: #E8440A; }
-#clear-confirm.show { display: flex; }
-#clear-confirm p { font-family: 'Geist Mono', monospace; font-size: 9px; letter-spacing: 0.07em; color: rgba(255,255,255,0.4); line-height: 1.6; text-transform: uppercase; }
-#clear-confirm .confirm-btns { display: flex; gap: 5px; }
-#clear-confirm .confirm-btns button { flex: 1; padding: 6px 0; border-radius: 0; font-family: 'Geist Mono', monospace; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; border: 1px solid rgba(255,255,255,0.1); transition: all 0.1s; }
-#clear-confirm .cancel-btn { background: transparent; color: rgba(255,255,255,0.4); }
-#clear-confirm .cancel-btn:hover { color: rgba(255,255,255,0.8); border-color: rgba(255,255,255,0.2); }
-#clear-confirm .danger-btn { background: transparent; border-color: rgba(232,68,10,0.4); color: #E8440A; }
-#clear-confirm .danger-btn:hover { background: rgba(232,68,10,0.08); }
-
-@keyframes popIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
+/* clear confirm — removed (ClearConfirm.svelte has scoped styles) */
 
 /* transitions */
 html, body, #bar, #toolbar, #status, .note, .img-card, .bar-btn, .t, .sel-btn, #sel-bar, .frame, #topbar {

@@ -87,15 +87,7 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
     </div>
   </div>
 
-  <!-- search -->
-  <div id="search-box">
-    <svg style="width:13px;height:13px;stroke:var(--text-faint);fill:none;stroke-width:1.5;stroke-linecap:round;flex-shrink:0" viewBox="0 0 12 12"><circle cx="5" cy="5" r="3.5"/><line x1="7.5" y1="7.5" x2="11" y2="11"/></svg>
-    <input id="search-input" placeholder="search notes..." oninput="doSearch()" />
-    <span id="search-count"></span>
-    <button class="search-nav" onclick="searchNav(-1)">↑</button>
-    <button class="search-nav" onclick="searchNav(1)">↓</button>
-    <button class="search-nav" onclick="toggleSearch()">✕</button>
-  </div>
+  <!-- search → SearchBox.svelte -->
 
   <!-- timer → TimerPanel.svelte -->
 
@@ -198,71 +190,11 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
     <button class="sel-btn danger" onclick="deleteSelected()"><svg viewBox="0 0 12 12"><polyline points="1,3 11,3"/><path d="M2,3l1,8h6l1-8"/><line x1="4" y1="3" x2="4" y2="1"/><line x1="8" y1="3" x2="8" y2="1"/><line x1="4" y1="1" x2="8" y2="1"/></svg>del</button>
   </div>
 
-  <!-- note context menu -->
-  <div id="note-menu">
-    <div class="nm-section">COLOR</div>
-    <div class="color-row" id="color-row"></div>
-    <div class="nm-divider"></div>
-    <div class="nm-section">REACTION</div>
-    <div class="emoji-row" id="emoji-row"></div>
-    <div class="nm-divider"></div>
-    <div class="nm-section">LINK</div>
-    <div class="link-row">
-      <input id="link-input" type="url" placeholder="https://..." />
-      <button onclick="saveLink()">set</button>
-    </div>
-    <div class="nm-divider"></div>
-    <button class="nm-btn" id="nm-pin" onclick="togglePinNote()">
-      <svg style="width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;" viewBox="0 0 12 12"><line x1="6" y1="7" x2="6" y2="11"/><path d="M3 7h6V5l-1-1V1H4v3L3 5z"/></svg><span id="nm-pin-label">pin</span>
-    </button>
-    <button class="nm-btn" id="nm-lock" onclick="toggleLockNote()">
-      <svg style="width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;" viewBox="0 0 12 12"><rect x="2" y="5" width="8" height="6" rx="1"/><path d="M4 5V3.5a2 2 0 014 0V5"/></svg><span id="nm-lock-label">lock</span>
-    </button>
-    <button class="nm-btn" onclick="zoomToMenuNote()">
-      <svg style="width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;" viewBox="0 0 12 12"><polyline points="1,4 1,1 4,1"/><polyline points="8,1 11,1 11,4"/><polyline points="11,8 11,11 8,11"/><polyline points="4,11 1,11 1,8"/><rect x="3.5" y="3.5" width="5" height="5" rx="0.5" stroke-dasharray="1.5,1"/></svg>zoom to
-    </button>
-    <button class="nm-btn danger" onclick="deleteMenuNote()">
-      <svg style="width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;" viewBox="0 0 12 12"><polyline points="1,3 11,3"/><path d="M2,3l1,8h6l1-8"/></svg>delete note
-    </button>
-  </div>
-
-  <!-- frame context menu -->
-  <div id="frame-menu">
-    <div class="nm-section">FRAME COLOR</div>
-    <div class="color-row" id="frame-color-row"></div>
-    <div class="nm-divider"></div>
-    <button class="nm-btn" onclick="zoomToMenuFrame()">
-      <svg style="width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;" viewBox="0 0 12 12"><polyline points="1,4 1,1 4,1"/><polyline points="8,1 11,1 11,4"/><polyline points="11,8 11,11 8,11"/><polyline points="4,11 1,11 1,8"/><rect x="3.5" y="3.5" width="5" height="5" rx="0.5" stroke-dasharray="1.5,1"/></svg>zoom to
-    </button>
-    <button class="nm-btn danger" onclick="deleteMenuFrame()">
-      <svg style="width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;" viewBox="0 0 12 12"><polyline points="1,3 11,3"/><path d="M2,3l1,8h6l1-8"/></svg>delete frame
-    </button>
-  </div>
-
-  <!-- radial menu -->
-  <div id="radial-menu">
-    <div class="radial-ring" id="radial-ring"></div>
-    <div class="radial-center" id="radial-center"></div>
-  </div>
-
-  <!-- minimap -->
-  <div id="minimap"><canvas id="minimap-canvas"></canvas><div id="minimap-viewport"></div></div>
-
-  <!-- viewport bookmarks -->
-  <div id="bookmark-panel">
-    <div class="bkm-header">BOOKMARKS</div>
-    <div id="bookmark-list"></div>
-    <button class="bkm-add-btn" onclick="addViewBookmark()">+ add current view</button>
-  </div>
-
-  <!-- clear confirm -->
-  <div id="clear-confirm">
-    <p>Clear everything on the canvas?</p>
-    <div class="confirm-btns">
-      <button class="cancel-btn" onclick="closeClearConfirm()">cancel</button>
-      <button class="danger-btn" onclick="confirmClear()">clear all</button>
-    </div>
-  </div>
+  <!-- note-menu, frame-menu, radial-menu → Canvas.svelte (built-in ctxMenu)
+       minimap → Minimap.svelte
+       bookmark-panel → BookmarkPanel.svelte
+       search-box → SearchBox.svelte
+       clear-confirm → ClearConfirm.svelte -->
 
   <div id="cv">
     <div id="world">

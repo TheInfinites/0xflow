@@ -27,6 +27,17 @@ import {
 // ── restore img cards — no-op (MediaOverlay.svelte handles this reactively) ──
 async function restoreImgCards() {}
 
+// ── These are overridden by Svelte components in their onMount (stubs here
+//    ensure window.* is defined before Svelte mounts, avoiding null calls) ──
+function clearAll()          { document.getElementById('clear-confirm')?.classList.add('show'); }
+function closeClearConfirm() { document.getElementById('clear-confirm')?.classList.remove('show'); }
+function confirmClear()      { closeClearConfirm(); clearCanvasState(); }
+function toggleSearch()      {}
+function doSearch()          {}
+function searchNav()         {}
+function clearSearchHL()     {}
+function panToNote(el)       { if (el?.id) window._pixiCanvas?.zoomToElement?.(el.id); }
+
 // ── Shared canvas export/import ──
 async function exportSharedCanvas() {
   if (!activeProjectId) { showToast('No active canvas'); return; }
@@ -196,44 +207,6 @@ async function onPdfFiles(e) {
   for (const f of files) await placePdf(f);
 }
 
-// ── canvas clear ──
-function clearAll() { document.getElementById('clear-confirm')?.classList.add('show'); }
-function closeClearConfirm() { document.getElementById('clear-confirm')?.classList.remove('show'); }
-function confirmClear() { closeClearConfirm(); clearCanvasState(); }
-
-// ── Search ──
-let searchResults = [], searchIdx = 0;
-function toggleSearch() {
-  const box = document.getElementById('search-box'); if (!box) return;
-  box.classList.toggle('show');
-  if (box.classList.contains('show')) document.getElementById('search-input')?.focus();
-  else searchResults = [];
-}
-function doSearch() {
-  searchResults = []; searchIdx = 0;
-  const q = document.getElementById('search-input')?.value.trim().toLowerCase();
-  const sc = document.getElementById('search-count');
-  if (!q) { if (sc) sc.textContent = ''; return; }
-  const els = _getStore(elementsStore);
-  searchResults = els.filter(e => {
-    const sp  = e.content?.sourcePath || '';
-    const txt = e.content?.text || '';
-    const blk = e.content?.blocks?.content?.map?.(n => n.content?.map?.(t => t.text || '').join(' ') || '').join(' ') || '';
-    const title = e.content?.todoTitle || '';
-    return sp.toLowerCase().includes(q) || txt.toLowerCase().includes(q) || blk.toLowerCase().includes(q) || title.toLowerCase().includes(q);
-  });
-  if (sc) sc.textContent = searchResults.length ? `${searchIdx+1}/${searchResults.length}` : '0 results';
-  if (searchResults.length) panToNote(searchResults[0]);
-}
-function searchNav(dir) {
-  if (!searchResults.length) return;
-  searchIdx = (searchIdx + dir + searchResults.length) % searchResults.length;
-  const sc = document.getElementById('search-count');
-  if (sc) sc.textContent = `${searchIdx+1}/${searchResults.length}`;
-  panToNote(searchResults[searchIdx]);
-}
-function clearSearchHL() {}
-function panToNote(el) { if (el?.id) window._pixiCanvas?.zoomToElement?.(el.id); }
 
 // ── Minimap ──
 function toggleMinimap() { minimapVisibleStore.update(v => !v); }
@@ -332,36 +305,25 @@ function changeSelectedFontSize(delta) {
   storeSnapshot();
 }
 
-// ── Note/Frame context menu ──
+// ── Note/Frame context menu — handled by Canvas.svelte's built-in ctxMenu ──
+// These stubs keep window.* defined for any onclick= attributes that may remain.
+function _openNoteMenu()   {}
+function _closeNoteMenu()  {}
+function deleteMenuNote()  { window._pixiCanvas?.deleteSelected?.(); }
+function deleteMenuFrame() { window._pixiCanvas?.deleteSelected?.(); }
+function zoomToMenuNote(elId)  { if (elId || _ctxMenuElId) window._pixiCanvas?.zoomToElement?.(elId ?? _ctxMenuElId); }
+function zoomToMenuFrame(elId) { if (elId || _ctxMenuElId) window._pixiCanvas?.zoomToElement?.(elId ?? _ctxMenuElId); }
 let _ctxMenuElId = null;
-function _openNoteMenu(elId, x, y) {
-  _ctxMenuElId = elId;
-  const m = document.getElementById('note-menu'); if (!m) return;
-  const el = _getStore(elementsStore).find(e => e.id === elId);
-  if (el) {
-    const pinLabel  = document.getElementById('nm-pin-label');
-    const lockLabel = document.getElementById('nm-lock-label');
-    if (pinLabel)  pinLabel.textContent  = el.pinned  ? 'unpin'  : 'pin';
-    if (lockLabel) lockLabel.textContent = el.locked  ? 'unlock' : 'lock';
-  }
-  m.style.left = (x || 0) + 'px'; m.style.top = (y || 0) + 'px';
-  m.classList.add('show');
-}
-function _closeNoteMenu() { document.getElementById('note-menu')?.classList.remove('show'); }
-function deleteMenuNote()  { if (_ctxMenuElId) window._pixiCanvas?.deleteSelected?.(); _closeNoteMenu(); }
-function deleteMenuFrame() { if (_ctxMenuElId) window._pixiCanvas?.deleteSelected?.(); document.getElementById('frame-menu')?.classList.remove('show'); }
-function zoomToMenuNote()  { if (_ctxMenuElId) window._pixiCanvas?.zoomToElement?.(_ctxMenuElId); _closeNoteMenu(); }
-function zoomToMenuFrame() { if (_ctxMenuElId) window._pixiCanvas?.zoomToElement?.(_ctxMenuElId); document.getElementById('frame-menu')?.classList.remove('show'); }
 
 function togglePinNote() {
   if (!_ctxMenuElId) return;
   elementsStore.update(els => els.map(e => e.id === _ctxMenuElId ? { ...e, pinned: !e.pinned } : e));
-  storeSnapshot(); _closeNoteMenu();
+  storeSnapshot();
 }
 function toggleLockNote() {
   if (!_ctxMenuElId) return;
   elementsStore.update(els => els.map(e => e.id === _ctxMenuElId ? { ...e, locked: !e.locked } : e));
-  storeSnapshot(); _closeNoteMenu();
+  storeSnapshot();
 }
 function togglePinSelected() {
   const sel = window.selectedElIds ?? []; if (!sel.length) return;
@@ -385,7 +347,7 @@ function saveLink() {
   elementsStore.update(els => els.map(e =>
     e.id === _ctxMenuElId ? { ...e, content: { ...(e.content ?? {}), link: url } } : e
   ));
-  storeSnapshot(); _closeNoteMenu();
+  storeSnapshot();
 }
 
 function doZoom(factor) {

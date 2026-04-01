@@ -88,6 +88,16 @@ const timerPanelMount = document.createElement('div');
 document.body.appendChild(timerPanelMount);
 mount(TimerPanel, { target: timerPanelMount });
 
+import SearchBox from './lib/SearchBox.svelte';
+const searchBoxMount = document.createElement('div');
+document.body.appendChild(searchBoxMount);
+mount(SearchBox, { target: searchBoxMount });
+
+import ClearConfirm from './lib/ClearConfirm.svelte';
+const clearConfirmMount = document.createElement('div');
+document.body.appendChild(clearConfirmMount);
+mount(ClearConfirm, { target: clearConfirmMount });
+
 // ── Tauri window controls + auto-updater ──────────────────────────────────
 const _IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 if (_IS_TAURI) {
