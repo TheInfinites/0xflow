@@ -1,7 +1,10 @@
 <script>
   import { get } from 'svelte/store';
+  import { store } from './projects-service.js';
   import { elementsStore, snapshot as storeSnapshot } from '../stores/elements.js';
   import { projectDirStore } from '../stores/ui.js';
+  import { activeProjectIdStore } from '../stores/projects.js';
+  import { selectedStore } from '../stores/canvas.js';
 
   // ── State ────────────────────────────────────────────────────────────────
   let visible      = false;
@@ -56,10 +59,10 @@
   let projectDir = null;
 
   function projDirKey() {
-    return 'freeflow_projdir_' + (window.activeProjectId || '_default');
+    return 'freeflow_projdir_' + (get(activeProjectIdStore) || '_default');
   }
   export function loadProjectDir() {
-    const saved = window.store?.get(projDirKey());
+    const saved = store.get(projDirKey());
     if (saved) {
       projectDir = saved;
       projectDirStore.set(saved);
@@ -71,7 +74,7 @@
   export function saveProjectDir(dir) {
     projectDir = dir;
     projectDirStore.set(dir);
-    window.store?.set(projDirKey(), dir);
+    store.set(projDirKey(), dir);
   }
   export async function pickProjectDir() {
     if (IS_TAURI) {
@@ -171,7 +174,7 @@
     const storeEls = get(elementsStore).filter(e =>
       ['image','video','audio'].includes(e.type) && e.content?.sourcePath
     );
-    const selectedIds = [...(window.selectedElIds ?? [])];
+    const selectedIds = [...get(selectedStore)];
     const selectedMediaIds = selectedIds.filter(id => storeEls.some(e => e.id === id));
     const targets = selectedMediaIds.length > 0 ? selectedMediaIds : (primaryElId ? [primaryElId] : []);
     if (!targets.length) {
@@ -199,10 +202,10 @@
     renamePanelVisible = false;
 
     const storeEls = get(elementsStore);
-    const selectedIds = window.selectedElIds ?? [];
+    const selectedIds = get(selectedStore);
     selMediaCount = storeEls.filter(e =>
       ['image','video','audio'].includes(e.type) && e.content?.sourcePath &&
-      selectedIds.includes(e.id)
+      selectedIds.has(e.id)
     ).length;
 
     // Position — temporarily show to measure, then reposition
@@ -382,7 +385,7 @@
 
   // ── Batch rename ─────────────────────────────────────────────────────────
   export function openBatchRenameModal() {
-    const selectedIds = [...(window.selectedElIds ?? [])];
+    const selectedIds = [...get(selectedStore)];
     batchCards = get(elementsStore).filter(e =>
       ['image','video','audio'].includes(e.type) && e.content?.sourcePath &&
       selectedIds.includes(e.id)

@@ -1,8 +1,9 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
   import { Application, Graphics, Text, TextStyle, Container, Sprite, Texture, Assets } from 'pixi.js';
   import { elementsStore, strokesStore, relationsStore, snapshot, undo, redo, canUndo, canRedo } from '../stores/elements.js';
-  import { scaleStore, pxStore, pyStore, setCurTool, getCurTool, setSelected, setScale, setPx, setPy, activeEditorIdStore, setActiveEditorId } from '../stores/canvas.js';
+  import { scaleStore, pxStore, pyStore, setCurTool, getCurTool, setSelected, setScale, setPx, setPy, activeEditorIdStore, setActiveEditorId, snapEnabledStore, isLightStore } from '../stores/canvas.js';
   import { activeProjectIdStore } from '../stores/projects.js';
   import NoteOverlay   from './NoteOverlay.svelte';
   import MediaOverlay  from './MediaOverlay.svelte';
@@ -21,8 +22,10 @@
   let relLayer;    // relation lines
   let domOverlay;  // positioned DOM elements (notes, videos, etc.)
 
-  // Viewport
-  let scale = 1, px = 0, py = 0;
+  // Viewport — seeded from stores so applyCanvasState pre-seeding is picked up on cold load
+  let scale = get(scaleStore) || 1;
+  let px    = get(pxStore)    || 0;
+  let py    = get(pyStore)    || 0;
   const WORLD_OFFSET = 3000; // world origin offset
 
   // Interaction
@@ -60,9 +63,6 @@
 
   // Context menu state
   let ctxMenu = $state(null); // { x, y, elId } or null
-
-  // Expose selected element IDs to legacy folder-browser.js for file ops
-  $effect(() => { window.selectedElIds = [...selected]; });
 
   // Clipboard
   let _clipboard = [];
@@ -127,9 +127,10 @@
     };
 
     // Subscribe to store changes
-    const unsubEl  = elementsStore.subscribe(renderElements);
-    const unsubSt  = strokesStore.subscribe(renderStrokes);
-    onDestroy(() => { unsubEl(); unsubSt(); });
+    const unsubEl    = elementsStore.subscribe(renderElements);
+    const unsubSt    = strokesStore.subscribe(renderStrokes);
+    const unsubTheme = isLightStore.subscribe(() => { renderElements($elementsStore); renderStrokes($strokesStore); });
+    onDestroy(() => { unsubEl(); unsubSt(); unsubTheme(); });
 
     // Initial render from any loaded state
     renderElements($elementsStore);
@@ -161,7 +162,7 @@
     const spacing = 20 * scale;
     const ox = ((px - WORLD_OFFSET * scale) % spacing + spacing) % spacing;
     const oy = ((py - WORLD_OFFSET * scale) % spacing + spacing) % spacing;
-    const isLight = document.body.classList.contains('light');
+    const isLight = $isLightStore;
     const dotColor = isLight ? 0x000000 : 0xffffff;
     const dotAlpha = isLight ? 0.07 : 0.05;
     g.fill({ color: dotColor, alpha: dotAlpha });
@@ -355,7 +356,7 @@
       // transparent — just text
     } else {
       // Note / card background
-      const isLight = document.body.classList.contains('light');
+      const isLight = $isLightStore;
       let bgColor = el.type === 'ai-note' ? 0x1e2030 : (isLight ? 0xfaf9f7 : 0x1e1e1e);
       let bgAlpha = 0.97;
 
@@ -428,7 +429,7 @@
     }
     if (!text) return null;
 
-    const isLight = document.body.classList.contains('light');
+    const isLight = $isLightStore;
     const fontSize = Math.max(10, Math.min(18, el.content?.fontSize || 12));
     return new Text({
       text,
@@ -560,7 +561,7 @@
     if (!liveStrokeG) return;
     penPoints.push({ x: wx, y: wy });
     liveStrokeG.clear();
-    const isLight = document.body.classList.contains('light');
+    const isLight = $isLightStore;
     const color = isLight ? 0x000000 : 0xffffff;
     if (penPoints.length >= 2) {
       liveStrokeG.moveTo(penPoints[0].x - WORLD_OFFSET, penPoints[0].y - WORLD_OFFSET);
@@ -575,7 +576,7 @@
     if (liveStrokeG) { strokeLayer.removeChild(liveStrokeG); liveStrokeG.destroy(); liveStrokeG = null; }
     if (penPoints.length < 2) { penPoints = []; return; }
     const id = 'stroke_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-    const isLight = document.body.classList.contains('light');
+    const isLight = $isLightStore;
     strokesStore.update(ss => [...ss, {
       id, type: 'stroke', points: [...penPoints],
       stroke: isLight ? '#000000' : '#ffffff',
@@ -617,7 +618,7 @@
       const nx = -dy/len, ny = dx/len;
       const c1x = ax + dx*0.25 + nx*bulge, c1y = ay + dy*0.25 + ny*bulge;
       const c2x = ax + dx*0.75 - nx*bulge, c2y = ay + dy*0.75 - ny*bulge;
-      const isLight = document.body.classList.contains('light');
+      const isLight = $isLightStore;
       const color = isLight ? 0x000000 : 0xffffff;
       g.moveTo(ax, ay);
       g.bezierCurveTo(c1x, c1y, c2x, c2y, bx, by);
@@ -881,7 +882,7 @@
     if (Math.sqrt(dx*dx + dy*dy) < 16) return;
     snapshot();
     const id = 'arrow_' + Date.now();
-    const isLight = document.body.classList.contains('light');
+    const isLight = $isLightStore;
     strokesStore.update(ss => [...ss, {
       id, type: 'arrow',
       points: [{ x: start.x, y: start.y }, { x: end.x, y: end.y }],
@@ -899,7 +900,7 @@
     shapePreviewG.clear();
     const x1 = start.x - WORLD_OFFSET, y1 = start.y - WORLD_OFFSET;
     const x2 = cur.x   - WORLD_OFFSET, y2 = cur.y   - WORLD_OFFSET;
-    const color = document.body.classList.contains('light') ? 0x000000 : 0xffffff;
+    const color = $isLightStore ? 0x000000 : 0xffffff;
     if (curTool === 'rect') {
       shapePreviewG.rect(Math.min(x1,x2), Math.min(y1,y2), Math.abs(x2-x1), Math.abs(y2-y1)).stroke({ color, width: 1.5, alpha: 0.6 });
     } else if (curTool === 'ellipse') {
@@ -917,7 +918,7 @@
     const dx = end.x - start.x, dy = end.y - start.y;
     if (Math.abs(dx) + Math.abs(dy) < 4) return;
     const id = 'shape_' + Date.now();
-    const isLight = document.body.classList.contains('light');
+    const isLight = $isLightStore;
     strokesStore.update(ss => [...ss, {
       id, type: 'shape', shapeType: curTool,
       points: [{ x: start.x, y: start.y }, { x: end.x, y: end.y }],
@@ -1050,7 +1051,7 @@
     if (e.key === 'n' || e.key === 'N') { const wp = c2w(app.screen.width/2, app.screen.height/2); makeNote(wp.x, wp.y); }
     if (e.key === 'i' || e.key === 'I') { const wp = c2w(app.screen.width/2, app.screen.height/2); makeAiNote(wp.x, wp.y); }
     if (e.key === 'o' || e.key === 'O') { const wp = c2w(app.screen.width/2, app.screen.height/2); makeTodo(wp.x, wp.y); }
-    if (e.key === 'g' || e.key === 'G') { snapEnabled = !snapEnabled; window.showToast?.(snapEnabled ? 'Snap on' : 'Snap off'); }
+    if (e.key === 'g' || e.key === 'G') { snapEnabled = !snapEnabled; snapEnabledStore.set(snapEnabled); window.showToast?.(snapEnabled ? 'Snap on' : 'Snap off'); }
   }
 
   function duplicateSelected() {
@@ -1396,8 +1397,13 @@
       groupSelected, ungroupSelected,
       snapshot, clearSelection,
       doZoom: (factor, cx, cy) => doZoom(factor, cx ?? app?.screen.width/2 ?? 600, cy ?? app?.screen.height/2 ?? 400),
-      toggleSnap: () => { snapEnabled = !snapEnabled; },
+      toggleSnap: () => { snapEnabled = !snapEnabled; snapEnabledStore.set(snapEnabled); },
+      setTool: (t) => { curTool = t; setCurTool(t); },
     };
+    window.tool = (t) => { curTool = t; setCurTool(t); };
+    window.zoomToFit = () => zoomToFit();
+    window.zoomToSelection = () => zoomToSelection();
+    window.c2w = (clientX, clientY) => c2w(clientX, clientY);
   });
 </script>
 
@@ -1452,7 +1458,7 @@
       role="menu"
     >
       <div class="ctx-color-row">
-        {#each (document.body.classList.contains('light') ? EL_COLORS_LIGHT : EL_COLORS) as c}
+        {#each ($isLightStore ? EL_COLORS_LIGHT : EL_COLORS) as c}
           <button
             class="ctx-color-swatch"
             class:active={ctxEl?.color === c}

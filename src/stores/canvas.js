@@ -24,8 +24,6 @@ export function getCurTool()           { return get(curToolStore); }
 export function setCurTool(v)          { curToolStore.set(v); }
 export function getSelected()          { return get(selectedStore); }
 export function setSelected(s)         { selectedStore.set(s); }
-export function getSnapEnabled()       { return get(snapEnabledStore); }
-export function setSnapEnabled(v)      { snapEnabledStore.set(v); }
 export function getIsLight()           { return get(isLightStore); }
 export function setIsLight(v)          { isLightStore.set(v); }
 export function getMinimapVisible()    { return get(minimapVisibleStore); }

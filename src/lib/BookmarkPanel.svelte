@@ -1,4 +1,6 @@
 <script>
+  import { onMount } from 'svelte';
+  import { store } from './projects-service.js';
   import { scaleStore, pxStore, pyStore } from '../stores/canvas.js';
   import { activeProjectIdStore } from '../stores/projects.js';
 
@@ -14,7 +16,7 @@
   function storageKey() { return 'freeflow_bkmarks_' + (projectId ?? 'default'); }
 
   function loadBookmarks() {
-    try { bookmarks = JSON.parse(window.store?.get?.(storageKey()) ?? localStorage.getItem(storageKey()) ?? 'null') || []; } catch { bookmarks = []; }
+    try { bookmarks = JSON.parse(store.get(storageKey()) ?? 'null') || []; } catch { bookmarks = []; }
   }
 
   function togglePanel() { open = !open; }
@@ -36,20 +38,16 @@
   }
 
   function persist() {
-    const json = JSON.stringify(bookmarks);
-    try {
-      if (window.store?.set) { window.store.set(storageKey(), json); }
-      else { localStorage.setItem(storageKey(), json); }
-    } catch {}
+    try { store.set(storageKey(), JSON.stringify(bookmarks)); } catch {}
   }
 
   // Reload bookmarks when project changes
   $effect(() => { projectId; loadBookmarks(); });
 
-  // Expose for legacy toolbar buttons and canvas.js bridge
-  $effect(() => {
+  onMount(() => {
     window.toggleBookmarkPanel = togglePanel;
     window.addViewBookmark = (label = '') => save(label);
+    return () => { delete window.toggleBookmarkPanel; delete window.addViewBookmark; };
   });
 </script>
 

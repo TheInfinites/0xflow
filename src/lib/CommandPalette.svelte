@@ -6,9 +6,9 @@
   let activeIdx = $state(0);
 
   const commands = [
-    { label: 'New note',           shortcut: 'N',        action: () => { const c = window._pixiApp?.screen; window._pixiCanvas?.makeNote?.(c?.width/2+3000, c?.height/2+3000); } },
-    { label: 'New AI note',        shortcut: 'I',        action: () => { const c = window._pixiApp?.screen; window._pixiCanvas?.makeAiNote?.(c?.width/2+3000, c?.height/2+3000); } },
-    { label: 'New to-do',          shortcut: 'O',        action: () => { const c = window._pixiApp?.screen; window._pixiCanvas?.makeTodo?.(c?.width/2+3000, c?.height/2+3000); } },
+    { label: 'New note',           shortcut: 'N',        action: () => { const p = window.c2w?.(window.innerWidth/2, window.innerHeight/2) ?? { x: 3000, y: 3000 }; window._pixiCanvas?.makeNote?.(p.x, p.y); } },
+    { label: 'New AI note',        shortcut: 'I',        action: () => { const p = window.c2w?.(window.innerWidth/2, window.innerHeight/2) ?? { x: 3000, y: 3000 }; window._pixiCanvas?.makeAiNote?.(p.x, p.y); } },
+    { label: 'New to-do',          shortcut: 'O',        action: () => { const p = window.c2w?.(window.innerWidth/2, window.innerHeight/2) ?? { x: 3000, y: 3000 }; window._pixiCanvas?.makeTodo?.(p.x, p.y); } },
     { label: 'Zoom to fit',        shortcut: '0',        action: () => window.zoomToFit?.() },
     { label: 'Select all',         shortcut: 'Ctrl+A',   action: () => window._pixiCanvas?.selectAll?.() },
     { label: 'Delete selected',    shortcut: 'Del',      action: () => window._pixiCanvas?.deleteSelected?.() },

@@ -6,11 +6,18 @@
     placeImagesGrid, placePdf,
     blobURLCache, registerBlobURLs,
   } from './media-service.js';
+  import { get as _getStore } from 'svelte/store';
+  import { scaleStore, pxStore, pyStore } from '../stores/canvas.js';
+  import { isOnCanvasStore } from '../stores/ui.js';
 
+  const WORLD_OFFSET = 3000;
   // ── helpers ──────────────────────────────────────────────────────────────
   function _c2w(clientX, clientY) {
     if (typeof window.c2w === 'function') return window.c2w(clientX, clientY);
-    return { x: clientX, y: clientY };
+    const s = _getStore(scaleStore) || 1;
+    const wpx = _getStore(pxStore)  || 0;
+    const wpy = _getStore(pyStore)  || 0;
+    return { x: (clientX - wpx) / s + WORLD_OFFSET, y: (clientY - wpy) / s + WORLD_OFFSET };
   }
 
   const IMG_EXTS   = new Set(['.png','.jpg','.jpeg','.gif','.bmp','.webp','.svg','.ico','.tiff','.avif']);
@@ -28,7 +35,7 @@
 
   // ── clipboard paste ───────────────────────────────────────────────────────
   async function onPaste(e) {
-    if (!document.body.classList.contains('on-canvas')) return;
+    if (!_getStore(isOnCanvasStore)) return;
     const isEditing = e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT' || e.target.isContentEditable;
     if (isEditing) return;
     const items = [...(e.clipboardData?.items || [])];
@@ -84,7 +91,7 @@
     const listen = window.__TAURI__.event.listen;
 
     const unDrop = await listen('tauri://drag-drop', async (event) => {
-      if (!document.body.classList.contains('on-canvas')) return;
+      if (!_getStore(isOnCanvasStore)) return;
       const allPaths = event.payload.paths || [];
       const pos = event.payload.position;
       const sf = window.devicePixelRatio || 1;
@@ -136,7 +143,7 @@
 
   // ── Browser drag-drop ─────────────────────────────────────────────────────
   function onDragover(e) {
-    if (!document.body.classList.contains('on-canvas')) return;
+    if (!_getStore(isOnCanvasStore)) return;
     const items = [...e.dataTransfer.items];
     const hasMedia = items.some(i =>
       i.type.startsWith('image/') || i.type.startsWith('video/') ||
@@ -147,7 +154,7 @@
   }
 
   async function onDrop(e) {
-    if (!document.body.classList.contains('on-canvas')) return;
+    if (!_getStore(isOnCanvasStore)) return;
     e.preventDefault();
     const dropPos = _c2w(e.clientX, e.clientY);
     const dropped = [...e.dataTransfer.files];

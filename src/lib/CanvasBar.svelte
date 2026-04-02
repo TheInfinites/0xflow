@@ -14,6 +14,11 @@
   let isRenaming = $state(false);
   let renameVal  = $state('');
 
+  let winControls = $state(null);
+  let winMin      = $state(null);
+  let winMax      = $state(null);
+  let winClose    = $state(null);
+
   function startRename() {
     renameVal = project?.name ?? '';
     isRenaming = true;
@@ -37,24 +42,16 @@
     if (!IS_TAURI) return;
     const invoke = window.__TAURI__.core.invoke;
     const LABEL = 'main';
-    const winOps = {
-      minimize:       () => invoke('plugin:window|minimize',        { label: LABEL }),
-      toggleMaximize: () => invoke('plugin:window|toggle_maximize', { label: LABEL }),
-      close:          () => invoke('plugin:window|close',           { label: LABEL }),
-      startDragging:  () => invoke('plugin:window|start_dragging',  { label: LABEL }),
-    };
-    const ctrl = document.getElementById('win-controls');
-    if (ctrl) ctrl.style.display = 'flex';
-    document.getElementById('win-min')?.addEventListener('click',   e => { e.stopPropagation(); winOps.minimize(); });
-    document.getElementById('win-max')?.addEventListener('click',   e => { e.stopPropagation(); winOps.toggleMaximize(); });
-    document.getElementById('win-close')?.addEventListener('click', e => { e.stopPropagation(); winOps.close(); });
-    document.querySelectorAll('.win-ctrl').forEach(btn => btn.addEventListener('mousedown', e => e.stopPropagation()));
+    if (winControls) winControls.style.display = 'flex';
+    [winMin, winMax, winClose].forEach(btn => btn?.addEventListener('mousedown', e => e.stopPropagation()));
     function isDragTarget(e) {
       if (e.target.closest('.win-ctrl, button, input, textarea, select, a')) return false;
       return !!e.target.closest('#bar, #topbar');
     }
-    document.addEventListener('mousedown', e => { if (isDragTarget(e)) winOps.startDragging(); });
-    document.addEventListener('dblclick',  e => { if (isDragTarget(e)) winOps.toggleMaximize(); });
+    const startDragging  = () => invoke('plugin:window|start_dragging',  { label: LABEL });
+    const toggleMaximize = () => invoke('plugin:window|toggle_maximize', { label: LABEL });
+    document.addEventListener('mousedown', e => { if (isDragTarget(e)) startDragging(); });
+    document.addEventListener('dblclick',  e => { if (isDragTarget(e)) toggleMaximize(); });
   });
 </script>
 
@@ -115,16 +112,15 @@
     <button class="bar-btn" onclick={() => window.clearAll?.()}>clear</button>
     <button class="bar-btn" id="import-btn" onclick={e => window.toggleImportPanel?.(e)}>↑ import</button>
     <button class="bar-btn" onclick={() => window.summariseCanvas?.()}>✦ summarise</button>
-    <button class="bar-btn" onclick={() => window.openExportPanel?.()}>↑ export</button>
+    <button class="bar-btn" id="export-btn" onclick={e => window.openExportPanel?.(e)}>↑ export</button>
     <button class="bar-btn" id="save-file-btn" onclick={() => window.saveCanvasToFile?.()}>↓ save file</button>
     <button class="bar-btn" id="proj-dir-btn" onclick={() => window.pickProjectDir?.()} title="Set project directory for file operations">📁 {$projectDirStore ? $projectDirStore.split(/[\\/]/).pop() : 'project dir'}</button>
     <button class="bar-btn" onclick={() => window.openProjectDirInExplorer?.()} title="Open project folder in file explorer">↗ open folder</button>
     <button class="bar-btn" onclick={() => window.exportSharedCanvas?.()} title="Export self-contained canvas (all media bundled inline)">⬡ share</button>
-    <button class="bar-btn" id="canvas-update-btn" onclick={() => window.checkForAppUpdate?.(false)} style="display:none;background:rgba(232,68,10,0.15);color:#E8440A;border:1px solid rgba(232,68,10,0.3);">↑ update</button>
-    <div id="win-controls" style="display:none;margin-left:12px;gap:1px;align-items:center;">
-      <button class="win-ctrl" id="win-min" title="Minimize">─</button>
-      <button class="win-ctrl" id="win-max" title="Maximize">□</button>
-      <button class="win-ctrl win-close" id="win-close" title="Close">✕</button>
+    <div bind:this={winControls} id="win-controls" style="display:none;margin-left:12px;gap:1px;align-items:center;">
+      <button bind:this={winMin}   class="win-ctrl" id="win-min"   title="Minimize" onclick={e => { e.stopPropagation(); IS_TAURI && window.__TAURI__.core.invoke('plugin:window|minimize',        { label: 'main' }); }}>─</button>
+      <button bind:this={winMax}   class="win-ctrl" id="win-max"   title="Maximize" onclick={e => { e.stopPropagation(); IS_TAURI && window.__TAURI__.core.invoke('plugin:window|toggle_maximize', { label: 'main' }); }}>□</button>
+      <button bind:this={winClose} class="win-ctrl win-close" id="win-close" title="Close"    onclick={e => { e.stopPropagation(); IS_TAURI && window.__TAURI__.core.invoke('plugin:window|close',           { label: 'main' }); }}>✕</button>
     </div>
   </div>
 </div>

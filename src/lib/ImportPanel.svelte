@@ -61,7 +61,11 @@
       if (!files.length) return;
       await onImportFiles(files);
     };
-    return () => document.removeEventListener('mousedown', onOutsideClick);
+    return () => {
+      document.removeEventListener('mousedown', onOutsideClick);
+      delete window.toggleImportPanel; delete window.closeImportPanel;
+      delete window.triggerImport; delete window.onImportFiles;
+    };
   });
 </script>
 

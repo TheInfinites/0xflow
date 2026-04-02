@@ -14,14 +14,14 @@ import './lib/canvas-actions.js';
 // Media bridge globals (placed/save/load helpers)
 import {
   placeImageBlob, placeExrBlob, placeMediaBlob, placeMediaFromPath,
-  placeImagesGrid, placePdf,
+  placeImagesGrid,
   makeImgCard, makeVideoCard, makeAudioCard,
   saveImgBlob, loadImgBlob, deleteImgBlob, duplicateImgBlob,
   getBlobURL, imgDelete, saveImgToProjectDir,
-  onImportFiles,
 } from './lib/media-service.js';
 import { minimapVisibleStore } from './stores/canvas.js';
 import { clearCanvasState } from './lib/canvas-persistence.js';
+import { exportJSON, exportPNG, exportMarkdown, exportSharedCanvasV2 } from './lib/export-service.js';
 
 Object.assign(window, {
   // media
@@ -31,32 +31,19 @@ Object.assign(window, {
   imgDelete,
   getBlobURL, saveImgBlob, loadImgBlob, deleteImgBlob, duplicateImgBlob,
   saveImgToProjectDir,
-  restoreImgCards: () => {},
-  // file inputs
-  triggerImg: () => document.getElementById('img-file')?.click(),
-  onImgFiles: async e => { const files = [...e.target.files]; e.target.value = ''; await onImportFiles(files); },
-  onPdfFiles:  async e => { const files = [...e.target.files]; e.target.value = ''; for (const f of files) await placePdf(f); },
   // search (overridden by SearchBox.svelte)
   toggleSearch: () => {}, doSearch: () => {}, searchNav: () => {}, clearSearchHL: () => {},
   panToNote: el => { if (el?.id) window._pixiCanvas?.zoomToElement?.(el.id); },
   // minimap
   toggleMinimap: () => minimapVisibleStore.update(v => !v),
-  updateMinimap: () => {},
   // clear confirm (overridden by ClearConfirm.svelte)
   clearAll: () => {}, closeClearConfirm: () => {},
   confirmClear: () => clearCanvasState(),
-  // stubs (overridden by Svelte panels)
-  exportJSON:       () => window.showToast?.('JSON export coming soon'),
-  exportPNG:        () => window.showToast?.('PNG export coming soon'),
-  exportMarkdown:   () => window.showToast?.('Markdown export coming soon'),
-  summariseCanvas:  async () => window.showToast?.('Canvas summary coming soon'),
+  // exports (export-service.js)
+  exportJSON, exportPNG, exportMarkdown, exportSharedCanvasV2,
+  // stubs for unimplemented features
   clusterCanvas:    async () => window.showToast?.('AI cluster coming soon'),
-  openExportPanel:  () => window.showToast?.('Export panel coming soon'),
-  closeExportPanel: () => {},
-  openRadialMenu:   () => {}, closeRadialMenu:  () => {},
-  toggleCmdPalette: () => {}, openCmdPalette:   () => {}, closeCmdPalette: () => {},
-  renderBookmarkList: () => {}, addViewBookmark: () => {},
-  addSummaryAsNote: () => {}, closeSummary: () => {}, copySummary: () => {},
+  openExportPanel:  () => {},   // overridden by ExportPanel.svelte
 });
 
 import { mount } from 'svelte';
@@ -147,44 +134,18 @@ const clearConfirmMount = document.createElement('div');
 document.body.appendChild(clearConfirmMount);
 mount(ClearConfirm, { target: clearConfirmMount });
 
+import ExportPanel from './lib/ExportPanel.svelte';
+const exportPanelMount = document.createElement('div');
+document.body.appendChild(exportPanelMount);
+mount(ExportPanel, { target: exportPanelMount });
+
 import Toast from './lib/Toast.svelte';
 const toastMount = document.createElement('div');
 document.body.appendChild(toastMount);
 mount(Toast, { target: toastMount });
 
-// ── Tauri window controls + auto-updater ──────────────────────────────────
-const _IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
-if (_IS_TAURI) {
-  (function () {
-    const invoke = window.__TAURI__.core.invoke;
-    async function checkForAppUpdate(silent) {
-      try {
-        const { Channel } = window.__TAURI__.core;
-        const meta = await invoke('plugin:updater|check', {});
-        if (meta && meta.version) {
-          const label = `\u2191 update to v${meta.version}`;
-          const dashBtn   = document.getElementById('update-btn');
-          const canvasBtn = document.getElementById('canvas-update-btn');
-          if (dashBtn)   { dashBtn.style.display = 'inline-flex';   dashBtn.textContent = label; }
-          if (canvasBtn) { canvasBtn.style.display = 'inline-flex'; canvasBtn.textContent = label; }
-          if (silent) { window.showToast?.(`v${meta.version} available \u2014 click the update button`); return; }
-          if (confirm(`Update v${meta.version} is available. Install now?`)) {
-            window.showToast?.('Downloading update\u2026');
-            const ch = new Channel();
-            await invoke('plugin:updater|download_and_install', { onEvent: ch, rid: meta.rid });
-            window.showToast?.('Update installed \u2014 restarting\u2026');
-            setTimeout(() => invoke('plugin:process|restart', {}), 1000);
-          }
-        } else if (!silent) { window.showToast?.("You're on the latest version"); }
-      } catch { if (!silent) window.showToast?.('Could not check for updates'); }
-    }
-    invoke('plugin:app|version', {}).then(ver => {
-      if (ver) { const el = document.getElementById('app-version'); if (el) el.textContent = 'v' + ver; }
-    }).catch(() => {});
-    setTimeout(() => checkForAppUpdate(true), 5000);
-    window.checkForAppUpdate = checkForAppUpdate;
-  })();
-}
+// ── Tauri auto-updater: handled by UpdateBanner.svelte ────────────────────
+// ── Tauri window controls:  handled by CanvasBar.svelte onMount ───────────
 
 // ── Phase 9e: redirect new note creation to PixiJS ─────────────────────────
 // Override the global addNote/addTodo/addAiNote that toolbar buttons call.
@@ -206,32 +167,22 @@ function _clientToWorld(clientX, clientY, rect) {
 }
 
 function _screenCenter() {
-  const app = window._pixiApp;
-  return {
-    cx: app ? app.screen.width  / 2 : 600,
-    cy: app ? app.screen.height / 2 : 400,
-  };
+  return _clientToWorld(window.innerWidth / 2, window.innerHeight / 2, { left: 0, top: 0 });
 }
 
 window.addNote = () => {
   const pixi = window._pixiCanvas; if (!pixi) return;
-  const { cx, cy } = _screenCenter();
-  const rect = { left: 0, top: 0 };
-  const { x, y } = _clientToWorld(cx, cy, rect);
+  const { x, y } = _screenCenter();
   pixi.makeNote(x - 120, y - 64);
 };
 window.addTodo = () => {
   const pixi = window._pixiCanvas; if (!pixi) return;
-  const { cx, cy } = _screenCenter();
-  const rect = { left: 0, top: 0 };
-  const { x, y } = _clientToWorld(cx, cy, rect);
+  const { x, y } = _screenCenter();
   pixi.makeTodo(x - 120, y - 80);
 };
 window.addAiNote = () => {
   const pixi = window._pixiCanvas; if (!pixi) return;
-  const { cx, cy } = _screenCenter();
-  const rect = { left: 0, top: 0 };
-  const { x, y } = _clientToWorld(cx, cy, rect);
+  const { x, y } = _screenCenter();
   pixi.makeAiNote(x - 160, y - 100);
 };
 
@@ -244,8 +195,7 @@ if (_cv) {
     if (e.target.closest('.note,.lbl,.ai-note,.img-card,.frame,.todo-card,.stroke-wrap')) return;
     const pixi = window._pixiCanvas; if (!pixi) return;
     e.stopImmediatePropagation();
-    const r = _cv.getBoundingClientRect();
-    const { x, y } = _clientToWorld(e.clientX, e.clientY, r);
+    const { x, y } = _clientToWorld(e.clientX, e.clientY, { left: 0, top: 0 });
     pixi.makeNote(x - 120, y - 64);
   }, true); // capture phase
 }

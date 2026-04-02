@@ -66,6 +66,10 @@
     window.searchNav     = nav;
     window.clearSearchHL = () => {};
     window.panToNote     = panTo;
+    return () => {
+      delete window.toggleSearch; delete window.doSearch;
+      delete window.searchNav; delete window.clearSearchHL; delete window.panToNote;
+    };
   });
 </script>
 

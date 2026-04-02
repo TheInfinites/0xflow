@@ -16,19 +16,15 @@
   }
 
   function commitRename() {
-    const val = renameVal.trim() || 'untitled canvas';
     const id = renamingId;
     renamingId = null;
     if (!id) return;
-    const p = filtered.find(x => x.id === id);
-    if (!p) return;
-    p.name = val; p.updatedAt = Date.now();
-    window.saveProjects?.(window.projects);
+    window.renameProject?.(id, renameVal);
   }
 
   onMount(() => {
     window.startInlineRename = id => {
-      const p = filtered.find(x => x.id === id) ?? window.projects?.find(x => x.id === id);
+      const p = filtered.find(x => x.id === id);
       renameVal = (p?.name === 'untitled canvas' ? '' : p?.name) ?? '';
       renamingId = id;
     };
@@ -49,13 +45,7 @@
   }
 
   function confirmDelete(p) {
-    window.projects = window.projects.filter(x => x.id !== p.id);
-    window.store?.remove('freeflow_canvas_' + p.id);
-    if (window.IS_TAURI_STORAGE && window._dbReady) {
-      window.dbDeleteProject?.(p.id);
-    }
-    window.saveProjects?.(window.projects);
-    window.showToast?.(`"${p.name}" deleted`);
+    window.deleteProject?.(p.id);
     deletingId = null;
   }
 

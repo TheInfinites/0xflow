@@ -56,10 +56,13 @@
     const rect = e.currentTarget.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
+    // wx/wy are relative-world coords (WORLD_OFFSET already subtracted)
     const wx = mx / ms + bounds.minX;
     const wy = my / ms + bounds.minY;
-    // Pan viewport to center on this world point
-    window._applyViewportTo?.(wx, wy);
+    // Compute viewport px/py so this world point lands at screen center
+    const cx = window.innerWidth  / 2;
+    const cy = window.innerHeight / 2;
+    window._applyViewportTo?.(scale, cx - wx * scale, cy - wy * scale);
   }
 </script>
 

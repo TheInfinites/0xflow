@@ -7,6 +7,7 @@ import { get } from 'svelte/store';
 import { elementsStore, strokesStore, relationsStore } from '../stores/elements.js';
 import { scaleStore, pxStore, pyStore } from '../stores/canvas.js';
 import { activeProjectIdStore, projectsStore } from '../stores/projects.js';
+import { blobURLCache, registerBlobURLs } from './media-service.js';
 
 const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 const FORMAT_VERSION = 2;
@@ -44,7 +45,7 @@ export async function buildSnapshot(blobsAsBase64 = false) {
 
 async function collectBlobs(elements) {
   const blobs = {};
-  const cache = window.blobURLCache ?? {};
+  const cache = blobURLCache;
   for (const el of elements) {
     const id = el.content?.imgId;
     if (!id || blobs[id]) continue;
@@ -196,16 +197,12 @@ function applyV2(snap) {
   if (Array.isArray(snap.relations)) relationsStore.set(snap.relations);
 
   // Restore embedded blobs to cache
-  if (snap.blobs) {
-    if (!window.blobURLCache) window.blobURLCache = {};
-    for (const [id, dataUrl] of Object.entries(snap.blobs)) {
-      window.blobURLCache[id] = dataUrl;
-    }
-  }
+  if (snap.blobs) registerBlobURLs(snap.blobs);
 
-  // Restore viewport via legacy bridge (still works from pixi canvas)
-  if (snap.viewport && window._applyViewport) {
-    window._pixiCanvas?.restorePixiCanvas?.({ viewport: snap.viewport });
+  // Restore viewport
+  if (snap.viewport) {
+    const { scale, px, py } = snap.viewport;
+    window._applyViewportTo?.(scale, px, py);
   }
 
   window.showToast?.('Canvas imported');

@@ -1,5 +1,6 @@
 <script>
   import { callAI } from './ai-service.js';
+  import { store } from './projects-service.js';
   import { elementsStore, snapshot } from '../stores/elements.js';
 
   // ── Props ────────────────────────────────────
@@ -33,12 +34,12 @@
   }
 
   function getApiKey(model) {
-    return window.store?.get?.('freeflow_key_' + model) ?? '';
+    return store.get('freeflow_key_' + model) ?? '';
   }
 
   function saveApiKey() {
     if (!keyVal.trim()) return;
-    window.store?.set?.('freeflow_key_' + curModel, keyVal.trim());
+    store.set('freeflow_key_' + curModel, keyVal.trim());
     keyPrompt = false;
     keyVal = '';
     window.showToast?.('Key saved');

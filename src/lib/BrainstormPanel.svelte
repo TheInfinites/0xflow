@@ -1,5 +1,6 @@
 <script>
-  import { callClaude } from './ai-service.js';
+  import { callAI } from './ai-service.js';
+  import { store } from './projects-service.js';
   import { elementsStore, strokesStore, snapshot } from '../stores/elements.js';
   import { brainstormOpenStore } from '../stores/ui.js';
   import { scaleStore, pxStore, pyStore } from '../stores/canvas.js';
@@ -97,11 +98,11 @@ IMPORTANT:
     scrollMsgs();
 
     try {
-      const raw = await callClaude([
+      const raw = await callAI('claude', [
         { role: 'user', content: SYSTEM + '\n\nCanvas state: ' + JSON.stringify(canvasState) },
         { role: 'assistant', content: '{"message":"Ready to help.","actions":[]}' },
         ...history.slice(-6).map(m => ({ role: m.role === 'ai' ? 'assistant' : 'user', content: m.content })),
-      ]);
+      ], store.get('freeflow_key_claude') ?? '');
 
       let parsed;
       try { parsed = JSON.parse(raw); } catch { parsed = { message: raw, actions: [] }; }

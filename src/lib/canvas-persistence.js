@@ -7,8 +7,10 @@
 // ════════════════════════════════════════════
 import { get } from 'svelte/store';
 import { elementsStore, strokesStore, relationsStore } from '../stores/elements.js';
-import { scaleStore, pxStore, pyStore } from '../stores/canvas.js';
+import { scaleStore, pxStore, pyStore, setScale, setPx, setPy } from '../stores/canvas.js';
 import { dbSaveCanvasState, dbLoadCanvasState } from './db.js';
+import { registerBlobURLs } from './media-service.js';
+import { store } from './kv-store.js';
 
 const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 const FORMAT_VERSION = 2;
@@ -30,7 +32,7 @@ export async function saveCanvasV2(projectId) {
   const json = JSON.stringify(state);
 
   // Save to user-chosen file if set
-  const filePath = window.store?.get?.('freeflow_filepath_' + projectId);
+  const filePath = store.get('freeflow_filepath_' + projectId);
   if (filePath && IS_TAURI) {
     window.__TAURI__?.fs?.writeTextFile(filePath, json).catch(e =>
       console.warn('[canvas-persistence] file write failed:', e)
@@ -57,7 +59,7 @@ export async function loadCanvasV2(projectId) {
   let raw = null;
 
   // Try user-chosen file first (v2 only)
-  const filePath = window.store?.get?.('freeflow_filepath_' + projectId);
+  const filePath = store.get('freeflow_filepath_' + projectId);
   if (filePath && IS_TAURI) {
     try { raw = await window.__TAURI__?.fs?.readTextFile(filePath); } catch {}
   }
@@ -92,16 +94,14 @@ export function applyCanvasState(state) {
   if (Array.isArray(state.relations)) relationsStore.set(state.relations);
 
   // Restore blobs if present (shared canvas)
-  if (state.blobs) {
-    if (!window.blobURLCache) window.blobURLCache = {};
-    for (const [id, dataUrl] of Object.entries(state.blobs)) {
-      window.blobURLCache[id] = dataUrl;
-    }
-  }
+  if (state.blobs) registerBlobURLs(state.blobs);
 
-  // Restore viewport via PixiJS canvas bridge
+  // Restore viewport — push to stores first (works even before Canvas mounts),
+  // then animate via bridge if already mounted.
   if (state.viewport) {
-    window._pixiCanvas?.restorePixiCanvas?.({ viewport: state.viewport });
+    const { scale, px, py } = state.viewport;
+    setScale(scale); setPx(px); setPy(py);
+    window._applyViewportTo?.(scale, px, py);
   }
 
   return true;

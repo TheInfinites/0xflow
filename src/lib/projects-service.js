@@ -7,7 +7,7 @@
 //   saveProjects, saveFolders, store, markDbReady, dashRender, etc.
 // ════════════════════════════════════════════
 import { get } from 'svelte/store';
-import { dbSet, dbRemove, dbGetAllSettings, dbSaveProject, dbDeleteProject, dbSaveFolder, dbDeleteFolder } from './db.js';
+import { initDB, dbGetAllSettings, dbLoadProjects, dbLoadFolders, dbSaveProject, dbDeleteProject, dbSaveFolder, dbDeleteFolder } from './db.js';
 import {
   projectsStore, foldersStore,
   setProjects, setFolders,
@@ -15,59 +15,12 @@ import {
   setCurrentFolderId, getCurrentFolderId,
 } from '../stores/projects.js';
 import { elementsStore } from '../stores/elements.js';
-import { toastMsgStore, toastVisibleStore } from '../stores/ui.js';
+import { toastMsgStore, toastVisibleStore, isOnCanvasStore } from '../stores/ui.js';
 import { saveCanvasV2, loadCanvasV2, applyCanvasState, clearCanvasState, migrateV1ToV2 } from './canvas-persistence.js';
+import { store, markDbReady, setStorageFullCallback } from './kv-store.js';
+export { store };
 
 const IS_TAURI_STORAGE = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
-
-// ── Key-value store (localStorage / SQLite) ───
-
-const _memStore = {};
-let _dbReady = false;
-
-function markDbReady(allSettings) {
-  allSettings.forEach(r => { _memStore[r.key] = r.value; });
-  _dbReady = true;
-}
-
-const store = {
-  get(k) {
-    if (IS_TAURI_STORAGE && _dbReady) return _memStore[k] || null;
-    try { return localStorage.getItem(k); } catch { return _memStore[k] || null; }
-  },
-  set(k, v) {
-    _memStore[k] = v;
-    if (IS_TAURI_STORAGE && _dbReady) {
-      dbSet(k, v).catch(e => console.warn('[store] dbSet:', e));
-    } else {
-      try {
-        localStorage.setItem(k, v);
-      } catch (e) {
-        if (e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014)) {
-          try {
-            const keys = [];
-            for (let i = 0; i < localStorage.length; i++) keys.push(localStorage.key(i));
-            keys.filter(key => key && key.startsWith('freeflow_canvas_') && key !== k)
-                .sort((a, b) => (localStorage.getItem(a) || '').length - (localStorage.getItem(b) || '').length)
-                .slice(0, 3)
-                .forEach(key => localStorage.removeItem(key));
-            localStorage.setItem(k, v);
-          } catch {
-            showToast('Storage full — changes saved in memory only.');
-          }
-        }
-      }
-    }
-  },
-  remove(k) {
-    delete _memStore[k];
-    if (IS_TAURI_STORAGE && _dbReady) {
-      dbRemove(k).catch(e => console.warn('[store] dbRemove:', e));
-    } else {
-      try { localStorage.removeItem(k); } catch {}
-    }
-  },
-};
 
 // ── Toast ─────────────────────────────────────
 
@@ -78,6 +31,7 @@ function showToast(msg) {
   clearTimeout(_toastTimer);
   _toastTimer = setTimeout(() => toastVisibleStore.set(false), 2200);
 }
+setStorageFullCallback(showToast);
 
 // ── Project persistence ───────────────────────
 
@@ -151,6 +105,14 @@ function dupProject(id) {
   showToast(`"${copy.name}" created`);
 }
 
+function renameProject(id, name) {
+  const projects = loadProjects();
+  const p = projects.find(x => x.id === id); if (!p) return;
+  p.name = name.trim() || 'untitled canvas';
+  p.updatedAt = Date.now();
+  saveProjects(projects);
+}
+
 function deleteProject(id) {
   let projects = loadProjects();
   const p = projects.find(x => x.id === id);
@@ -186,7 +148,7 @@ async function _tryMigrateV1(id) {
   const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
   let raw = null;
 
-  const filePath = window.store?.get?.('freeflow_filepath_' + id);
+  const filePath = store.get('freeflow_filepath_' + id);
   if (filePath && IS_TAURI) {
     try { raw = await window.__TAURI__?.fs?.readTextFile(filePath); } catch {}
   }
@@ -212,6 +174,7 @@ async function openProject(id, e) {
   setActiveProjectId(id);
 
   document.body.classList.add('on-canvas');
+  isOnCanvasStore.set(true);
 
   // Load canvas state — try v2 first, then attempt v1→v2 migration, else DOM restore
   clearCanvasState();
@@ -237,11 +200,12 @@ async function openProject(id, e) {
 function goToDashboard() {
   _saveCurrentCanvas();
   document.body.classList.remove('on-canvas');
+  isOnCanvasStore.set(false);
   dashRender();
 }
 
 function toggleDashboard() {
-  if (document.body.classList.contains('on-canvas')) {
+  if (get(isOnCanvasStore)) {
     goToDashboard();
   } else {
     const id = getActiveProjectId() || createProject('untitled canvas').id;
@@ -302,23 +266,35 @@ function showNewModal() {
 // ── Init ──────────────────────────────────────
 
 function initProjectsService() {
-  // Load initial state from storage
-  const projects = (() => {
-    if (IS_TAURI_STORAGE) return get(projectsStore); // will be populated from SQLite after db init
-    try { return JSON.parse(store.get(STORAGE_KEY)) || []; } catch { return []; }
-  })();
-  const folders = (() => {
-    if (IS_TAURI_STORAGE) return get(foldersStore);
-    try { return JSON.parse(store.get(FOLDERS_KEY)) || []; } catch { return []; }
-  })();
-
-  setProjects(projects);
-  setFolders(folders);
-
-  if (!IS_TAURI_STORAGE) {
+  if (IS_TAURI_STORAGE) {
+    // Async DB init — runs after the sync bridge setup so window globals are available
+    initDB().then(async () => {
+      const [settings, projects, folders] = await Promise.all([
+        dbGetAllSettings(),
+        dbLoadProjects(),
+        dbLoadFolders(),
+      ]);
+      markDbReady(settings);
+      setProjects(projects);
+      setFolders(folders);
+      // Seed a demo project if the DB is brand new
+      if (projects.length === 0) {
+        const p = { id: 'demo_0', name: 'untitled', createdAt: Date.now(), updatedAt: Date.now(), noteCount: 0, accent: null, folderId: null };
+        saveProjects([p]);
+      }
+      // Restore theme
+      if (store.get('freeflow_dash_theme') === 'light') {
+        document.body.classList.add('dash-light');
+      }
+    }).catch(e => console.error('[projects-service] DB init failed:', e));
+  } else {
+    // Browser mode — load from localStorage immediately
+    const projects = (() => { try { return JSON.parse(store.get(STORAGE_KEY)) || []; } catch { return []; } })();
+    const folders  = (() => { try { return JSON.parse(store.get(FOLDERS_KEY))  || []; } catch { return []; } })();
+    setProjects(projects);
+    setFolders(folders);
     // Seed demo project in browser mode
-    const cur = get(projectsStore);
-    if (cur.length === 0) {
+    if (get(projectsStore).length === 0) {
       const p = { id: 'demo_0', name: 'untitled', createdAt: Date.now(), updatedAt: Date.now(), noteCount: 0, accent: null, folderId: null };
       saveProjects([p]);
     }
@@ -330,14 +306,14 @@ function initProjectsService() {
 
   // Auto-save canvas every 30s when on canvas (v2 format)
   setInterval(() => {
-    if (document.body.classList.contains('on-canvas')) {
+    if (get(isOnCanvasStore)) {
       _saveCurrentCanvas();
     }
   }, 30000);
 
   // Save on page unload
   window.addEventListener('beforeunload', () => {
-    if (document.body.classList.contains('on-canvas')) {
+    if (get(isOnCanvasStore)) {
       const id = getActiveProjectId();
       if (id) saveCanvasV2(id).catch(() => {});
     }
@@ -383,13 +359,10 @@ export function mountProjectsBridge() {
     set activeProjectId(v){ setActiveProjectId(v); },
     get currentFolderId() { return getCurrentFolderId(); },
     set currentFolderId(v){ setCurrentFolderId(v); },
-    get _dbReady()        { return _dbReady; },
-    get _memStore()       { return _memStore; },
     get IS_TAURI_STORAGE(){ return IS_TAURI_STORAGE; },
 
     // functions
     store,
-    markDbReady,
     showToast,
     dashRender,
     // Svelte sidebar/theme render reactively — these are no-ops
@@ -399,6 +372,7 @@ export function mountProjectsBridge() {
       store.set('freeflow_dash_theme', isLight ? 'light' : 'dark');
     },
     createProject,
+    renameProject,
     dupProject,
     deleteProject,
     openProject,

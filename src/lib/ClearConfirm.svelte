@@ -9,9 +9,10 @@
   function confirm() { dismiss(); clearCanvasState(); }
 
   onMount(() => {
-    window.clearAll         = show;
+    window.clearAll          = show;
     window.closeClearConfirm = dismiss;
     window.confirmClear      = confirm;
+    return () => { delete window.clearAll; delete window.closeClearConfirm; delete window.confirmClear; };
   });
 </script>
 

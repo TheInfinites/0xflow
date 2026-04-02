@@ -1,6 +1,8 @@
 <script>
   // ImageCard — DOM overlay over PixiJS canvas
   // Positioned by NoteOverlay / MediaOverlay based on element store coords
+  import { getBlobURL } from './media-service.js';
+
   let { el } = $props();
 
   // Resolve blob URL from imgId
@@ -9,15 +11,7 @@
   $effect(() => {
     const id = el?.content?.imgId;
     if (!id) return;
-    // Try cache first
-    if (window.blobURLCache?.[id]) {
-      blobUrl = window.blobURLCache[id];
-      return;
-    }
-    // Try legacy getImgBlob
-    window.getImgBlob?.(id).then(blob => {
-      if (blob) blobUrl = URL.createObjectURL(blob);
-    }).catch(() => {});
+    getBlobURL(id).then(url => { if (url) blobUrl = url; }).catch(() => {});
   });
 
   let srcPath = $derived(el?.content?.sourcePath ?? null);

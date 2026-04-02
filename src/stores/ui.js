@@ -8,6 +8,7 @@ export const toastMsgStore       = writable('');
 export const toastVisibleStore   = writable(false);
 export const alwaysOnTopStore    = writable(false);
 export const projectDirStore     = writable(null);   // null | string path
+export const isOnCanvasStore     = writable(false);  // true when canvas view is active
 
 // Bridge getters/setters for legacy JS
 export function getBrainstormOpen()     { return get(brainstormOpenStore); }

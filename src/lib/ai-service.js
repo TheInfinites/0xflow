@@ -22,10 +22,11 @@ async function _request(url, headers, body) {
   return res.json();
 }
 
-export async function callClaude(history) {
+export async function callClaude(history, apiKey) {
   const data = await _request(
     'https://api.anthropic.com/v1/messages',
     {
+      'x-api-key': apiKey || '',
       'anthropic-version': '2023-06-01',
       'anthropic-dangerous-direct-browser-access': 'true',
     },
@@ -60,7 +61,7 @@ export async function callGemini(history, apiKey) {
 }
 
 export async function callAI(model, history, apiKey) {
-  if (model === 'claude')  return callClaude(history);
+  if (model === 'claude')  return callClaude(history, apiKey);
   if (model === 'gpt')     return callGPT(history, apiKey);
   if (model === 'gemini')  return callGemini(history, apiKey);
   throw new Error('Unknown AI model: ' + model);

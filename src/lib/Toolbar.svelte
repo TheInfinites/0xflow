@@ -31,9 +31,9 @@
   const CANVAS_TOOLS = new Set(['select','pen','eraser','arrow','frame','rect','ellipse','line','text']);
 
   function handleClick(t) {
-    if (t.id === 'note')     { window._pixiCanvas?.makeNote?.(window._pixiApp?.screen.width/2 + 3000, window._pixiApp?.screen.height/2 + 3000); return; }
-    if (t.id === 'todo')     { window._pixiCanvas?.makeTodo?.(window._pixiApp?.screen.width/2 + 3000, window._pixiApp?.screen.height/2 + 3000); return; }
-    if (t.id === 'ai-note')  { window._pixiCanvas?.makeAiNote?.(window._pixiApp?.screen.width/2 + 3000, window._pixiApp?.screen.height/2 + 3000); return; }
+    if (t.id === 'note')     { const p = window.c2w?.(window.innerWidth/2, window.innerHeight/2) ?? { x: 3000, y: 3000 }; window._pixiCanvas?.makeNote?.(p.x, p.y); return; }
+    if (t.id === 'todo')     { const p = window.c2w?.(window.innerWidth/2, window.innerHeight/2) ?? { x: 3000, y: 3000 }; window._pixiCanvas?.makeTodo?.(p.x, p.y); return; }
+    if (t.id === 'ai-note')  { const p = window.c2w?.(window.innerWidth/2, window.innerHeight/2) ?? { x: 3000, y: 3000 }; window._pixiCanvas?.makeAiNote?.(p.x, p.y); return; }
     if (t.id === 'zoom-in')  { window.doZoom?.(1.15); return; }
     if (t.id === 'zoom-out') { window.doZoom?.(1/1.15); return; }
     if (t.id === 'zoom-fit') { window.zoomToFit?.(); return; }

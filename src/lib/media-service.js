@@ -3,6 +3,8 @@
 // ════════════════════════════════════════════
 import { get as _getStore } from 'svelte/store';
 import { elementsStore, snapshot } from '../stores/elements.js';
+import { scaleStore, pxStore, pyStore } from '../stores/canvas.js';
+import { projectDirStore } from '../stores/ui.js';
 
 export const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 
@@ -20,11 +22,12 @@ export async function getTauriImagesDir() {
 
 // Save an image blob to {projectDir}/images/ and return its path (or null)
 export async function saveImgToProjectDir(blob, id) {
-  if (!IS_TAURI || typeof window._projectDir === 'undefined' || !window._projectDir) return null;
+  const _pd = _getStore(projectDirStore);
+  if (!IS_TAURI || !_pd) return null;
   try {
     const { writeFile, mkdir } = window.__TAURI__.fs;
     const { join } = window.__TAURI__.path;
-    const imagesDir = await join(window._projectDir, 'images');
+    const imagesDir = await join(_pd, 'images');
     try { await mkdir(imagesDir, { recursive: true }); } catch {}
     const ext = blob.type === 'image/jpeg' ? '.jpg' : '.png';
     const filename = id + ext;
@@ -401,21 +404,19 @@ export function imgDelete(card) {
 
 // ── Placement helpers ──
 
+const WORLD_OFFSET = 3000;
 // c2w helper: converts client coords to world coords using current canvas transform
 function _c2w(clientX, clientY) {
   if (typeof window.c2w === 'function') return window.c2w(clientX, clientY);
-  // Fallback using stores
-  const { get } = { get: v => { let r; v.subscribe(x => r = x)(); return r; } };
-  return { x: clientX, y: clientY };
+  // Fallback using stores (before Canvas.svelte mounts)
+  const s = _getStore(scaleStore) || 1;
+  const wpx = _getStore(pxStore)  || 0;
+  const wpy = _getStore(pyStore)  || 0;
+  return { x: (clientX - wpx) / s + WORLD_OFFSET, y: (clientY - wpy) / s + WORLD_OFFSET };
 }
 
 function _canvasCentre() {
-  const cv = document.getElementById('cv');
-  if (cv) {
-    const r = cv.getBoundingClientRect();
-    return _c2w(r.left + r.width / 2, r.top + r.height / 2);
-  }
-  return { x: 3000, y: 3000 };
+  return _c2w(window.innerWidth / 2, window.innerHeight / 2);
 }
 
 export async function placeExrBlob(blob, wx, wy, sourcePath) {
@@ -441,14 +442,15 @@ export async function placeExrBlob(blob, wx, wy, sourcePath) {
   }
 
   let resolvedSourcePath = sourcePath;
-  if (!resolvedSourcePath && IS_TAURI && window._projectDir) {
+  if (!resolvedSourcePath && IS_TAURI) {
     resolvedSourcePath = await saveImgToProjectDir(blob, id);
   }
 
   snapshot();
   const card = makeImgCard(id, dataURL, wx, wy, dispW, dispH, nw, nh);
   if (resolvedSourcePath) card.dataset.sourcePath = resolvedSourcePath;
-  card.dataset.isExr = '1';
+  elementsStore.update(els => els.map(e => e.id === card._elId
+    ? { ...e, content: { ...e.content, isExr: true } } : e));
 }
 
 export async function placeImageBlob(blob, wx, wy, sourcePath) {
@@ -478,7 +480,7 @@ export async function placeImageBlob(blob, wx, wy, sourcePath) {
   }
 
   let resolvedSourcePath = sourcePath;
-  if (!resolvedSourcePath && IS_TAURI && window._projectDir) {
+  if (!resolvedSourcePath && IS_TAURI) {
     resolvedSourcePath = await saveImgToProjectDir(blob, id);
   }
 
@@ -613,7 +615,7 @@ export async function placeImagesGrid(blobs, sourcePaths, anchor) {
     const id = await saveImgBlob(blob);
     blobURLCache[id] = dataURL;
     let resolvedSourcePath = sourcePath;
-    if (!resolvedSourcePath && IS_TAURI && window._projectDir) {
+    if (!resolvedSourcePath && IS_TAURI) {
       resolvedSourcePath = await saveImgToProjectDir(blob, id);
     }
     const card = makeImgCard(id, dataURL, x, y, dispW, dispH, nw, nh);
@@ -672,8 +674,8 @@ export async function placePdf(file, sourcePath, wx, wy) {
       blobURLCache[id] = dataURL;
       const card = makeImgCard(id, dataURL, colX, colY, dispW, dispH, viewport.width, viewport.height);
       if (sourcePath) card.dataset.sourcePath = sourcePath;
-      card.dataset.pdfPage = pageNum;
-      card.dataset.pdfName = file.name || 'document.pdf';
+      elementsStore.update(els => els.map(e => e.id === card._elId
+        ? { ...e, content: { ...e.content, pdfPage: pageNum, pdfName: file.name || 'document.pdf' } } : e));
 
       colY += dispH + GAP;
     }

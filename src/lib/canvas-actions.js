@@ -7,31 +7,34 @@
 // font size, pin/lock, zoom, snap, note ctx menu.
 // ════════════════════════════════════════════
 import { get as _getStore } from 'svelte/store';
-import { setIsLight, scaleStore, pxStore, pyStore } from '../stores/canvas.js';
+import { setIsLight, getIsLight, scaleStore, pxStore, pyStore, getSelected } from '../stores/canvas.js';
 import { brainstormOpenStore, alwaysOnTopStore } from '../stores/ui.js';
-import { elementsStore, strokesStore, relationsStore, snapshot as storeSnapshot } from '../stores/elements.js';
+import { activeProjectIdStore } from '../stores/projects.js';
+import { elementsStore, strokesStore, relationsStore, snapshot as storeSnapshot, undo, redo } from '../stores/elements.js';
 import {
   IS_TAURI,
   getTauriImagesDir,
   blobURLCache,
   saveImgBlob,
 } from './media-service.js';
+import { saveCanvasV2, applyCanvasState } from './canvas-persistence.js';
+import { callAI } from './ai-service.js';
+import { store } from './projects-service.js';
 
 // ── Shared canvas export ────────────────────────────────────────────────────
 export async function exportSharedCanvas() {
-  if (!window.activeProjectId) { window.showToast?.('No active canvas'); return; }
+  if (!_getStore(activeProjectIdStore)) { window.showToast?.('No active canvas'); return; }
   if (!IS_TAURI) { window.showToast?.('Sharing requires the desktop app'); return; }
 
-  const canvasFilePath = window.store?.get('freeflow_filepath_' + window.activeProjectId);
-  if (!canvasFilePath) {
-    window.showToast?.('Save your canvas to a file first (use the save button)');
-    return;
-  }
-
-  window.showToast?.('Preparing share folder\u2026');
   try {
+    const { save } = window.__TAURI__.dialog;
     const { join, dirname, basename } = window.__TAURI__.path;
     const { mkdir, copyFile, writeTextFile, readFile } = window.__TAURI__.fs;
+
+    const canvasFilePath = await save({ filters: [{ name: '0xflow canvas', extensions: ['json'] }] });
+    if (!canvasFilePath) return;
+
+    window.showToast?.('Preparing share folder\u2026');
 
     const canvasDir  = await dirname(canvasFilePath);
     const canvasBase = await basename(canvasFilePath, '.json');
@@ -147,15 +150,12 @@ export async function _applySharedCanvas(raw, sourceFilePath) {
     return;
   }
 
-  const newId = 'proj_' + Date.now();
-  const p = { id: newId, name: 'Imported Canvas', createdAt: Date.now(), updatedAt: Date.now(), noteCount: 0 };
-  window.projects?.push(p);
-  window.saveProjects?.(window.projects);
-  const stateCopy = { ...parsed };
-  delete stateCopy.blobs; delete stateCopy.shared; delete stateCopy.shareFolder; delete stateCopy.fileMap;
-  window.store?.set('freeflow_canvas_' + newId, JSON.stringify(stateCopy));
-  window.activeProjectId = newId;
-  await window.loadCanvasState?.(newId);
+  const p = window.createProject?.('Imported Canvas');
+  if (!p) { window.showToast?.('Could not create project'); return; }
+  const state = { elements: parsed.elements || [], strokes: parsed.strokes || [], relations: parsed.relations || [], viewport: parsed.viewport };
+  applyCanvasState(state);
+  await saveCanvasV2(p.id);
+  await window.openProject?.(p.id);
   window.showToast?.('Canvas imported');
 
   if (parsed.blobs) {
@@ -197,7 +197,7 @@ export async function saveCanvasToFile() {
 
 // ── Theme toggle ────────────────────────────────────────────────────────────
 export function toggleTheme() {
-  const isLight = !document.body.classList.contains('light');
+  const isLight = !getIsLight();
   setIsLight(isLight);
   document.body.classList.toggle('light', isLight);
   try { localStorage.setItem('freeflow_theme', isLight ? 'light' : 'dark'); } catch {}
@@ -221,12 +221,10 @@ export function clearBrainstorm()  { brainstormOpenStore.set(false); }
 // ── Canvas toolbar actions ──────────────────────────────────────────────────
 const WORLD_OFFSET = 3000;
 function _screenCentre() {
-  const cv = document.getElementById('cv');
-  const r  = cv ? cv.getBoundingClientRect() : { left: 0, top: 0 };
   const s  = _getStore(scaleStore), wpx = _getStore(pxStore), wpy = _getStore(pyStore);
   return {
-    x: (window.innerWidth  / 2 - r.left - wpx) / s + WORLD_OFFSET,
-    y: (window.innerHeight / 2 - r.top  - wpy) / s + WORLD_OFFSET,
+    x: (window.innerWidth  / 2 - wpx) / s + WORLD_OFFSET,
+    y: (window.innerHeight / 2 - wpy) / s + WORLD_OFFSET,
   };
 }
 
@@ -243,7 +241,7 @@ export function addDrawCard() {
 }
 
 export function gridSelected() {
-  const sel = window.selectedElIds ?? [];
+  const sel = [...getSelected()];
   if (sel.length < 2) return;
   const els = _getStore(elementsStore).filter(e => sel.includes(e.id));
   if (!els.length) return;
@@ -263,7 +261,7 @@ export function gridSelected() {
 
 export function changeSelectedFontSize(delta) {
   elementsStore.update(els => {
-    const sel = window.selectedElIds ?? [];
+    const sel = [...getSelected()];
     return els.map(e => {
       if (!sel.includes(e.id)) return e;
       const cur = e.content?.fontSize ?? 12;
@@ -274,7 +272,7 @@ export function changeSelectedFontSize(delta) {
 }
 
 export function togglePinSelected() {
-  const sel = window.selectedElIds ?? []; if (!sel.length) return;
+  const sel = [...getSelected()]; if (!sel.length) return;
   const first = _getStore(elementsStore).find(e => e.id === sel[0]);
   const nextPin = first ? !first.pinned : true;
   elementsStore.update(els => els.map(e => sel.includes(e.id) ? { ...e, pinned: nextPin } : e));
@@ -282,7 +280,7 @@ export function togglePinSelected() {
 }
 
 export function toggleLockSelected() {
-  const sel = window.selectedElIds ?? []; if (!sel.length) return;
+  const sel = [...getSelected()]; if (!sel.length) return;
   const first = _getStore(elementsStore).find(e => e.id === sel[0]);
   const nextLock = first ? !first.locked : true;
   elementsStore.update(els => els.map(e => sel.includes(e.id) ? { ...e, locked: nextLock } : e));
@@ -297,6 +295,42 @@ export function toggleSnap() { window._pixiCanvas?.toggleSnap?.(); }
 export function alignSelFrame(dir)       { window._pixiCanvas?.alignSelected?.(dir); }
 export function distributeSelFrame(axis) { window._pixiCanvas?.distributeSelected?.(axis); }
 
+// ── Canvas summarise ────────────────────────────────────────────────────────
+export async function summariseCanvas() {
+  const els = _getStore(elementsStore);
+  if (!els.length) { window.showToast?.('Canvas is empty'); return; }
+
+  const notes  = els.filter(e => e.type === 'note' || e.type === 'ai-note').map(e =>
+    (e.content?.blocks?.content ?? []).flatMap(b => b.content ?? []).map(n => n.text ?? '').join(' ').trim()
+  ).filter(Boolean);
+  const todos  = els.filter(e => e.type === 'todo').map(e =>
+    (e.content?.todoTitle ?? '') + ': ' + (e.content?.todoItems ?? []).map(t => t.text).join(', ')
+  ).filter(Boolean);
+  const labels = els.filter(e => e.type === 'label').map(e => e.content?.text ?? '').filter(Boolean);
+
+  if (!notes.length && !todos.length && !labels.length) {
+    window.showToast?.('Nothing to summarise yet'); return;
+  }
+
+  window.showToast?.('Summarising…');
+
+  const context = [
+    notes.length  ? 'Notes:\n' + notes.map((t,i) => `${i+1}. ${t}`).join('\n')   : '',
+    todos.length  ? 'To-dos:\n' + todos.join('\n')  : '',
+    labels.length ? 'Labels: ' + labels.join(', ')  : '',
+  ].filter(Boolean).join('\n\n');
+
+  const apiKey = store.get('freeflow_key_claude') ?? '';
+  try {
+    const reply = await callAI('claude', [
+      { role: 'user', content: `Summarise this brainstorming canvas in 2–3 sentences. Be concise and direct.\n\n${context}` },
+    ], apiKey);
+    window.showToast?.(reply.slice(0, 200));
+  } catch (e) {
+    window.showToast?.('Summary failed: ' + (e.message ?? 'AI error'));
+  }
+}
+
 // ── Expose all as window globals ────────────────────────────────────────────
 Object.assign(window, {
   exportSharedCanvas, importSharedCanvas, _applySharedCanvas,
@@ -307,18 +341,14 @@ Object.assign(window, {
   togglePinSelected, toggleLockSelected,
   doZoom, toggleSnap,
   alignSelFrame, distributeSelFrame,
-  // canvas-stub.js no-op stubs (CanvasBar.svelte is reactive)
-  syncUndoButtons:        () => {},
-  updateSelBar:           () => {},
-  addRelHandle:           () => {},
-  startConnDrag:          () => {},
-  cleanupElConnections:   () => {},
-  loadViewBookmarks:      () => {},
-  saveViewBookmarks:      () => {},
-  tool:                   () => {},
-  setSnapEnabled:         () => {},
-  saveCanvasState:        () => {},
-  loadCanvasState:        () => Promise.resolve(),
-  serializeCanvas:        () => ({}),
-  restoreCanvas:          () => {},
+  undo, redo,
+  summariseCanvas,
 });
+
+// ── Restore persisted theme on load ────────────────────────────────────────
+try {
+  if (localStorage.getItem('freeflow_theme') === 'light') {
+    document.body.classList.add('light');
+    setIsLight(true);
+  }
+} catch {}

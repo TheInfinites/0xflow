@@ -51,11 +51,14 @@
   }
 
   onMount(() => {
-    // Expose legacy globals
     window.toggleTimer      = () => { visible = !visible; };
     window.setTimer         = (m) => setPreset(m);
     window.toggleTimer_run  = () => toggleRun();
     window.resetTimer       = () => reset();
+    return () => {
+      delete window.toggleTimer; delete window.setTimer;
+      delete window.toggleTimer_run; delete window.resetTimer;
+    };
   });
 
   onDestroy(() => { stop(); });
