@@ -3,6 +3,7 @@
   import { activeProjectIdStore, projectsStore } from '../stores/projects.js';
   import { canUndo, canRedo, undo, redo } from '../stores/elements.js';
   import { IS_TAURI } from './media-service.js';
+  import { alwaysOnTopStore } from '../stores/ui.js';
 
   const dispatch = createEventDispatcher();
 
@@ -105,7 +106,7 @@
     <button class="bar-btn" onclick={() => window.toggleTimer?.()} title="timer">
       <svg viewBox="0 0 12 12"><circle cx="6" cy="7" r="4"/><line x1="6" y1="1" x2="6" y2="3"/><line x1="4" y1="1" x2="8" y2="1"/><line x1="6" y1="7" x2="8.5" y2="5"/></svg>
     </button>
-    <button class="bar-btn" id="always-on-top-btn" onclick={() => window.toggleAlwaysOnTop?.()} title="always on top">
+    <button class="bar-btn" id="always-on-top-btn" class:active={$alwaysOnTopStore} onclick={() => window.toggleAlwaysOnTop?.()} title="always on top">
       <svg viewBox="0 0 12 12"><polyline points="6,1 6,9"/><polyline points="3,4 6,1 9,4"/><line x1="2" y1="11" x2="10" y2="11"/></svg>
     </button>
   </div>

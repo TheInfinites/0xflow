@@ -8,7 +8,7 @@
 // ════════════════════════════════════════════
 import { get as _getStore } from 'svelte/store';
 import { setIsLight, scaleStore, pxStore, pyStore } from '../stores/canvas.js';
-import { brainstormOpenStore } from '../stores/ui.js';
+import { brainstormOpenStore, alwaysOnTopStore } from '../stores/ui.js';
 import { elementsStore, strokesStore, relationsStore, snapshot as storeSnapshot } from '../stores/elements.js';
 import {
   IS_TAURI,
@@ -210,7 +210,7 @@ export async function toggleAlwaysOnTop() {
     const { invoke } = window.__TAURI__.core;
     const cur = await invoke('plugin:window|is_always_on_top', { label: 'main' });
     await invoke('plugin:window|set_always_on_top', { label: 'main', alwaysOnTop: !cur });
-    document.getElementById('always-on-top-btn')?.classList.toggle('active', !cur);
+    alwaysOnTopStore.set(!cur);
   } catch(e) { console.warn('toggleAlwaysOnTop', e); }
 }
 
@@ -297,36 +297,6 @@ export function toggleSnap() { window._pixiCanvas?.toggleSnap?.(); }
 export function alignSelFrame(dir)       { window._pixiCanvas?.alignSelected?.(dir); }
 export function distributeSelFrame(axis) { window._pixiCanvas?.distributeSelected?.(axis); }
 
-// ── Note/frame context menu delegates ──────────────────────────────────────
-let _ctxMenuElId = null;
-
-export function _openNoteMenu()   {}
-export function _closeNoteMenu()  {}
-export function deleteMenuNote()  { window._pixiCanvas?.deleteSelected?.(); }
-export function deleteMenuFrame() { window._pixiCanvas?.deleteSelected?.(); }
-export function zoomToMenuNote(elId)  { if (elId || _ctxMenuElId) window._pixiCanvas?.zoomToElement?.(elId ?? _ctxMenuElId); }
-export function zoomToMenuFrame(elId) { if (elId || _ctxMenuElId) window._pixiCanvas?.zoomToElement?.(elId ?? _ctxMenuElId); }
-
-export function togglePinNote() {
-  if (!_ctxMenuElId) return;
-  elementsStore.update(els => els.map(e => e.id === _ctxMenuElId ? { ...e, pinned: !e.pinned } : e));
-  storeSnapshot();
-}
-export function toggleLockNote() {
-  if (!_ctxMenuElId) return;
-  elementsStore.update(els => els.map(e => e.id === _ctxMenuElId ? { ...e, locked: !e.locked } : e));
-  storeSnapshot();
-}
-export function saveLink() {
-  const input = document.getElementById('note-link-input');
-  const url = input?.value?.trim() ?? '';
-  if (!_ctxMenuElId) return;
-  elementsStore.update(els => els.map(e =>
-    e.id === _ctxMenuElId ? { ...e, content: { ...(e.content ?? {}), link: url } } : e
-  ));
-  storeSnapshot();
-}
-
 // ── Expose all as window globals ────────────────────────────────────────────
 Object.assign(window, {
   exportSharedCanvas, importSharedCanvas, _applySharedCanvas,
@@ -337,10 +307,6 @@ Object.assign(window, {
   togglePinSelected, toggleLockSelected,
   doZoom, toggleSnap,
   alignSelFrame, distributeSelFrame,
-  _openNoteMenu, _closeNoteMenu,
-  deleteMenuNote, deleteMenuFrame,
-  zoomToMenuNote, zoomToMenuFrame,
-  togglePinNote, toggleLockNote, saveLink,
   // canvas-stub.js no-op stubs (CanvasBar.svelte is reactive)
   syncUndoButtons:        () => {},
   updateSelBar:           () => {},
