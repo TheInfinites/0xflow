@@ -2,6 +2,7 @@
   import { activeEditorIdStore, setActiveEditorId, scaleStore, pxStore, pyStore } from '../stores/canvas.js';
   import { elementsStore } from '../stores/elements.js';
   import NoteEditor from './NoteEditor.svelte';
+  import TodoOverlay from './TodoOverlay.svelte';
 
   const WORLD_OFFSET = 3000;
 
@@ -21,8 +22,8 @@
     return {
       left: sx,
       top: sy,
-      width: activeEl.width * scale,
-      height: activeEl.height * scale,
+      width: activeEl.width,
+      height: activeEl.height,
     };
   })());
 
@@ -32,12 +33,16 @@
 </script>
 
 {#if activeEl && rect}
-  <div
-    class="note-overlay"
-    style="left:{rect.left}px; top:{rect.top}px; width:{rect.width}px; height:{rect.height}px;"
-  >
-    <NoteEditor elId={activeEl.id} onclose={closeEditor} />
-  </div>
+  {#if activeEl.type === 'todo'}
+    <TodoOverlay elId={activeEl.id} onclose={closeEditor} />
+  {:else}
+    <div
+      class="note-overlay"
+      style="left:{rect.left}px; top:{rect.top}px; width:{rect.width}px; height:{rect.height}px; transform:scale({scale}); transform-origin:top left;"
+    >
+      <NoteEditor elId={activeEl.id} onclose={closeEditor} />
+    </div>
+  {/if}
 {/if}
 
 <style>
@@ -46,8 +51,9 @@
     z-index: 600;
     pointer-events: auto;
     box-sizing: border-box;
-    background: var(--card-bg, #1e1e1e);
-    border: 1px solid var(--accent, #4a9eff);
+    background: #1a1a1b;
+    border: 1px solid rgba(74,158,255,0.8);
+    box-shadow: 0 0 0 1px rgba(74,158,255,0.3);
     border-radius: 8px;
     overflow: hidden;
   }

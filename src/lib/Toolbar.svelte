@@ -1,4 +1,5 @@
 <script>
+  import { onMount } from 'svelte';
   import { curToolStore, snapEnabledStore } from '../stores/canvas.js';
 
   let curTool     = $derived($curToolStore);
@@ -46,9 +47,23 @@
     if (t.id === 'snap') return snapEnabled;
     return curTool === t.id;
   }
+
+  let toolbarEl;
+
+  onMount(() => {
+    function onClick(e) {
+      const btn = e.target.closest('.t');
+      if (!btn) return;
+      const tip = btn.dataset.tip;
+      const t = tools.find(x => x.tip === tip);
+      if (t) handleClick(t);
+    }
+    toolbarEl?.addEventListener('click', onClick);
+    return () => toolbarEl?.removeEventListener('click', onClick);
+  });
 </script>
 
-<div id="toolbar" class="svelte-toolbar">
+<div id="toolbar" class="svelte-toolbar" bind:this={toolbarEl}>
   {#each tools as t}
     {#if t.id === 'sep'}
       <div class="sep"></div>
@@ -59,7 +74,6 @@
         class:accent={t.accent}
         data-tip={t.tip}
         title={t.tip}
-        onclick={() => handleClick(t)}
       >
         <!-- eslint-disable-next-line svelte/no-at-html-tags -->
         <svg viewBox="0 0 15 15">{@html t.svg}</svg>

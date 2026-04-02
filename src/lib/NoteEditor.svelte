@@ -52,11 +52,9 @@
     if (!editor || !elId) return;
     const json = editor.getJSON();
     snapshot();
-    elementsStore.update(els => {
-      const el = els.find(e => e.id === elId);
-      if (el) el.content = { ...el.content, blocks: json };
-      return els;
-    });
+    elementsStore.update(els =>
+      els.map(e => e.id === elId ? { ...e, content: { ...e.content, blocks: json } } : e)
+    );
   }
 
   // ── Slash menu helpers ────────────────────────
@@ -205,7 +203,7 @@
     font-size: 13px;
     line-height: 1.55;
     color: var(--text-primary, #e0e0e0);
-    font-family: 'Barlow Condensed', sans-serif;
+    font-family: 'Geist', sans-serif;
   }
 
   :global(.ProseMirror p) { margin: 0 0 4px; }

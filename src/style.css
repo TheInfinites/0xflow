@@ -549,7 +549,7 @@ body.dash-light .card-del-cancel { border-color: rgba(0,0,0,0.15); color: rgba(0
   pointer-events: none; z-index: 0;
   background-size: 40px 40px;
 }
-#cv { position: fixed; top: 48px; left: 0; right: 0; bottom: 28px; overflow: hidden; z-index: 1; background: transparent; }
+#cv { position: fixed; top: 48px; left: 0; right: 0; bottom: 28px; overflow: hidden; z-index: 3; background: transparent; pointer-events: none; }
 
 /* top bar */
 #bar {
@@ -666,7 +666,7 @@ body.dash-light .card-del-cancel { border-color: rgba(0,0,0,0.15); color: rgba(0
 
 /* toolbar — removed (Toolbar.svelte) */
 
-#world { position: absolute; width: 8000px; height: 8000px; top: -3000px; left: -3000px; transform-origin: 3000px 3000px; user-select: none; }
+#world { position: absolute; width: 8000px; height: 8000px; top: -3000px; left: -3000px; transform-origin: 3000px 3000px; user-select: none; pointer-events: none; }
 #ink { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; overflow: visible; }
 #ink.live { pointer-events: all; cursor: crosshair; }
 

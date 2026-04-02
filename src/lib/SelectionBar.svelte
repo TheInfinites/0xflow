@@ -1,6 +1,8 @@
 <script>
-  import { selectedStore } from '../stores/canvas.js';
+  import { selectedStore, scaleStore, pxStore, pyStore } from '../stores/canvas.js';
   import { elementsStore, snapshot } from '../stores/elements.js';
+
+  const WORLD_OFFSET = 3000;
 
   let selected = $derived($selectedStore);
   let hasSelection = $derived(selected.size > 0);
@@ -68,10 +70,34 @@
 
   // Group/ungroup visibility
   let hasFrame = $derived(selEls.some(e => e.type === 'frame' && e.content?.groupIds?.length));
+
+  // Position near selected elements
+  let scale = $derived($scaleStore);
+  let vpx   = $derived($pxStore);
+  let vpy   = $derived($pyStore);
+  let barPos = $derived((() => {
+    if (!selEls.length) return null;
+    const screenXs = selEls.flatMap(e => [
+      (e.x - WORLD_OFFSET) * scale + vpx,
+      (e.x + e.width - WORLD_OFFSET) * scale + vpx,
+    ]);
+    const screenYs = selEls.flatMap(e => [
+      (e.y - WORLD_OFFSET) * scale + vpy,
+      (e.y + e.height - WORLD_OFFSET) * scale + vpy,
+    ]);
+    const minX = Math.min(...screenXs), maxX = Math.max(...screenXs);
+    const maxY = Math.max(...screenYs);
+    const cx = (minX + maxX) / 2;
+    // Position below the selection, clamped to viewport
+    const top = Math.min(maxY + 10, window.innerHeight - 60);
+    return { cx, top };
+  })());
 </script>
 
-{#if hasSelection}
-  <div id="selection-bar" class="svelte-selection-bar">
+{#if hasSelection && barPos}
+  <div id="selection-bar" class="svelte-selection-bar"
+    style="left:{barPos.cx}px; top:{barPos.top}px; transform:translateX(-50%); bottom:auto;"
+  >
     <span class="sel-count">{selected.size} selected</span>
     <div class="sel-sep"></div>
 
@@ -138,9 +164,7 @@
 <style>
   #selection-bar {
     position: fixed;
-    bottom: 24px;
-    left: 50%;
-    transform: translateX(-50%);
+    bottom: auto;
     display: flex;
     align-items: center;
     gap: 2px;

@@ -23,19 +23,24 @@
   let domOverlay;  // positioned DOM elements (notes, videos, etc.)
 
   // Viewport — seeded from stores so applyCanvasState pre-seeding is picked up on cold load
-  let scale = get(scaleStore) || 1;
-  let px    = get(pxStore)    || 0;
-  let py    = get(pyStore)    || 0;
+  let scale = $state(get(scaleStore) || 1);
+  let px    = $state(get(pxStore)    || 0);
+  let py    = $state(get(pyStore)    || 0);
   const WORLD_OFFSET = 3000; // world origin offset
 
   // Interaction
-  let curTool = 'select';
+  let curTool = $state('select');
   let selected = new Set();       // Set of element ids
   let isDragging = false;
   let isPanning = false;
   let panStart = { x: 0, y: 0, px: 0, py: 0 };
   let marqueeActive = false;
   let marqueeStart = null;
+  let marqueeRect = $state(null); // { x, y, w, h } in screen px
+  // Right-click relation drag
+  let relDragActive = $state(false);
+  let relDragLine   = $state(null); // { x1, y1, x2, y2 }
+  let relDragSourceId = null;
   let dragOrigins = [];
   let dragDelta = { x: 0, y: 0 };
   let snapEnabled = false;
@@ -95,10 +100,17 @@
 
   // ── PixiJS setup ─────────────────────────────
   onMount(async () => {
+    // Pre-load fonts so PixiJS text renders correctly
+    await Promise.all([
+      document.fonts.load('12px "Barlow Condensed"'),
+      document.fonts.load('12px "DM Mono"'),
+      document.fonts.load('12px "Geist Mono"'),
+    ]).catch(() => {});
+
     app = new Application();
     await app.init({
       canvas: canvasEl,
-      background: '#1a1a1a',
+      background: '#0e0e0f',
       resizeTo: canvasEl.parentElement,
       antialias: true,
       resolution: window.devicePixelRatio || 1,
@@ -147,8 +159,8 @@
   // ── Viewport ─────────────────────────────────
   function applyViewport() {
     if (!stage) return;
-    stage.x = px - WORLD_OFFSET * scale;
-    stage.y = py - WORLD_OFFSET * scale;
+    stage.x = px;
+    stage.y = py;
     stage.scale.set(scale);
     setScale(scale); setPx(px); setPy(py);
     drawDotGrid();
@@ -163,18 +175,19 @@
     const w = app?.screen.width  || 1400;
     const h = app?.screen.height || 900;
     const spacing = 20 * scale;
-    const ox = ((px - WORLD_OFFSET * scale) % spacing + spacing) % spacing;
-    const oy = ((py - WORLD_OFFSET * scale) % spacing + spacing) % spacing;
+    const ox = ((px % spacing) + spacing) % spacing;
+    const oy = ((py % spacing) + spacing) % spacing;
     const isLight = $isLightStore;
-    const dotColor = isLight ? 0x000000 : 0xffffff;
-    const dotAlpha = isLight ? 0.07 : 0.05;
-    g.fill({ color: dotColor, alpha: dotAlpha });
+    const lineColor = isLight ? 0x000000 : 0xffffff;
+    const lineAlpha = isLight ? 0.03 : 0.035;
+    // Grid lines
     for (let x = ox; x < w; x += spacing) {
-      for (let y = oy; y < h; y += spacing) {
-        g.rect(x - 1, y - 1, 2, 2);
-      }
+      g.moveTo(x, 0).lineTo(x, h);
     }
-    g.fill();
+    for (let y = oy; y < h; y += spacing) {
+      g.moveTo(0, y).lineTo(w, y);
+    }
+    g.stroke({ color: lineColor, width: 1, alpha: lineAlpha });
     bgLayer.addChild(g);
   }
 
@@ -232,7 +245,6 @@
 
   function renderElements(els) {
     if (!elemLayer) return;
-
     const existing = new Set(_elContainers.keys());
 
     for (const el of els) {
@@ -273,9 +285,6 @@
     if (el.type === 'label') {
       const t = new Text({ text: el.content?.text || '', style: buildTextStyle(el) });
       c.addChild(t);
-    } else if (el.type === 'note' || el.type === 'ai-note' || el.type === 'todo') {
-      const preview = buildTextPreview(el);
-      if (preview) c.addChild(preview);
     } else if (el.type === 'frame') {
       const label = buildFrameLabel(el);
       if (label) c.addChild(label);
@@ -291,15 +300,7 @@
       openCtxMenu(e.nativeEvent ?? e, el.id);
     });
 
-    // Double-click opens editor for text elements
-    if (el.type === 'note' || el.type === 'ai-note' || el.type === 'label') {
-      c.on('pointertap', e => {
-        if (e.detail === 2) {  // double-click
-          e.stopPropagation();
-          setActiveEditorId(el.id);
-        }
-      });
-    }
+    // double-click tracked via native dblclick on canvas (see onDblClick below)
 
     return c;
   }
@@ -314,21 +315,6 @@
     c.addChild(bg);
     if (el.type === 'label') {
       c.addChild(new Text({ text: el.content?.text || '', style: buildTextStyle(el) }));
-    } else if (el.type === 'note' || el.type === 'ai-note' || el.type === 'todo') {
-      const preview = buildTextPreview(el);
-      if (preview) c.addChild(preview);
-      // Collapsed: add small title text
-      if (el.collapsed) {
-        const titleText = el.content?.todoTitle ||
-          extractTiptapText(el.content?.blocks, 40) ||
-          (el.type === 'ai-note' ? 'AI note' : 'note');
-        const titleEl = new Text({
-          text: titleText,
-          style: new TextStyle({ fontSize: 11, fill: 0x888888, fontFamily: 'Barlow Condensed, sans-serif' }),
-          x: 12, y: 8,
-        });
-        c.addChild(titleEl);
-      }
     } else if (el.type === 'frame') {
       const label = buildFrameLabel(el);
       if (label) c.addChild(label);
@@ -342,6 +328,12 @@
     const g = new Graphics();
     const isSelected = selected.has(el.id);
     const w = el.width || 240, h = el.height || 180;
+
+    // Notes/todos/ai-notes are rendered as DOM overlays — Pixi just needs a transparent hit area
+    if (el.type === 'note' || el.type === 'ai-note' || el.type === 'todo') {
+      g.rect(0, 0, w, h).fill({ color: 0x000000, alpha: 0 });
+      return g;
+    }
 
     if (el.type === 'frame') {
       const FRAME_COLORS = [
@@ -652,6 +644,11 @@
 
   // ── Pointer event handlers ───────────────────
   function onPointerDown(e) {
+    // Suppress if a Pixi element was hit
+    const r = canvasEl.getBoundingClientRect();
+    const hit = app?.renderer?.events?.rootBoundary?.hitTest?.(e.clientX - r.left, e.clientY - r.top);
+    if (hit && hit.label && _elContainers.has(hit.label)) return;
+
     if (e.button === 1 || (e.button === 0 && e.altKey)) {
       // Pan
       isPanning = true;
@@ -689,6 +686,11 @@
   function onPointerMove(e) {
     const wp = c2w(e.clientX, e.clientY);
 
+    if (relDragActive) {
+      updateRelDrag(e.clientX, e.clientY);
+      return;
+    }
+
     if (isPanning) {
       px = panStart.px + (e.clientX - panStart.x);
       py = panStart.py + (e.clientY - panStart.y);
@@ -700,13 +702,12 @@
       const dx = (e.clientX - dragOrigins[0].startClientX) / scale;
       const dy = (e.clientY - dragOrigins[0].startClientY) / scale;
       elementsStore.update(els => {
-        for (const o of dragOrigins) {
-          const el = els.find(e => e.id === o.id);
-          if (!el) continue;
+        return els.map(el => {
+          const o = dragOrigins.find(o => o.id === el.id);
+          if (!o) return el;
           const { x: sx, y: sy } = snapXY(o.origX + dx, o.origY + dy);
-          el.x = sx; el.y = sy;
-        }
-        return els;
+          return { ...el, x: sx, y: sy };
+        });
       });
       return;
     }
@@ -728,6 +729,8 @@
 
   function onPointerUp(e) {
     const wp = c2w(e.clientX, e.clientY);
+
+    if (relDragActive) { finishRelDrag(e.clientX, e.clientY); return; }
 
     if (isPanning) { isPanning = false; return; }
 
@@ -778,6 +781,16 @@
     }
   }
 
+  function onDblClick(e) {
+    const r = canvasEl.getBoundingClientRect();
+    const hit = app?.renderer?.events?.rootBoundary?.hitTest?.(e.clientX - r.left, e.clientY - r.top);
+    if (!hit?.label) return;
+    const el = $elementsStore.find(x => x.id === hit.label);
+    if (el && (el.type === 'note' || el.type === 'ai-note' || el.type === 'todo' || el.type === 'label')) {
+      setActiveEditorId(el.id);
+    }
+  }
+
   function onWheel(e) {
     e.preventDefault();
     if (e.ctrlKey || Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
@@ -793,6 +806,10 @@
 
   function onElPointerDown(e, id) {
     e.stopPropagation();
+    if (e.button === 2) {
+      startRelDrag(id, e.clientX, e.clientY);
+      return;
+    }
     if (curTool !== 'select') return;
 
     if (!e.shiftKey && !selected.has(id)) {
@@ -835,21 +852,59 @@
   }
 
   // ── Marquee ──────────────────────────────────
-  let marqueeG = null;
-
   function updateMarqueePreview(start, cur) {
-    if (!marqueeG) { marqueeG = new Graphics(); app.stage.addChild(marqueeG); }
-    marqueeG.clear();
     const s = w2s(start.x, start.y);
     const c2 = w2s(cur.x, cur.y);
-    const mx = Math.min(s.x, c2.x), my = Math.min(s.y, c2.y);
-    const mw = Math.abs(c2.x - s.x), mh = Math.abs(c2.y - s.y);
-    marqueeG.rect(mx, my, mw, mh).fill({ color: 0x4a9eff, alpha: 0.08 });
-    marqueeG.rect(mx, my, mw, mh).stroke({ color: 0x4a9eff, width: 1, alpha: 0.5 });
+    marqueeRect = {
+      x: Math.min(s.x, c2.x),
+      y: Math.min(s.y, c2.y),
+      w: Math.abs(c2.x - s.x),
+      h: Math.abs(c2.y - s.y),
+    };
   }
 
   function clearMarqueePreview() {
-    if (marqueeG) { app.stage.removeChild(marqueeG); marqueeG.destroy(); marqueeG = null; }
+    marqueeRect = null;
+  }
+
+  // ── Right-click relation drag ─────────────────
+  function startRelDrag(sourceId, clientX, clientY) {
+    const src = $elementsStore.find(e => e.id === sourceId);
+    if (!src) return;
+    relDragSourceId = sourceId;
+    relDragActive = true;
+    const cx = (src.x + src.width/2 - WORLD_OFFSET) * scale + px;
+    const cy = (src.y + src.height/2 - WORLD_OFFSET) * scale + py;
+    relDragLine = { x1: cx, y1: cy, x2: clientX, y2: clientY };
+  }
+
+  function updateRelDrag(clientX, clientY) {
+    if (!relDragActive || !relDragSourceId) return;
+    const src = $elementsStore.find(e => e.id === relDragSourceId);
+    if (!src) return;
+    const cx = (src.x + src.width/2 - WORLD_OFFSET) * scale + px;
+    const cy = (src.y + src.height/2 - WORLD_OFFSET) * scale + py;
+    relDragLine = { x1: cx, y1: cy, x2: clientX, y2: clientY };
+  }
+
+  function finishRelDrag(clientX, clientY) {
+    if (!relDragActive) return;
+    relDragActive = false;
+    relDragLine = null;
+    const srcId = relDragSourceId;
+    relDragSourceId = null;
+    if (!srcId) return;
+    // Find element under cursor
+    const r = canvasEl.getBoundingClientRect();
+    const hit = app?.renderer?.events?.rootBoundary?.hitTest?.(clientX - r.left, clientY - r.top);
+    const targetId = hit?.label;
+    if (targetId && targetId !== srcId && _elContainers.has(targetId)) {
+      const already = $relationsStore.some(r => (r.elAId === srcId && r.elBId === targetId) || (r.elAId === targetId && r.elBId === srcId));
+      if (!already) {
+        snapshot();
+        relationsStore.update(rs => [...rs, { id: crypto.randomUUID(), elAId: srcId, elBId: targetId }]);
+      }
+    }
   }
 
   function finishMarquee(start, end) {
@@ -1133,11 +1188,9 @@
 
     if (snapEnabled) { w = snap(w); ht = snap(ht); x = snap(x); y = snap(y); }
 
-    elementsStore.update(els => {
-      const el = els.find(e => e.id === resizeEl);
-      if (el) { el.x = x; el.y = y; el.width = w; el.height = ht; }
-      return els;
-    });
+    elementsStore.update(els =>
+      els.map(el => el.id === resizeEl ? { ...el, x, y, width: w, height: ht } : el)
+    );
   }
 
   function onResizeUp() {
@@ -1419,8 +1472,9 @@
   onpointerdown={onPointerDown}
   onpointermove={onPointerMove}
   onpointerup={onPointerUp}
+  ondblclick={onDblClick}
   onwheel={onWheel}
-  oncontextmenu={e => { e.preventDefault(); if (ctxMenu) closeCtxMenu(); }}
+  oncontextmenu={e => { e.preventDefault(); }}
   style="position:relative;width:100%;height:100%;overflow:hidden;"
 >
   <canvas bind:this={canvasEl} style="display:block;width:100%;height:100%;"></canvas>
@@ -1434,6 +1488,26 @@
     <NoteOverlay />
     <!-- Media overlays — images, video, audio, draw cards -->
     <MediaOverlay />
+    <!-- Marquee selection box — above all DOM cards -->
+    {#if marqueeRect}
+      <div
+        class="dom-marquee"
+        style="left:{marqueeRect.x}px;top:{marqueeRect.y}px;width:{marqueeRect.w}px;height:{marqueeRect.h}px;"
+      ></div>
+    {/if}
+    <!-- Relation drag wire preview -->
+    {#if relDragActive && relDragLine}
+      {@const { x1, y1, x2, y2 } = relDragLine}
+      {@const dx = Math.abs(x2 - x1) * 0.5}
+      <svg class="rel-drag-svg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;">
+        <path
+          d="M {x1} {y1} C {x1+dx} {y1}, {x2-dx} {y2}, {x2} {y2}"
+          fill="none" stroke="rgba(232,68,10,0.7)" stroke-width="1.5"
+          stroke-dasharray="5,3"
+        />
+        <circle cx={x2} cy={y2} r="4" fill="rgba(232,68,10,0.8)" />
+      </svg>
+    {/if}
   </div>
 
   <!-- Resize handles — rendered for each selected element in select tool -->
@@ -1512,6 +1586,15 @@
     cursor: default;
     touch-action: none;
     user-select: none;
+  }
+
+  /* ── DOM Marquee ── */
+  .dom-marquee {
+    position: absolute;
+    background: rgba(74,158,255,0.08);
+    border: 1px solid rgba(74,158,255,0.5);
+    pointer-events: none;
+    z-index: 900;
   }
 
   /* ── Resize handles ── */
