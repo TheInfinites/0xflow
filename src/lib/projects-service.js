@@ -212,10 +212,6 @@ async function openProject(id, e) {
   saveProjects(projects);
   setActiveProjectId(id);
 
-  // Update legacy project-title bar
-  const titleEl = document.getElementById('project-title');
-  if (titleEl) titleEl.textContent = p.name;
-
   document.body.classList.add('on-canvas');
   const bd = document.getElementById('dash-backdrop');
   if (bd) { bd.style.opacity = '0'; bd.style.pointerEvents = 'none'; }
@@ -324,10 +320,6 @@ function startInlineRename(id) {
     const val = input.value.trim() || 'untitled canvas';
     p.name = val; p.updatedAt = Date.now();
     saveProjects(projects);
-    if (getActiveProjectId() === id) {
-      const titleEl = document.getElementById('project-title');
-      if (titleEl) titleEl.textContent = val;
-    }
   }
   input.addEventListener('blur', commit);
   input.addEventListener('keydown', e => {

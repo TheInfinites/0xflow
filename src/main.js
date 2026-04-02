@@ -150,25 +150,6 @@ const _IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 if (_IS_TAURI) {
   (function () {
     const invoke = window.__TAURI__.core.invoke;
-    const LABEL = 'main';
-    const winOps = {
-      minimize:       () => invoke('plugin:window|minimize',        { label: LABEL }),
-      toggleMaximize: () => invoke('plugin:window|toggle_maximize', { label: LABEL }),
-      close:          () => invoke('plugin:window|close',           { label: LABEL }),
-      startDragging:  () => invoke('plugin:window|start_dragging',  { label: LABEL }),
-    };
-    document.getElementById('win-controls').style.display = 'flex';
-    document.getElementById('win-min').addEventListener('click',   e => { e.stopPropagation(); winOps.minimize(); });
-    document.getElementById('win-max').addEventListener('click',   e => { e.stopPropagation(); winOps.toggleMaximize(); });
-    document.getElementById('win-close').addEventListener('click', e => { e.stopPropagation(); winOps.close(); });
-    document.querySelectorAll('.win-ctrl').forEach(btn => btn.addEventListener('mousedown', e => e.stopPropagation()));
-    function isDragTarget(e) {
-      if (e.target.closest('.win-ctrl, button, input, textarea, select, a')) return false;
-      return !!e.target.closest('#bar, #topbar');
-    }
-    document.addEventListener('mousedown', e => { if (isDragTarget(e)) winOps.startDragging(); });
-    document.addEventListener('dblclick',  e => { if (isDragTarget(e)) winOps.toggleMaximize(); });
-
     async function checkForAppUpdate(silent) {
       try {
         const { Channel } = window.__TAURI__.core;

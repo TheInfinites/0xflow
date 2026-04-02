@@ -1026,8 +1026,8 @@
         e.target.isContentEditable) return;
 
     if (e.ctrlKey || e.metaKey) {
-      if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); if (undo()) syncUndoButtons(); return; }
-      if ((e.key === 'z' && e.shiftKey) || e.key === 'y') { e.preventDefault(); if (redo()) syncUndoButtons(); return; }
+      if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
+      if ((e.key === 'z' && e.shiftKey) || e.key === 'y') { e.preventDefault(); redo(); return; }
       if (e.key === 'a') { e.preventDefault(); selectAll(); return; }
       if (e.key === 'd') { e.preventDefault(); duplicateSelected(); return; }
       if (e.key === 'c') { e.preventDefault(); copySelected(); return; }
@@ -1070,13 +1070,6 @@
     });
     selected = newIds;
     setSelected(new Set(newIds));
-  }
-
-  function syncUndoButtons() {
-    const u = document.getElementById('undo-btn');
-    const r = document.getElementById('redo-btn');
-    if (u) u.disabled = !canUndo();
-    if (r) r.disabled = !canRedo();
   }
 
   // ── Canvas serialization ─────────────────────
