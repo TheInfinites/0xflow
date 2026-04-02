@@ -3,13 +3,59 @@
 import { mountProjectsBridge } from './lib/projects-service.js';
 mountProjectsBridge();
 
-// Legacy shims (media bridge + Svelte stubs)
+// Legacy shims
 import './legacy/tauri-mock.js';
-import './legacy/canvas-stub.js';
-import './legacy/images.js';
 
 // Canvas actions (share, save, theme, toolbar delegates, etc.)
 import './lib/canvas-actions.js';
+
+// Media bridge globals (placed/save/load helpers)
+import {
+  placeImageBlob, placeExrBlob, placeMediaBlob, placeMediaFromPath,
+  placeImagesGrid, placePdf,
+  makeImgCard, makeVideoCard, makeAudioCard,
+  saveImgBlob, loadImgBlob, deleteImgBlob, duplicateImgBlob,
+  getBlobURL, imgDelete, saveImgToProjectDir,
+  onImportFiles,
+} from './lib/media-service.js';
+import { minimapVisibleStore } from './stores/canvas.js';
+import { clearCanvasState } from './lib/canvas-persistence.js';
+
+Object.assign(window, {
+  // media
+  placeImageBlob, placeMediaBlob, placeMediaFromPath, placeExrBlob,
+  placeImagesGrid,
+  makeImgCard, makeVideoCard, makeAudioCard,
+  imgDelete,
+  getBlobURL, saveImgBlob, loadImgBlob, deleteImgBlob, duplicateImgBlob,
+  saveImgToProjectDir,
+  restoreImgCards: () => {},
+  // file inputs
+  triggerImg: () => document.getElementById('img-file')?.click(),
+  onImgFiles: async e => { const files = [...e.target.files]; e.target.value = ''; await onImportFiles(files); },
+  onPdfFiles:  async e => { const files = [...e.target.files]; e.target.value = ''; for (const f of files) await placePdf(f); },
+  // search (overridden by SearchBox.svelte)
+  toggleSearch: () => {}, doSearch: () => {}, searchNav: () => {}, clearSearchHL: () => {},
+  panToNote: el => { if (el?.id) window._pixiCanvas?.zoomToElement?.(el.id); },
+  // minimap
+  toggleMinimap: () => minimapVisibleStore.update(v => !v),
+  updateMinimap: () => {},
+  // clear confirm (overridden by ClearConfirm.svelte)
+  clearAll: () => {}, closeClearConfirm: () => {},
+  confirmClear: () => clearCanvasState(),
+  // stubs (overridden by Svelte panels)
+  exportJSON:       () => window.showToast?.('JSON export coming soon'),
+  exportPNG:        () => window.showToast?.('PNG export coming soon'),
+  exportMarkdown:   () => window.showToast?.('Markdown export coming soon'),
+  summariseCanvas:  async () => window.showToast?.('Canvas summary coming soon'),
+  clusterCanvas:    async () => window.showToast?.('AI cluster coming soon'),
+  openExportPanel:  () => window.showToast?.('Export panel coming soon'),
+  closeExportPanel: () => {},
+  openRadialMenu:   () => {}, closeRadialMenu:  () => {},
+  toggleCmdPalette: () => {}, openCmdPalette:   () => {}, closeCmdPalette: () => {},
+  renderBookmarkList: () => {}, addViewBookmark: () => {},
+  addSummaryAsNote: () => {}, closeSummary: () => {}, copySummary: () => {},
+});
 
 import { mount } from 'svelte';
 

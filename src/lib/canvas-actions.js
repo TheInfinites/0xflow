@@ -7,7 +7,7 @@
 // font size, pin/lock, zoom, snap, note ctx menu.
 // ════════════════════════════════════════════
 import { get as _getStore } from 'svelte/store';
-import { setIsLight } from '../stores/canvas.js';
+import { setIsLight, scaleStore, pxStore, pyStore } from '../stores/canvas.js';
 import { brainstormOpenStore } from '../stores/ui.js';
 import { elementsStore, strokesStore, relationsStore, snapshot as storeSnapshot } from '../stores/elements.js';
 import {
@@ -50,7 +50,7 @@ export async function exportSharedCanvas() {
       elements:  _getStore(elementsStore),
       strokes:   _getStore(strokesStore),
       relations: _getStore(relationsStore),
-      viewport:  { scale: window.scale, px: window.px, py: window.py },
+      viewport:  { scale: _getStore(scaleStore), px: _getStore(pxStore), py: _getStore(pyStore) },
       shareFolder: true,
     };
 
@@ -188,7 +188,7 @@ export async function saveCanvasToFile() {
       elements:  _getStore(elementsStore),
       strokes:   _getStore(strokesStore),
       relations: _getStore(relationsStore),
-      viewport:  { scale: window.scale, px: window.px, py: window.py },
+      viewport:  { scale: _getStore(scaleStore), px: _getStore(pxStore), py: _getStore(pyStore) },
     };
     await writeTextFile(filePath, JSON.stringify(state, null, 2));
     window.showToast?.('Canvas saved to file');
@@ -219,9 +219,19 @@ export function toggleBrainstorm() { brainstormOpenStore.update(v => !v); }
 export function clearBrainstorm()  { brainstormOpenStore.set(false); }
 
 // ── Canvas toolbar actions ──────────────────────────────────────────────────
+const WORLD_OFFSET = 3000;
+function _screenCentre() {
+  const cv = document.getElementById('cv');
+  const r  = cv ? cv.getBoundingClientRect() : { left: 0, top: 0 };
+  const s  = _getStore(scaleStore), wpx = _getStore(pxStore), wpy = _getStore(pyStore);
+  return {
+    x: (window.innerWidth  / 2 - r.left - wpx) / s + WORLD_OFFSET,
+    y: (window.innerHeight / 2 - r.top  - wpy) / s + WORLD_OFFSET,
+  };
+}
+
 export function addDrawCard() {
-  const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
-  const pos = typeof window.c2w === 'function' ? window.c2w(cx, cy) : { x: 3000, y: 3000 };
+  const pos = _screenCentre();
   const id = 'draw_' + Date.now();
   elementsStore.update(els => [...els, {
     id, type: 'draw', x: pos.x, y: pos.y,
@@ -331,4 +341,18 @@ Object.assign(window, {
   deleteMenuNote, deleteMenuFrame,
   zoomToMenuNote, zoomToMenuFrame,
   togglePinNote, toggleLockNote, saveLink,
+  // canvas-stub.js no-op stubs (CanvasBar.svelte is reactive)
+  syncUndoButtons:        () => {},
+  updateSelBar:           () => {},
+  addRelHandle:           () => {},
+  startConnDrag:          () => {},
+  cleanupElConnections:   () => {},
+  loadViewBookmarks:      () => {},
+  saveViewBookmarks:      () => {},
+  tool:                   () => {},
+  setSnapEnabled:         () => {},
+  saveCanvasState:        () => {},
+  loadCanvasState:        () => Promise.resolve(),
+  serializeCanvas:        () => ({}),
+  restoreCanvas:          () => {},
 });
