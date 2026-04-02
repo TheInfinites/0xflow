@@ -762,35 +762,7 @@ body.dash-light #toast { background: #1a1a1a; }
   margin: 4px 6px;
 }
 
-/* toolbar — bottom center */
-#toolbar {
-  position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
-  z-index: 1000; display: flex; flex-direction: row; align-items: flex-end; gap: 0;
-  background: rgba(10,10,10,0.97); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(255,255,255,0.1); border-top: 2px solid rgba(255,255,255,0.07);
-  border-radius: 12px; padding: 4px 5px;
-  box-shadow: 0 -2px 40px rgba(0,0,0,0.5);
-}
-.t {
-  width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
-  border-radius: 7px; border: 1px solid transparent; cursor: pointer; background: none;
-  transition: transform 0.15s cubic-bezier(0.34,1.56,0.64,1), color 0.1s, background 0.1s;
-  color: rgba(255,255,255,0.28); position: relative;
-  transform-origin: bottom center; will-change: transform;
-}
-.t:hover { color: rgba(255,255,255,0.8); background: rgba(255,255,255,0.04); }
-.t.on { color: #fff; background: #E8440A; border-color: #E8440A; border-radius: 7px; }
-.t.on:hover { background: #E8440A; }
-.t svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; flex-shrink: 0; }
-.t::after {
-  content: attr(data-tip); position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%);
-  background: #111; border: 1px solid rgba(255,255,255,0.12); color: rgba(255,255,255,0.55);
-  font-family: 'Geist Mono', monospace; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
-  padding: 4px 9px; border-radius: 0; white-space: nowrap;
-  opacity: 0; pointer-events: none; transition: opacity 0.12s;
-}
-.t:hover::after { opacity: 1; }
-.sep { height: 16px; width: 1px; background: rgba(255,255,255,0.08); margin: 0 3px; flex-shrink: 0; }
+/* toolbar — removed (Toolbar.svelte) */
 
 #world { position: absolute; width: 8000px; height: 8000px; top: -3000px; left: -3000px; transform-origin: 3000px 3000px; user-select: none; }
 #ink { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; overflow: visible; }
@@ -1361,45 +1333,7 @@ body.on-canvas.light .todo-progress { background: rgba(255,255,255,0.06); }
 .stroke-wrap.stroke-selected { filter: drop-shadow(0 0 5px rgba(255,255,255,0.2)); }
 #marquee { position: absolute; border: 1px solid rgba(232,68,10,0.5); background: rgba(232,68,10,0.04); pointer-events: none; z-index: 500; display: none; border-radius: 0; }
 
-/* selection bar */
-#ms-scale-box {
-  position: fixed; pointer-events: none; z-index: 1500;
-  border: 1px dashed rgba(255,255,255,0.2); display: none;
-}
-#ms-scale-box.show { display: block; }
-.ms-corner {
-  position: absolute; width: 8px; height: 8px;
-  background: #fff; border: 1px solid rgba(0,0,0,0.4); border-radius: 1px;
-  pointer-events: all; cursor: nwse-resize;
-}
-.ms-corner[data-corner="nw"] { top: -4px; left: -4px; cursor: nwse-resize; }
-.ms-corner[data-corner="ne"] { top: -4px; right: -4px; cursor: nesw-resize; }
-.ms-corner[data-corner="se"] { bottom: -4px; right: -4px; cursor: nwse-resize; }
-.ms-corner[data-corner="sw"] { bottom: -4px; left: -4px; cursor: nesw-resize; }
-
-#sel-bar {
-  position: fixed; z-index: 2000; display: none; align-items: center; gap: 0;
-  background: rgba(10,10,10,0.95); backdrop-filter: blur(20px);
-  border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 4px 5px;
-  transform: translateX(-50%); pointer-events: all;
-}
-#sel-bar.show { display: flex; }
-.sel-btn { height: 26px; padding: 0 9px; background: none; border: 1px solid transparent; border-radius: 0; font-family: 'Geist Mono', monospace; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255,255,255,0.35); cursor: pointer; transition: all 0.1s; white-space: nowrap; display: flex; align-items: center; gap: 4px; }
-.sel-btn:hover { color: rgba(255,255,255,0.85); background: rgba(255,255,255,0.05); }
-.sel-btn.danger:hover { color: #E8440A; background: rgba(232,68,10,0.06); }
-.sel-btn svg { width: 11px; height: 11px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.sel-divider { width: 1px; height: 14px; background: rgba(255,255,255,0.08); margin: 0 2px; }
-.sel-count { font-family: 'Geist Mono', monospace; font-size: 9px; color: rgba(255,255,255,0.25); padding: 0 8px; border-right: 1px solid rgba(255,255,255,0.08); letter-spacing: 0.08em; }
-.sel-icon-btn { padding: 0 5px !important; min-width: 24px; }
-.sel-icon-btn svg { width: 12px !important; height: 12px !important; }
-#sel-font-size {
-  font-family: 'Geist Mono', monospace; font-size: 9px; color: rgba(255,255,255,0.55);
-  background: transparent; border: none; outline: none; width: 26px; text-align: center;
-  padding: 0 2px; -moz-appearance: textfield;
-}
-#sel-font-size::-webkit-inner-spin-button,
-#sel-font-size::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-#sel-font-size:focus { color: rgba(255,255,255,0.9); background: rgba(255,255,255,0.06); border-radius: 3px; }
+/* ms-scale-box, .ms-corner, #sel-bar, .sel-*, #sel-font-size — removed (Canvas.svelte / SelectionBar.svelte) */
 
 /* image cards */
 .img-card {
@@ -1577,27 +1511,7 @@ body.has-sel-bar .img-toolbar { display: none !important; }
 .frame-label::placeholder { color: var(--text-faint); }
 .frame.selected { outline: 1px solid rgba(232,68,10,0.6) !important; outline-offset: 2px; }
 
-/* status bar */
-#status {
-  position: fixed; bottom: 0; left: 0; right: 0; height: 28px; z-index: 900;
-  display: flex; align-items: center; padding: 0 16px; gap: 10px;
-  background: rgba(10,10,10,0.92); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-  border-top: 1px solid rgba(255,255,255,0.06);
-}
-.st { font-family: 'Geist Mono', monospace; font-size: 9px; color: rgba(255,255,255,0.22); letter-spacing: 0.08em; text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
-.st-hint { margin-left: auto; font-size: 9px; }
-#zoom-display { font-family: 'Barlow Condensed', sans-serif; font-size: 14px; letter-spacing: 0.06em; color: rgba(255,255,255,0.3); line-height: 1; }
-.ps { width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 0; border: 1px solid transparent; transition: border-color 0.1s; }
-.ps:hover, .ps.on { border-color: rgba(255,255,255,0.15); }
-.ps span { background: rgba(255,255,255,0.25); border-radius: 50%; display: block; }
-.ps.on span { background: rgba(255,255,255,0.7); }
-#pen-row { display: none; gap: 3px; align-items: center; }
-#pen-row.show { display: flex; }
-#shape-row { display: none !important; }
-#shape-stroke-w { background: var(--surface-active, #222); color: var(--text, rgba(255,255,255,0.7)); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; font-size: 10px; padding: 2px 4px; cursor: pointer; }
-.shape-fill-label { font-size: 10px; color: rgba(255,255,255,0.45); display: flex; align-items: center; gap: 3px; cursor: pointer; }
-.shape-fill-label input[type=color] { width: 18px; height: 14px; border: none; padding: 0; border-radius: 2px; cursor: pointer; background: none; }
-.shape-fill-label input[type=checkbox] { cursor: pointer; }
+/* status bar — removed (StatusBar.svelte) */
 
 /* search box — removed (SearchBox.svelte) */
 /* command palette — removed (CommandPalette.svelte) */
@@ -1754,7 +1668,7 @@ body.on-canvas.light .stroke-wrap.stroke-selected { filter: drop-shadow(0 0 5px 
 /* clear confirm — removed (ClearConfirm.svelte has scoped styles) */
 
 /* transitions */
-html, body, #bar, #toolbar, #status, .note, .img-card, .bar-btn, .t, .sel-btn, #sel-bar, .frame, #topbar {
+html, body, #bar, .note, .img-card, .bar-btn, .frame, #topbar {
   transition: background 0.2s, border-color 0.2s, color 0.2s;
 }
 
