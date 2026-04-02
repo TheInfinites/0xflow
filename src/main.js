@@ -147,6 +147,11 @@ const clearConfirmMount = document.createElement('div');
 document.body.appendChild(clearConfirmMount);
 mount(ClearConfirm, { target: clearConfirmMount });
 
+import Toast from './lib/Toast.svelte';
+const toastMount = document.createElement('div');
+document.body.appendChild(toastMount);
+mount(Toast, { target: toastMount });
+
 // ── Tauri window controls + auto-updater ──────────────────────────────────
 const _IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 if (_IS_TAURI) {

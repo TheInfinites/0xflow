@@ -428,17 +428,6 @@ input.card-name {
 /* export panel — removed (ExportPanel.svelte stub) */
 /* summary panel — removed (SummaryPanel.svelte stub) */
 
-/* toast */
-#toast {
-  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(10px);
-  background: #111; border: 1px solid rgba(255,255,255,0.1); border-radius: 0;
-  padding: 8px 20px 8px 24px; font-family: 'DM Mono', monospace; font-size: 9px;
-  letter-spacing: 0.1em; text-transform: uppercase; color: rgba(255,255,255,0.45);
-  opacity: 0; pointer-events: none; transition: all 0.2s; z-index: 9999; white-space: nowrap;
-}
-#toast::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: #E8440A; }
-#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-
 /* dashboard light mode */
 body.dash-light #view-dashboard { background: #F0EDE8; }
 body.dash-light #dash-backdrop { background: rgba(0,0,0,0.3); }
@@ -501,7 +490,7 @@ body.dash-light .card-delete-confirm { background: #E8E4DE; }
 body.dash-light .card-delete-msg { color: rgba(0,0,0,0.85); }
 body.dash-light .card-delete-sub { color: rgba(0,0,0,0.35); }
 body.dash-light .card-del-cancel { border-color: rgba(0,0,0,0.15); color: rgba(0,0,0,0.45); }
-body.dash-light #toast { background: #1a1a1a; }
+/* body.dash-light #toast → see Toast.svelte :global(body.dash-light) rule */
 .card-delete-confirm {
   position: absolute; inset: 0; background: #0f0f0f;
   display: flex; flex-direction: column; justify-content: center;

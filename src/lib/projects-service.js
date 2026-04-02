@@ -15,6 +15,7 @@ import {
   setCurrentFolderId, getCurrentFolderId,
 } from '../stores/projects.js';
 import { elementsStore } from '../stores/elements.js';
+import { toastMsgStore, toastVisibleStore } from '../stores/ui.js';
 import { saveCanvasV2, loadCanvasV2, applyCanvasState, clearCanvasState, migrateV1ToV2 } from './canvas-persistence.js';
 
 const IS_TAURI_STORAGE = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
@@ -72,12 +73,10 @@ const store = {
 
 let _toastTimer;
 function showToast(msg) {
-  const t = document.getElementById('toast');
-  if (!t) { console.info('[toast]', msg); return; }
-  t.textContent = msg;
-  t.classList.add('show');
+  toastMsgStore.set(msg);
+  toastVisibleStore.set(true);
   clearTimeout(_toastTimer);
-  _toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+  _toastTimer = setTimeout(() => toastVisibleStore.set(false), 2200);
 }
 
 // ── Project persistence ───────────────────────
