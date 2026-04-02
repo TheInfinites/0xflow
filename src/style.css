@@ -421,107 +421,8 @@ body.dash-light #dash-content {
 .modal-btn.danger-confirm:hover { background: rgba(232,68,10,0.1); }
 
 
-/* Export panel */
-#export-panel {
-  position: fixed; top: 56px; right: 16px; width: 300px;
-  background: rgba(10,10,10,0.97); backdrop-filter: blur(24px);
-  border: 1px solid rgba(255,255,255,0.1); border-radius: 10px;
-  box-shadow: 0 16px 48px rgba(0,0,0,0.6);
-  z-index: 3000; display: none; flex-direction: column;
-  transform: translateY(-6px); opacity: 0;
-  transition: opacity 0.2s, transform 0.2s cubic-bezier(0.32,0,0.18,1);
-}
-#export-panel.show { display: flex; }
-#export-panel.visible { opacity: 1; transform: translateY(0); }
-#export-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 14px 10px; border-bottom: 1px solid rgba(255,255,255,0.07);
-}
-#export-title {
-  font-family: 'Geist Mono', monospace; font-size: 9px; letter-spacing: 0.14em;
-  color: rgba(255,255,255,0.5); text-transform: uppercase;
-}
-#export-body { padding: 8px; display: flex; flex-direction: column; gap: 2px; }
-.export-option {
-  display: flex; align-items: center; gap: 12px;
-  padding: 10px 10px; border-radius: 6px; cursor: pointer;
-  transition: background 0.1s; border: 1px solid transparent;
-}
-.export-option:hover { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.08); }
-.export-option-icon {
-  width: 32px; height: 32px; border-radius: 7px;
-  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-}
-.export-option-icon svg { width: 16px; height: 16px; stroke: rgba(255,255,255,0.4); fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.export-option:hover .export-option-icon { background: rgba(232,68,10,0.1); border-color: rgba(232,68,10,0.3); }
-.export-option:hover .export-option-icon svg { stroke: #E8440A; }
-.export-option-info { flex: 1; }
-.export-option-name { font-family: 'Geist', sans-serif; font-size: 12px; font-weight: 400; color: rgba(255,255,255,0.75); }
-.export-option-desc { font-family: 'Geist Mono', monospace; font-size: 9px; color: rgba(255,255,255,0.25); margin-top: 2px; letter-spacing: 0.03em; }
-.export-option-arrow { font-size: 12px; color: rgba(255,255,255,0.2); transition: color 0.1s, transform 0.1s; }
-.export-option:hover .export-option-arrow { color: rgba(255,255,255,0.5); transform: translateX(2px); }
-
-/* Summary panel */
-#summary-panel {
-  position: fixed; top: 56px; right: 16px; width: 340px;
-  background: rgba(10,10,10,0.97); backdrop-filter: blur(24px);
-  border: 1px solid rgba(255,255,255,0.1); border-radius: 10px;
-  box-shadow: 0 16px 48px rgba(0,0,0,0.6);
-  z-index: 3000; display: none; flex-direction: column;
-  max-height: calc(100vh - 120px);
-  transform: translateY(-6px); opacity: 0;
-  transition: opacity 0.2s, transform 0.2s cubic-bezier(0.32,0,0.18,1);
-}
-#summary-panel.show { display: flex; }
-#summary-panel.visible { opacity: 1; transform: translateY(0); }
-#summary-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 14px 10px; border-bottom: 1px solid rgba(255,255,255,0.07);
-  flex-shrink: 0;
-}
-#summary-title {
-  font-family: 'Geist Mono', monospace; font-size: 9px; letter-spacing: 0.14em;
-  color: #E8440A; text-transform: uppercase;
-}
-#summary-close {
-  background: none; border: none; color: rgba(255,255,255,0.3);
-  cursor: pointer; font-size: 13px; padding: 0; line-height: 1;
-  transition: color 0.1s;
-}
-#summary-close:hover { color: rgba(255,255,255,0.8); }
-#summary-body {
-  flex: 1; overflow-y: auto; padding: 14px;
-  scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.08) transparent;
-}
-#summary-content {
-  font-family: 'Geist', sans-serif; font-size: 12.5px; font-weight: 300;
-  line-height: 1.75; color: rgba(255,255,255,0.75);
-  white-space: pre-wrap; word-break: break-word;
-}
-#summary-content.loading {
-  color: rgba(232,68,10,0.6);
-  font-family: 'Geist Mono', monospace; font-size: 11px;
-}
-#summary-footer {
-  display: flex; gap: 6px; padding: 10px 14px;
-  border-top: 1px solid rgba(255,255,255,0.07); flex-shrink: 0;
-}
-.summary-action {
-  flex: 1; padding: 6px 0; background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.1); border-radius: 5px;
-  font-family: 'Geist Mono', monospace; font-size: 9px; letter-spacing: 0.1em;
-  text-transform: uppercase; color: rgba(255,255,255,0.4); cursor: pointer;
-  transition: all 0.1s;
-}
-.summary-action:hover { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.8); border-color: rgba(255,255,255,0.2); }
-.summary-icon-btn {
-  width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
-  background: none; border: 1px solid transparent; border-radius: 5px;
-  color: rgba(255,255,255,0.3); cursor: pointer; transition: all 0.1s; padding: 0;
-}
-.summary-icon-btn:hover { background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.12); color: rgba(255,255,255,0.8); }
-.summary-icon-btn svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+/* export panel — removed (ExportPanel.svelte stub) */
+/* summary panel — removed (SummaryPanel.svelte stub) */
 
 /* toast */
 #toast {
@@ -1189,22 +1090,7 @@ body.on-canvas.light .todo-progress { background: rgba(255,255,255,0.06); }
 
 
 
-/* ── Canvas summary panel ─────────────────────────────────── */
-#summary-panel {
-  position: fixed; top: 58px; right: 16px;
-  width: 320px; max-height: calc(100vh - 120px);
-  background: rgba(10,10,10,0.97); backdrop-filter: blur(24px);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 10px; z-index: 2500;
-  display: none; flex-direction: column;
-  box-shadow: 0 16px 48px rgba(0,0,0,0.6);
-  animation: summaryIn 0.2s cubic-bezier(0.34,1.56,0.64,1);
-}
-#summary-panel.show { display: flex; }
-@keyframes summaryIn {
-  from { opacity:0; transform: translateY(-8px) scale(0.97); }
-  to   { opacity:1; transform: translateY(0) scale(1); }
-}
+/* ── Canvas summary panel — removed (SummaryPanel.svelte stub) ─ */
 
 /* ── Relation lines ───────────────────────────────────────── */
 .rel-handle {

@@ -242,14 +242,14 @@ async function toggleAlwaysOnTop() {
 function toggleBrainstorm() { brainstormOpenStore.update(v => !v); }
 function clearBrainstorm()  { brainstormOpenStore.set(false); }
 
-// ── Stubs ──
-function openExportPanel()  { document.getElementById('export-panel')?.classList.add('show'); }
-function closeExportPanel() { document.getElementById('export-panel')?.classList.remove('show'); }
+// ── Stubs — these will toast until Svelte panels are built ──
 function exportJSON()       { window.showToast?.('JSON export coming soon'); }
 function exportPNG()        { window.showToast?.('PNG export coming soon'); }
 function exportMarkdown()   { window.showToast?.('Markdown export coming soon'); }
 async function summariseCanvas() { window.showToast?.('Canvas summary coming soon'); }
 async function clusterCanvas()   { window.showToast?.('AI cluster coming soon'); }
+function openExportPanel()  { window.showToast?.('Export panel coming soon'); }
+function closeExportPanel() {}
 function openRadialMenu()  {} function closeRadialMenu()  {}
 // cmd-palette → CommandPalette.svelte (overrides window.toggleCmdPalette etc. in onMount)
 function toggleCmdPalette()  {}
