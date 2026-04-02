@@ -26,7 +26,7 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
 <!-- ══════════════════════════════════════════
      CANVAS VIEW
 ══════════════════════════════════════════ -->
-<div id="dash-backdrop" onclick="toggleDashboard()" style="
+<div id="dash-backdrop" style="
   position:fixed;inset:0;z-index:4999;
   background:rgba(0,0,0,0.5);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
   opacity:0;pointer-events:none;
@@ -45,23 +45,9 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
   <div id="svelte-minimap-mount"></div>
   <div id="svelte-cmd-palette-mount"></div>
 
-  <!-- canvas bar → CanvasBar.svelte (mounted at #svelte-canvas-bar-mount) -->
-
-  <!-- search → SearchBox.svelte -->
-  <!-- timer → TimerPanel.svelte -->
-
-  <!-- command palette → CommandPalette.svelte (mounted at #svelte-cmd-palette-mount) -->
-
-  <!-- toolbar → Toolbar.svelte (mounted at #svelte-toolbar-mount) -->
-
-  <!-- selection bar → SelectionBar.svelte (mounted at #svelte-selection-bar-mount) -->
-
-  <!-- note-menu, frame-menu, radial-menu → Canvas.svelte (built-in ctxMenu)
-       minimap → Minimap.svelte
-       bookmark-panel → BookmarkPanel.svelte
-       search-box → SearchBox.svelte
-       clear-confirm → ClearConfirm.svelte
-       status bar → StatusBar.svelte (mounted at #svelte-status-bar-mount) -->
+  <!-- All UI panels mounted by main.js: CanvasBar, Toolbar, SelectionBar, StatusBar,
+       Minimap, CommandPalette, BookmarkPanel, ImportPanel, TimerPanel, SearchBox,
+       ClearConfirm, FolderBrowser, MediaDropHandler, UpdateBanner -->
 
   <div id="cv">
     <div id="world">
@@ -82,16 +68,9 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
     </div>
   </div>
 
-  <!-- Import panel, drop handling, timer → Svelte (ImportPanel.svelte, MediaDropHandler.svelte, TimerPanel.svelte) -->
-  <!-- brainstorm panel → BrainstormPanel.svelte -->
-
   <svg id="rel-drag-svg" style="display:none"><path id="rel-drag-path" d=""/></svg>
   <svg id="conn-wire-svg" style="display:none"><path id="conn-wire-path" d=""/></svg>
 </div><!-- /view-canvas -->
-
-<!-- summary panel → SummaryPanel.svelte (stub) -->
-<!-- export panel → ExportPanel.svelte (stub) -->
-<!-- stroke-ctx-menu → Canvas.svelte stroke ctx state (no DOM needed) -->
 
 <div id="toast"></div>
 

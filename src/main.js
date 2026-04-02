@@ -3,6 +3,8 @@
 import { mountProjectsBridge } from './lib/projects-service.js';
 mountProjectsBridge();
 
+document.getElementById('dash-backdrop')?.addEventListener('click', () => window.toggleDashboard?.());
+
 // Legacy shims
 import './legacy/tauri-mock.js';
 
