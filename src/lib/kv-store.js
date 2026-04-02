@@ -9,6 +9,7 @@ const IS_TAURI_STORAGE = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 
 const _memStore = {};
 let _dbReady = false;
+export function isDbReady() { return _dbReady; }
 
 // Called by projects-service.js after DB init; seeds _memStore from SQLite rows.
 export function markDbReady(allSettings) {

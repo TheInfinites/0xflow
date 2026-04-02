@@ -67,6 +67,9 @@
   // Clipboard
   let _clipboard = [];
 
+  // Store unsubscribers (set in onMount, cleaned up in onDestroy)
+  let _unsubEl, _unsubSt, _unsubTheme;
+
   // Element color palette
   const EL_COLORS = [null, '#1e1e1e', '#2a2a1e', '#1e2a1e', '#1e1e2e', '#2e1e1e', '#1e2a2a', '#2a1e2a'];
   const EL_COLORS_LIGHT = [null, '#fff8e7', '#fffde7', '#f1f8e9', '#e8f0fe', '#fce4ec', '#e0f2f1', '#f3e5f5'];
@@ -126,11 +129,10 @@
       if (!zoomRaf) zoomRaf = requestAnimationFrame(animateZoom);
     };
 
-    // Subscribe to store changes
-    const unsubEl    = elementsStore.subscribe(renderElements);
-    const unsubSt    = strokesStore.subscribe(renderStrokes);
-    const unsubTheme = isLightStore.subscribe(() => { renderElements($elementsStore); renderStrokes($strokesStore); });
-    onDestroy(() => { unsubEl(); unsubSt(); unsubTheme(); });
+    // Subscribe to store changes — unsubs collected for top-level onDestroy
+    _unsubEl    = elementsStore.subscribe(renderElements);
+    _unsubSt    = strokesStore.subscribe(renderStrokes);
+    _unsubTheme = isLightStore.subscribe(() => { renderElements($elementsStore); renderStrokes($strokesStore); });
 
     // Initial render from any loaded state
     renderElements($elementsStore);
@@ -138,6 +140,7 @@
   });
 
   onDestroy(() => {
+    _unsubEl?.(); _unsubSt?.(); _unsubTheme?.();
     app?.destroy(false, { children: true });
   });
 

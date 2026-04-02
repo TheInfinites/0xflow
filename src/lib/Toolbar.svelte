@@ -67,3 +67,34 @@
     {/if}
   {/each}
 </div>
+
+<style>
+  #toolbar {
+    position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
+    z-index: 1000; display: flex; flex-direction: row; align-items: flex-end; gap: 0;
+    background: rgba(10,10,10,0.97); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255,255,255,0.1); border-top: 2px solid rgba(255,255,255,0.07);
+    border-radius: 12px; padding: 4px 5px;
+    box-shadow: 0 -2px 40px rgba(0,0,0,0.5);
+  }
+  .t {
+    width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
+    border-radius: 7px; border: 1px solid transparent; cursor: pointer; background: none;
+    transition: transform 0.15s cubic-bezier(0.34,1.56,0.64,1), color 0.1s, background 0.1s;
+    color: rgba(255,255,255,0.28); position: relative;
+    transform-origin: bottom center; will-change: transform;
+  }
+  .t:hover { color: rgba(255,255,255,0.8); background: rgba(255,255,255,0.04); }
+  .t.on { color: #fff; background: #E8440A; border-color: #E8440A; border-radius: 7px; }
+  .t.on:hover { background: #E8440A; }
+  .t :global(svg) { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; flex-shrink: 0; }
+  .t::after {
+    content: attr(data-tip); position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%);
+    background: #111; border: 1px solid rgba(255,255,255,0.12); color: rgba(255,255,255,0.55);
+    font-family: 'Geist Mono', monospace; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+    padding: 4px 9px; border-radius: 0; white-space: nowrap;
+    opacity: 0; pointer-events: none; transition: opacity 0.12s;
+  }
+  .t:hover::after { opacity: 1; }
+  .sep { height: 16px; width: 1px; background: rgba(255,255,255,0.08); margin: 0 3px; flex-shrink: 0; }
+</style>

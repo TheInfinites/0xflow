@@ -17,7 +17,7 @@ import {
 import { elementsStore } from '../stores/elements.js';
 import { toastMsgStore, toastVisibleStore, isOnCanvasStore } from '../stores/ui.js';
 import { saveCanvasV2, loadCanvasV2, applyCanvasState, clearCanvasState, migrateV1ToV2 } from './canvas-persistence.js';
-import { store, markDbReady, setStorageFullCallback } from './kv-store.js';
+import { store, markDbReady, setStorageFullCallback, isDbReady } from './kv-store.js';
 export { store };
 
 const IS_TAURI_STORAGE = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
@@ -39,13 +39,13 @@ const STORAGE_KEY  = 'freeflow_projects';
 const FOLDERS_KEY  = 'freeflow_folders';
 
 function loadProjects() {
-  if (IS_TAURI_STORAGE && _dbReady) return get(projectsStore);
+  if (IS_TAURI_STORAGE && isDbReady()) return get(projectsStore);
   try { return JSON.parse(store.get(STORAGE_KEY)) || []; } catch { return []; }
 }
 
 function saveProjects(p) {
   setProjects([...p]);
-  if (IS_TAURI_STORAGE && _dbReady) {
+  if (IS_TAURI_STORAGE && isDbReady()) {
     p.forEach(proj => dbSaveProject(proj).catch(e => console.warn('[store] dbSaveProject:', e)));
   } else {
     store.set(STORAGE_KEY, JSON.stringify(p));
@@ -53,13 +53,13 @@ function saveProjects(p) {
 }
 
 function loadFolders() {
-  if (IS_TAURI_STORAGE && _dbReady) return get(foldersStore);
+  if (IS_TAURI_STORAGE && isDbReady()) return get(foldersStore);
   try { return JSON.parse(store.get(FOLDERS_KEY)) || []; } catch { return []; }
 }
 
 function saveFolders(f) {
   setFolders([...f]);
-  if (IS_TAURI_STORAGE && _dbReady) {
+  if (IS_TAURI_STORAGE && isDbReady()) {
     f.forEach(folder => dbSaveFolder(folder).catch(e => console.warn('[store] dbSaveFolder:', e)));
   } else {
     store.set(FOLDERS_KEY, JSON.stringify(f));
@@ -119,7 +119,7 @@ function deleteProject(id) {
   projects = projects.filter(x => x.id !== id);
   store.remove('freeflow_canvas_' + id);
   store.remove('freeflow_canvas_v2_' + id);
-  if (IS_TAURI_STORAGE && _dbReady) dbDeleteProject(id).catch(e => console.warn('[store] dbDeleteProject:', e));
+  if (IS_TAURI_STORAGE && isDbReady()) dbDeleteProject(id).catch(e => console.warn('[store] dbDeleteProject:', e));
   saveProjects(projects);
   if (p) showToast(`"${p.name}" deleted`);
 }
@@ -152,7 +152,7 @@ async function _tryMigrateV1(id) {
   if (filePath && IS_TAURI) {
     try { raw = await window.__TAURI__?.fs?.readTextFile(filePath); } catch {}
   }
-  if (!raw && IS_TAURI && window._dbReady) {
+  if (!raw && IS_TAURI && isDbReady()) {
     const { dbLoadCanvasState } = await import('./db.js');
     raw = await dbLoadCanvasState(id);
   }
@@ -249,7 +249,7 @@ function deleteFolderById(fid) {
   const f = folders.find(x => x.id === fid);
   projects.forEach(p => { if (ids.includes(p.folderId)) p.folderId = null; });
   folders = folders.filter(x => !ids.includes(x.id));
-  if (IS_TAURI_STORAGE && _dbReady) ids.forEach(id => dbDeleteFolder(id).catch(() => {}));
+  if (IS_TAURI_STORAGE && isDbReady()) ids.forEach(id => dbDeleteFolder(id).catch(() => {}));
   saveFolders(folders);
   saveProjects(projects);
   if (ids.includes(getCurrentFolderId())) setFolder(null);
