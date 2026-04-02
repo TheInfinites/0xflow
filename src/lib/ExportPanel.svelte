@@ -57,7 +57,7 @@
 
     <button class="ep-row" class:ep-busy={busy === 'json'} disabled={!!busy}
       onclick={() => run('json', exportJSON)}>
-      <span class="ep-icon">{ }</span>
+      <span class="ep-icon">&#123; &#125;</span>
       <span class="ep-label">JSON</span>
       <span class="ep-desc">full canvas data, re-importable</span>
       {#if busy === 'json'}<span class="ep-spin">…</span>{/if}
