@@ -251,10 +251,10 @@ function exportMarkdown()   { window.showToast?.('Markdown export coming soon');
 async function summariseCanvas() { window.showToast?.('Canvas summary coming soon'); }
 async function clusterCanvas()   { window.showToast?.('AI cluster coming soon'); }
 function openRadialMenu()  {} function closeRadialMenu()  {}
-function renderCmdList()   {} function executeCmdItem()   {} function filterCmdList() {}
-function toggleCmdPalette()  { document.getElementById('cmd-palette')?.classList.toggle('show'); }
+// cmd-palette → CommandPalette.svelte (overrides window.toggleCmdPalette etc. in onMount)
+function toggleCmdPalette()  {}
 function openCmdPalette()    {}
-function closeCmdPalette()   { document.getElementById('cmd-palette')?.classList.remove('show'); }
+function closeCmdPalette()   {}
 function renderBookmarkList() {} function addViewBookmark() {}
 function addSummaryAsNote()  {} function closeSummary()    {} function copySummary() {}
 
