@@ -212,8 +212,6 @@ async function openProject(id, e) {
   setActiveProjectId(id);
 
   document.body.classList.add('on-canvas');
-  const bd = document.getElementById('dash-backdrop');
-  if (bd) { bd.style.opacity = '0'; bd.style.pointerEvents = 'none'; }
 
   // Load canvas state — try v2 first, then attempt v1→v2 migration, else DOM restore
   clearCanvasState();
@@ -239,8 +237,6 @@ async function openProject(id, e) {
 function goToDashboard() {
   _saveCurrentCanvas();
   document.body.classList.remove('on-canvas');
-  const bd = document.getElementById('dash-backdrop');
-  if (bd) { bd.style.opacity = '1'; bd.style.pointerEvents = 'all'; }
   dashRender();
 }
 

@@ -3,7 +3,7 @@
   import { activeProjectIdStore, projectsStore } from '../stores/projects.js';
   import { canUndo, canRedo, undo, redo } from '../stores/elements.js';
   import { IS_TAURI } from './media-service.js';
-  import { alwaysOnTopStore } from '../stores/ui.js';
+  import { alwaysOnTopStore, projectDirStore } from '../stores/ui.js';
 
   const dispatch = createEventDispatcher();
 
@@ -117,7 +117,7 @@
     <button class="bar-btn" onclick={() => window.summariseCanvas?.()}>✦ summarise</button>
     <button class="bar-btn" onclick={() => window.openExportPanel?.()}>↑ export</button>
     <button class="bar-btn" id="save-file-btn" onclick={() => window.saveCanvasToFile?.()}>↓ save file</button>
-    <button class="bar-btn" id="proj-dir-btn" onclick={() => window.pickProjectDir?.()} title="Set project directory for file operations">📁 project dir</button>
+    <button class="bar-btn" id="proj-dir-btn" onclick={() => window.pickProjectDir?.()} title="Set project directory for file operations">📁 {$projectDirStore ? $projectDirStore.split(/[\\/]/).pop() : 'project dir'}</button>
     <button class="bar-btn" onclick={() => window.openProjectDirInExplorer?.()} title="Open project folder in file explorer">↗ open folder</button>
     <button class="bar-btn" onclick={() => window.exportSharedCanvas?.()} title="Export self-contained canvas (all media bundled inline)">⬡ share</button>
     <button class="bar-btn" id="canvas-update-btn" onclick={() => window.checkForAppUpdate?.(false)} style="display:none;background:rgba(232,68,10,0.15);color:#E8440A;border:1px solid rgba(232,68,10,0.3);">↑ update</button>

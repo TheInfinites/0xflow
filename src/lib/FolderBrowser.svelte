@@ -1,6 +1,7 @@
 <script>
   import { get } from 'svelte/store';
   import { elementsStore, snapshot as storeSnapshot } from '../stores/elements.js';
+  import { projectDirStore } from '../stores/ui.js';
 
   // ── State ────────────────────────────────────────────────────────────────
   let visible      = false;
@@ -61,14 +62,15 @@
     const saved = window.store?.get(projDirKey());
     if (saved) {
       projectDir = saved;
-      const btn = document.getElementById('proj-dir-btn');
-      if (btn) btn.textContent = '📁 ' + saved.split(/[\\/]/).pop();
+      projectDirStore.set(saved);
     } else {
       projectDir = null;
+      projectDirStore.set(null);
     }
   }
   export function saveProjectDir(dir) {
     projectDir = dir;
+    projectDirStore.set(dir);
     window.store?.set(projDirKey(), dir);
   }
   export async function pickProjectDir() {
@@ -79,8 +81,6 @@
         const dir = await open({ directory: true, multiple: false, title: 'Select project directory' });
         if (dir) {
           saveProjectDir(dir);
-          const btn = document.getElementById('proj-dir-btn');
-          if (btn) btn.textContent = '📁 ' + dir.split(/[\\/]/).pop();
           window.showToast?.('Project dir: ' + dir);
         }
       } catch (e) {
@@ -90,8 +90,6 @@
       const fake = prompt('Enter a mock project directory path (browser mode):', 'D:\\art\\test');
       if (fake) {
         saveProjectDir(fake);
-        const btn = document.getElementById('proj-dir-btn');
-        if (btn) btn.textContent = '📁 ' + fake.split(/[\\/]/).pop();
         window.showToast?.('Project dir set (mock): ' + fake);
       }
     }

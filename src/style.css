@@ -428,6 +428,14 @@ input.card-name {
 /* export panel — removed (ExportPanel.svelte stub) */
 /* summary panel — removed (SummaryPanel.svelte stub) */
 
+/* dash-backdrop — shown on dashboard, hidden on canvas, driven by body.on-canvas */
+#dash-backdrop {
+  position: fixed; inset: 0; z-index: 4999;
+  background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  opacity: 1; pointer-events: all; transition: opacity 0.2s;
+}
+body.on-canvas #dash-backdrop { opacity: 0; pointer-events: none; }
+
 /* dashboard light mode */
 body.dash-light #view-dashboard { background: #F0EDE8; }
 body.dash-light #dash-backdrop { background: rgba(0,0,0,0.3); }
