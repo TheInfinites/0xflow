@@ -1,16 +1,43 @@
 <script>
-  import { createEventDispatcher } from 'svelte';
+  import { onMount, createEventDispatcher } from 'svelte';
   const dispatch = createEventDispatcher();
 
   let { filtered, folders, currentFolderId, dashView, searchQuery } = $props();
 
   // Inline delete state per card
-  let deletingId = $state(null);
+  let deletingId  = $state(null);
+  // Inline rename state per card
+  let renamingId  = $state(null);
+  let renameVal   = $state('');
 
   function getFolderName(fid) {
     const f = folders.find(x => x.id === fid);
     return f ? f.name : 'folder';
   }
+
+  function commitRename() {
+    const val = renameVal.trim() || 'untitled canvas';
+    const id = renamingId;
+    renamingId = null;
+    if (!id) return;
+    const p = filtered.find(x => x.id === id);
+    if (!p) return;
+    p.name = val; p.updatedAt = Date.now();
+    window.saveProjects?.(window.projects);
+  }
+
+  onMount(() => {
+    window.startInlineRename = id => {
+      const p = filtered.find(x => x.id === id) ?? window.projects?.find(x => x.id === id);
+      renameVal = (p?.name === 'untitled canvas' ? '' : p?.name) ?? '';
+      renamingId = id;
+    };
+    window.showInlineDelete = id => { deletingId = id; };
+    return () => {
+      delete window.startInlineRename;
+      delete window.showInlineDelete;
+    };
+  });
 
   function fmtDate(ts) {
     const d = new Date(ts), now = new Date(), diff = (now - d) / 1000;
@@ -31,6 +58,8 @@
     window.showToast?.(`"${p.name}" deleted`);
     deletingId = null;
   }
+
+  function focusOnMount(node) { setTimeout(() => { node.focus(); node.select(); }, 20); }
 
   function onDragStart(e, id) {
     e.dataTransfer.setData('text/plain', id);
@@ -59,6 +88,7 @@
 
   {#each filtered as p, i}
     {@const isDeletingThis = deletingId === p.id}
+    {@const isRenamingThis = renamingId === p.id}
     <div
       class="project-card"
       class:confirming={isDeletingThis}
@@ -67,8 +97,8 @@
       data-id={p.id}
       style="animation-delay:{i * 20}ms"
       draggable="true"
-      onclick={e => { if (!e.target.closest('.card-action-btn') && !isDeletingThis) dispatch('open', p.id); }}
-      onkeydown={e => { if (e.key === 'Enter' && !isDeletingThis) dispatch('open', p.id); }}
+      onclick={e => { if (!e.target.closest('.card-action-btn') && !isDeletingThis && !isRenamingThis) dispatch('open', p.id); }}
+      onkeydown={e => { if (e.key === 'Enter' && !isDeletingThis && !isRenamingThis) dispatch('open', p.id); }}
       oncontextmenu={e => { e.preventDefault(); dispatch('ctxMenu', { id: p.id, event: e }); }}
       ondragstart={e => onDragStart(e, p.id)}
       ondragend={onDragEnd}
@@ -89,7 +119,23 @@
         </div>
         <div class="card-body">
           <div class="card-info">
-            <div class="card-name">{p.name}</div>
+            {#if isRenamingThis}
+              <input
+                class="card-name card-rename-input"
+                type="text"
+                bind:value={renameVal}
+                placeholder="untitled canvas"
+                onblur={commitRename}
+                onkeydown={e => {
+                  e.stopPropagation();
+                  if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+                  if (e.key === 'Escape') { renamingId = null; }
+                }}
+                use:focusOnMount
+              />
+            {:else}
+              <div class="card-name">{p.name}</div>
+            {/if}
             <div class="card-meta">
               <span>{fmtDate(p.updatedAt)}</span>
               {#if p.noteCount > 0}<span>{p.noteCount} notes</span>{/if}

@@ -297,70 +297,11 @@ function deleteFolderById(fid) {
   if (f) showToast(`"${f.name}" deleted, canvases moved to unfiled`);
 }
 
-// ── Inline rename (for project cards) ────────
-
-function startInlineRename(id) {
-  const card = document.querySelector(`.project-card[data-id="${id}"]`);
-  if (!card) return;
-  const nameEl = card.querySelector('.card-name');
-  if (!nameEl) return;
-  const projects = loadProjects();
-  const p = projects.find(x => x.id === id); if (!p) return;
-
-  const input = document.createElement('input');
-  input.value = p.name === 'untitled canvas' ? '' : p.name;
-  input.placeholder = 'untitled canvas';
-  input.style.cssText = `background:none;border:none;border-bottom:1px solid rgba(255,255,255,0.3);outline:none;
-    font-family:'Barlow Condensed',sans-serif;font-size:22px;font-weight:600;text-transform:uppercase;
-    letter-spacing:0.03em;color:rgba(255,255,255,0.88);width:100%;padding:0;line-height:1.05;`;
-  nameEl.replaceWith(input);
-  input.focus(); input.select();
-
-  function commit() {
-    const val = input.value.trim() || 'untitled canvas';
-    p.name = val; p.updatedAt = Date.now();
-    saveProjects(projects);
-  }
-  input.addEventListener('blur', commit);
-  input.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-    if (e.key === 'Escape') { input.value = p.name; input.blur(); }
-    e.stopPropagation();
-  });
-}
+// ── showNewModal — creates project, then triggers inline rename via ProjectGrid.svelte ──
 
 function showNewModal() {
   const p = createProject('untitled canvas');
-  setTimeout(() => startInlineRename(p.id), 80);
-}
-
-function showInlineDelete(id) {
-  const card = document.querySelector(`.project-card[data-id="${id}"]`);
-  if (!card) return;
-  const projects = loadProjects();
-  const p = projects.find(x => x.id === id); if (!p) return;
-
-  const overlay = document.createElement('div');
-  overlay.className = 'card-delete-confirm';
-  overlay.innerHTML = `
-    <div class="card-delete-msg">DELETE <span>"${escHtml(p.name)}"</span>?</div>
-    <div class="card-delete-sub">this cannot be undone</div>
-    <div class="card-delete-btns">
-      <button class="card-del-cancel">CANCEL</button>
-      <button class="card-del-confirm">DELETE</button>
-    </div>`;
-  card.appendChild(overlay);
-  card.classList.add('confirming');
-
-  overlay.querySelector('.card-del-cancel').onclick = e => {
-    e.stopPropagation(); overlay.remove(); card.classList.remove('confirming');
-  };
-  overlay.querySelector('.card-del-confirm').onclick = e => {
-    e.stopPropagation();
-    deleteProject(id);
-    overlay.remove(); card.classList.remove('confirming');
-  };
-  overlay.addEventListener('click', e => e.stopPropagation());
+  setTimeout(() => window.startInlineRename?.(p.id), 80);
 }
 
 // ── Init ──────────────────────────────────────
@@ -475,9 +416,7 @@ export function mountProjectsBridge() {
     setFolder,
     moveToFolder,
     deleteFolderPrompt: deleteFolderById,
-    startInlineRename,
     showNewModal,
-    showInlineDelete,
     escHtml,
     fmtDate,
     fmtDateShort,
