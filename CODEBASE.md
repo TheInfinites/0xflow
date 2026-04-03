@@ -1,7 +1,7 @@
 # 0*flow — Codebase Reference
 
 > Tauri 2 desktop app. No bundler — runs via Tauri's WebView2 with `withGlobalTauri: true`. Also works standalone in a browser (feature-flags via `IS_TAURI`).
-> Current version: **v0.7.33**
+> Current version: **v0.7.67**
 
 ---
 
@@ -604,6 +604,15 @@ const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 ---
 
 ## File Operations Feature
+
+### Changes in v0.7.67
+- **Video node full rewrite** — `VideoPlayer.svelte` replaces the old `.img-card` video implementation. Uses `getBlobURL(imgId)` for the video `src` (same as ImageCard), auto-resizes height to match native aspect ratio on load (preserving card width), and registers via `window._videoPlayers[el.id]` so Canvas `pointertap` can toggle play/pause. Footer: prev-frame (`‹`), play/pause, next-frame (`›`), seek bar, timestamp, mute, fullscreen, screenshot.
+- **Video screenshot fixed** — `takeScreenshot()` loads the video via `convertFileSrc(sourcePath)` (asset:// URL with Tauri CORS headers) in a temporary `<video crossOrigin="anonymous">` element, seeks to `currentTime`, draws to an offscreen canvas, and places the resulting PNG blob via `window.placeImageBlob(blob, el.x + el.width + 20, el.y)`. Both `captureStream()` (cross-origin error) and direct canvas `drawImage` on the main video (tainted canvas) fail in Tauri's WebView2 — the asset:// approach is the only reliable path.
+- **MediaOverlay double-scaling fix** — `.media-overlay-item` was sized at world units (`el.width × el.height`) and then had `transform: scale(scale)` applied. Fixed to pre-multiply: `width = el.width * scale`, `height = el.height * scale`, no transform. Same fix applied to `NoteOverlay.svelte`.
+- **Video/audio pointer-events fix** — `MediaOverlay` now includes `video` and `audio` in the `isCard` set, giving their overlay wrappers `pointer-events: none` so Pixi handles drag/select. Previously the overlay intercepted all pointer events, making video nodes impossible to move.
+- **Connection line locked on menu open** — Canvas `relDragLocked` flag set before `openImgCtxMenu`; `onPointerMove` skips `updateRelDrag` while locked. Endpoint locked to the menu's left-center via `window.updateRelDragEndpoint(x, y)` called after layout. Line cleared only when menu closes via `window.clearRelDragLine()`.
+- **Hover items stuck orange fix** — Right-click context menu (FolderBrowser) switched from CSS `:hover` to JS-driven `hoveredItemId` state via `document.elementFromPoint` in a document-level `pointermove` listener. Root cause: `transition: color 0.1s` held orange for 100ms causing re-entry loop — all transitions removed from `.ictx-item`, `.ictx-icon`, `.ictx-chevron`.
+- **Move/copy panel deactivation fix** — 80ms debounce clears `hoveredItemId`, `renamePanelVisible`, and `panels` when pointer leaves both menu and subpanels. `menuOpenedAt` timestamp + 200ms grace period blocks phantom hover events from right-click drag release.
 
 ### Changes in v0.7.29
 - **Video resize gap fix** — the restore-path resize callback in `restoreCanvas` was setting `vidEl.style.width = (nw-12)+'px'` (a leftover from the old padding era). Since `.vc-video` now fills `width: 100%` of the card, the explicit pixel width caused a right-side gap. Removed — card width alone drives the layout.

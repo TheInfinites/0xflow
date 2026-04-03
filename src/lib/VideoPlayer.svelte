@@ -1,33 +1,57 @@
 <script>
+  import { getBlobURL } from './media-service.js';
+  import { elementsStore } from '../stores/elements.js';
+  import { onMount, onDestroy } from 'svelte';
+
   let { el } = $props();
 
   let videoEl = $state(null);
-  let playing  = $state(false);
-  let progress = $state(0);
-  let duration = $state(0);
-  let muted    = $state(false);
+  let playing   = $state(false);
+  let muted     = $state(false);
+  let duration  = $state(0);
+  let currentTime = $state(0);
 
-  let src = $derived(el?.content?.sourcePath ?? null);
+  let blobUrl = $state(null);
+  $effect(() => {
+    const id = el?.content?.imgId;
+    if (!id) { blobUrl = el?.content?.sourcePath ?? null; return; }
+    getBlobURL(id).then(url => { if (url) blobUrl = url; }).catch(() => {
+      blobUrl = el?.content?.sourcePath ?? null;
+    });
+  });
 
-  function togglePlay() {
+  export function togglePlay() {
     if (!videoEl) return;
-    if (videoEl.paused) { videoEl.play(); playing = true; }
-    else { videoEl.pause(); playing = false; }
+    if (videoEl.paused) videoEl.play();
+    else videoEl.pause();
   }
 
-  function onTimeUpdate() {
-    if (!videoEl || !videoEl.duration) return;
-    progress = videoEl.currentTime / videoEl.duration;
+  function stepFrame(dir) {
+    if (!videoEl) return;
+    videoEl.pause();
+    videoEl.currentTime = Math.max(0, Math.min(duration, videoEl.currentTime + dir / 30));
   }
 
-  function onLoaded() { duration = videoEl?.duration ?? 0; }
+  function onTimeUpdate() { if (videoEl) currentTime = videoEl.currentTime; }
+  function onLoaded() {
+    if (!videoEl) return;
+    duration = videoEl.duration ?? 0;
+    // Resize element to native video aspect ratio, preserving width
+    const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
+    if (vw && vh && el?.id) {
+      const FOOTER_H = 30; // footer: 5px*2 padding + 13px icons + 1px border ≈ 30px world units
+      const targetH = Math.round(el.width * vh / vw) + FOOTER_H;
+      if (Math.abs(targetH - el.height) > 4) {
+        elementsStore.update(els => els.map(e =>
+          e.id === el.id ? { ...e, height: targetH } : e
+        ));
+      }
+    }
+  }
 
-  function seek(e) {
-    if (!videoEl || !videoEl.duration) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const p = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    videoEl.currentTime = p * videoEl.duration;
-    progress = p;
+  function onSeek(e) {
+    if (!videoEl || !duration) return;
+    videoEl.currentTime = Number(e.target.value);
   }
 
   function toggleMute() {
@@ -36,83 +60,184 @@
     muted = videoEl.muted;
   }
 
+  async function takeScreenshot() {
+    if (!videoEl) return;
+    const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
+    if (!vw || !vh) return;
+    try {
+      const sourcePath = el?.content?.sourcePath;
+      let frameUrl = (sourcePath && window.__TAURI__?.core?.convertFileSrc)
+        ? window.__TAURI__.core.convertFileSrc(sourcePath)
+        : blobUrl;
+      const seekTime = videoEl.currentTime;
+      const tmpVideo = document.createElement('video');
+      tmpVideo.crossOrigin = 'anonymous';
+      tmpVideo.muted = true;
+      await new Promise((resolve, reject) => {
+        tmpVideo.onloadedmetadata = () => { tmpVideo.currentTime = seekTime; };
+        tmpVideo.onseeked = resolve;
+        tmpVideo.onerror = () => reject(new Error(tmpVideo.error?.message || 'video load failed'));
+        tmpVideo.src = frameUrl;
+        tmpVideo.load();
+      });
+      const c = document.createElement('canvas');
+      c.width = vw; c.height = vh;
+      c.getContext('2d').drawImage(tmpVideo, 0, 0);
+      const blob = await new Promise(res => c.toBlob(res, 'image/png'));
+      if (!blob) return;
+      await window.placeImageBlob(blob, el.x + el.width + 20, el.y);
+    } catch (err) {
+      window.showToast?.('Screenshot failed — ' + err.message);
+    }
+  }
+
+  function toggleFullscreen() {
+    if (!videoEl) return;
+    if (document.fullscreenElement) document.exitFullscreen();
+    else videoEl.requestFullscreen?.();
+  }
+
   function fmt(s) {
     if (!isFinite(s)) return '0:00';
-    const m = Math.floor(s / 60), sec = Math.floor(s % 60);
-    return `${m}:${String(sec).padStart(2, '0')}`;
+    return `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
   }
+
+  // Register with window so Canvas.svelte pointertap can trigger play
+  onMount(() => {
+    const prev = window._videoPlayers ?? {};
+    prev[el.id] = { togglePlay };
+    window._videoPlayers = prev;
+  });
+  onDestroy(() => {
+    if (window._videoPlayers) delete window._videoPlayers[el.id];
+  });
 </script>
 
-<div class="video-wrap">
-  {#if src}
-    <!-- svelte-ignore a11y_media_has_caption -->
-    <video
-      bind:this={videoEl}
-      {src}
-      onplay={() => (playing = true)}
-      onpause={() => (playing = false)}
-      ontimeupdate={onTimeUpdate}
-      onloadedmetadata={onLoaded}
-      style="width:100%;flex:1;min-height:0;object-fit:contain;background:#000;"
-    ></video>
+<div class="video-card">
+  {#if blobUrl}
+    <div class="vc-video-wrap">
+      <!-- svelte-ignore a11y_media_has_caption -->
+      <video
+        bind:this={videoEl}
+        src={blobUrl}
+        class="vc-video"
+        onplay={() => (playing = true)}
+        onpause={() => (playing = false)}
+        ontimeupdate={onTimeUpdate}
+        onloadedmetadata={onLoaded}
+      ></video>
+      <!-- transparent overlay — passes all pointer events to Pixi for drag/select -->
+      <div class="vc-video-overlay"></div>
+    </div>
   {:else}
-    <div class="no-src">no video source</div>
+    <div class="vc-no-src">loading…</div>
   {/if}
 
-  <div class="video-controls" role="toolbar" aria-label="video controls" tabindex="-1" onpointerdown={e => e.stopPropagation()}>
-    <button class="vc-btn" onclick={togglePlay} aria-label={playing ? 'pause' : 'play'}>
+  <div class="vc-footer" onpointerdown={e => e.stopPropagation()}>
+    <!-- prev frame: simple ‹ chevron -->
+    <button class="vc-btn" onclick={() => stepFrame(-1)} title="Previous frame">
+      <svg viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="8,2 4,6.5 8,11"/></svg>
+    </button>
+    <!-- play/pause -->
+    <button class="vc-btn vc-play" onclick={togglePlay} title={playing ? 'Pause' : 'Play'}>
       {#if playing}
-        <svg viewBox="0 0 12 12"><rect x="2" y="2" width="3" height="8"/><rect x="7" y="2" width="3" height="8"/></svg>
+        <svg viewBox="0 0 12 12" fill="currentColor"><rect x="2" y="1" width="3" height="10"/><rect x="7" y="1" width="3" height="10"/></svg>
       {:else}
-        <svg viewBox="0 0 12 12"><polygon points="2,1 11,6 2,11"/></svg>
+        <svg viewBox="0 0 12 12" fill="currentColor"><polygon points="2,1 11,6 2,11"/></svg>
       {/if}
     </button>
-    <!-- progress bar -->
-    <div class="vc-progress" role="slider" aria-valuenow={Math.round(progress*100)} aria-valuemin="0" aria-valuemax="100" tabindex="0"
-      onclick={seek} onkeydown={() => {}}>
-      <div class="vc-bar" style="width:{progress*100}%"></div>
-    </div>
-    <span class="vc-time">{fmt((videoEl?.currentTime) ?? 0)} / {fmt(duration)}</span>
-    <button class="vc-btn" onclick={toggleMute} aria-label={muted ? 'unmute' : 'mute'}>
+    <!-- next frame: simple › chevron -->
+    <button class="vc-btn" onclick={() => stepFrame(1)} title="Next frame">
+      <svg viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="5,2 9,6.5 5,11"/></svg>
+    </button>
+    <!-- seek -->
+    <input
+      type="range" class="vc-seek"
+      min="0" max={duration || 1} step="0.01"
+      value={currentTime}
+      oninput={onSeek}
+    />
+    <!-- time -->
+    <span class="vc-time">{fmt(currentTime)} / {fmt(duration)}</span>
+    <!-- volume -->
+    <button class="vc-btn vc-vol" class:muted onclick={toggleMute} title={muted ? 'Unmute' : 'Mute'}>
       {#if muted}
-        <svg viewBox="0 0 12 12"><path d="M2 4h3l4-3v10l-4-3H2z"/><line x1="9" y1="4" x2="12" y2="8"/><line x1="12" y1="4" x2="9" y2="8"/></svg>
+        <svg viewBox="0 0 13 13" fill="currentColor"><path d="M2 4.5h2.5l3.5-3v10l-3.5-3H2z"/><line x1="9.5" y1="4" x2="12.5" y2="8" stroke="currentColor" stroke-width="1.3"/><line x1="12.5" y1="4" x2="9.5" y2="8" stroke="currentColor" stroke-width="1.3"/></svg>
       {:else}
-        <svg viewBox="0 0 12 12"><path d="M2 4h3l4-3v10l-4-3H2z"/></svg>
+        <svg viewBox="0 0 13 13" fill="currentColor"><path d="M2 4.5h2.5l3.5-3v10l-3.5-3H2z"/><path d="M9 4.5c.8.5 1.3 1.2 1.3 2s-.5 1.5-1.3 2" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
       {/if}
+    </button>
+    <!-- fullscreen -->
+    <button class="vc-btn" onclick={toggleFullscreen} title="Fullscreen">
+      <svg viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><polyline points="1,4 1,1 4,1"/><polyline points="9,1 12,1 12,4"/><polyline points="12,9 12,12 9,12"/><polyline points="4,12 1,12 1,9"/></svg>
+    </button>
+    <!-- screenshot -->
+    <button class="vc-btn" onclick={takeScreenshot} title="Screenshot">
+      <svg viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="11" height="8" rx="1"/><circle cx="6.5" cy="7" r="2"/><path d="M4.5 3l.8-1.5h2.4l.8 1.5"/></svg>
     </button>
   </div>
 </div>
 
 <style>
-  .video-wrap {
+  .video-card {
     width: 100%; height: 100%;
     display: flex; flex-direction: column;
-    background: #000;
-    border-radius: 6px;
+    background: #111;
+    border-radius: 10px;
     overflow: hidden;
   }
-  .no-src {
-    flex: 1; display: flex; align-items: center; justify-content: center;
-    color: var(--text-faint, #555); font-size: 11px;
+  .vc-video-wrap {
+    flex: 1; min-height: 0;
+    position: relative;
+    line-height: 0;
+    background: #000;
   }
-  .video-controls {
+  .vc-video {
+    display: block;
+    width: 100%; height: 100%;
+    object-fit: cover;
+  }
+  .vc-video-overlay {
+    position: absolute; inset: 0;
+    z-index: 2;
+    pointer-events: none;
+  }
+  .vc-no-src {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: rgba(255,255,255,0.2); font-size: 11px;
+  }
+  .vc-footer {
     display: flex; align-items: center; gap: 4px;
-    padding: 4px 6px;
-    background: rgba(0,0,0,0.6);
+    padding: 6px 8px;
+    background: rgba(0,0,0,0.55);
     flex-shrink: 0;
+    pointer-events: auto;
   }
   .vc-btn {
-    background: none; border: none; cursor: pointer;
-    color: var(--text-secondary, #ccc);
-    padding: 2px; display: flex; align-items: center;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: none; border: none; border-radius: 3px;
+    color: rgba(255,255,255,0.28);
+    cursor: pointer; padding: 3px; flex-shrink: 0;
   }
-  .vc-btn svg { width: 12px; height: 12px; fill: currentColor; stroke: none; }
-  .vc-progress {
-    flex: 1; height: 4px;
+  .vc-btn:hover { color: rgba(255,255,255,0.9); }
+  .vc-btn svg { width: 13px; height: 13px; display: block; }
+  .vc-play svg { width: 12px; height: 12px; }
+  .vc-vol.muted { color: rgba(255,255,255,0.12); }
+  .vc-seek {
+    flex: 1; height: 2px;
+    cursor: pointer;
+    appearance: none; -webkit-appearance: none;
     background: rgba(255,255,255,0.15);
-    border-radius: 2px;
-    cursor: pointer; position: relative;
+    border-radius: 2px; outline: none; border: none;
   }
-  .vc-bar { height: 100%; background: var(--accent, #4a9eff); border-radius: 2px; }
-  .vc-time { font-size: 9px; color: var(--text-faint, #666); font-family: 'DM Mono', monospace; white-space: nowrap; }
+  .vc-seek::-webkit-slider-thumb {
+    appearance: none; -webkit-appearance: none;
+    width: 7px; height: 7px; border-radius: 50%;
+    background: rgba(255,255,255,0.7); cursor: pointer;
+  }
+  .vc-seek:hover::-webkit-slider-thumb { background: #fff; }
+  .vc-time {
+    font-size: 9px; color: rgba(255,255,255,0.3);
+    font-family: 'DM Mono', monospace; white-space: nowrap;
+  }
 </style>

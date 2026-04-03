@@ -26,33 +26,23 @@
   {:else}
     <div class="img-fallback">loading…</div>
   {/if}
-  <div class="img-caption">{filename}</div>
 </div>
 
 <style>
   .img-card-overlay {
     width: 100%; height: 100%;
-    display: flex; flex-direction: column;
-    background: var(--card-bg, #1e1e1e);
-    border-radius: 6px;
+    background: #111;
+    border-radius: 10px;
     overflow: hidden;
   }
   img {
-    flex: 1; min-height: 0;
+    width: 100%; height: 100%;
     object-fit: contain;
-    width: 100%; display: block;
+    display: block;
   }
   .img-fallback {
-    flex: 1; display: flex; align-items: center; justify-content: center;
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
     color: var(--text-faint, #555); font-size: 11px;
-  }
-  .img-caption {
-    padding: 4px 8px;
-    font-size: 10px;
-    color: var(--text-faint, #555);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    border-top: 1px solid var(--border, #2a2a2a);
   }
 </style>

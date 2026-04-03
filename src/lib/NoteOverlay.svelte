@@ -38,7 +38,7 @@
   {:else}
     <div
       class="note-overlay"
-      style="left:{rect.left}px; top:{rect.top}px; width:{rect.width}px; height:{rect.height}px; transform:scale({scale}); transform-origin:top left;"
+      style="left:{rect.left}px; top:{rect.top}px; width:{rect.width * scale}px; height:{rect.height * scale}px;"
     >
       <NoteEditor elId={activeEl.id} onclose={closeEditor} />
     </div>

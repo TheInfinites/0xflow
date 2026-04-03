@@ -27,13 +27,13 @@
 
 {#each elements as el (el.id)}
   {@const r = rect(el)}
-  {@const isCard = el.type === 'note' || el.type === 'ai-note' || el.type === 'todo'}
+  {@const isCard = el.type === 'note' || el.type === 'ai-note' || el.type === 'todo' || el.type === 'image' || el.type === 'draw' || el.type === 'video' || el.type === 'audio'}
   {@const isEditing = el.id === activeId}
   <div
     class="media-overlay-item"
     class:card-type={isCard}
     class:editing={isEditing}
-    style="left:{r.left}px;top:{r.top}px;width:{r.width}px;height:{r.height}px;transform:scale({scale});transform-origin:top left;"
+    style="left:{r.left}px;top:{r.top}px;width:{r.width * scale}px;height:{r.height * scale}px;"
   >
     {#if el.type === 'note' || el.type === 'ai-note'}
       <NoteCard {el} />

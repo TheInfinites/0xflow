@@ -41,6 +41,7 @@
   let relDragActive = $state(false);
   let relDragLine   = $state(null); // { x1, y1, x2, y2 }
   let relDragSourceId = null;
+  let relDragLocked = false; // true once menu is open — freezes endpoint
   let dragOrigins = [];
   let dragDelta = { x: 0, y: 0 };
   let snapEnabled = false;
@@ -294,10 +295,45 @@
 
     // Interaction
     c.on('pointerdown', e => onElPointerDown(e, el.id));
+    c.on('pointertap', e => {
+      if (e.button !== 0) return;
+      const elData = $elementsStore.find(x => x.id === el.id);
+      if (elData?.type === 'video') window._videoPlayers?.[el.id]?.togglePlay();
+    });
     c.on('rightdown', e => {
       e.stopPropagation();
-      // PixiJS FederatedPointerEvent wraps the native event
-      openCtxMenu(e.nativeEvent ?? e, el.id);
+      const native = e.nativeEvent ?? e;
+      const elData = $elementsStore.find(x => x.id === el.id);
+      const isMedia = elData?.type === 'image' || elData?.type === 'video' || elData?.type === 'audio';
+      const startX = native.clientX, startY = native.clientY;
+      let moved = false;
+      function onRcMove(ev) {
+        if (!moved && (Math.abs(ev.clientX - startX) > 4 || Math.abs(ev.clientY - startY) > 4)) {
+          moved = true;
+          startRelDrag(el.id, ev.clientX, ev.clientY);
+        } else if (moved) {
+          updateRelDrag(ev.clientX, ev.clientY);
+        }
+      }
+      function onRcUp(ev) {
+        document.removeEventListener('pointermove', onRcMove);
+        document.removeEventListener('pointerup', onRcUp);
+        if (isMedia) {
+          // draw line from element center to menu position; clears when menu closes
+          if (!relDragActive) startRelDrag(el.id, ev.clientX, ev.clientY);
+          else updateRelDrag(ev.clientX, ev.clientY);
+          relDragLocked = true; // freeze endpoint — menu will snap it via updateRelDragEndpoint
+          window.openImgCtxMenu?.(ev.clientX, ev.clientY, el.id);
+        } else if (moved) {
+          finishRelDrag(ev.clientX, ev.clientY);
+          clearRelDragLine();
+        } else {
+          clearRelDragLine();
+          openCtxMenu(ev, el.id);
+        }
+      }
+      document.addEventListener('pointermove', onRcMove);
+      document.addEventListener('pointerup', onRcUp);
     });
 
     // double-click tracked via native dblclick on canvas (see onDblClick below)
@@ -687,7 +723,7 @@
     const wp = c2w(e.clientX, e.clientY);
 
     if (relDragActive) {
-      updateRelDrag(e.clientX, e.clientY);
+      if (!relDragLocked) updateRelDrag(e.clientX, e.clientY);
       return;
     }
 
@@ -806,10 +842,7 @@
 
   function onElPointerDown(e, id) {
     e.stopPropagation();
-    if (e.button === 2) {
-      startRelDrag(id, e.clientX, e.clientY);
-      return;
-    }
+    if (e.button !== 0) return;
     if (curTool !== 'select') return;
 
     if (!e.shiftKey && !selected.has(id)) {
@@ -868,6 +901,11 @@
   }
 
   // ── Right-click relation drag ─────────────────
+  function _toOverlay(clientX, clientY) {
+    const r = canvasEl?.getBoundingClientRect() ?? { left: 0, top: 0 };
+    return { x: clientX - r.left, y: clientY - r.top };
+  }
+
   function startRelDrag(sourceId, clientX, clientY) {
     const src = $elementsStore.find(e => e.id === sourceId);
     if (!src) return;
@@ -875,7 +913,8 @@
     relDragActive = true;
     const cx = (src.x + src.width/2 - WORLD_OFFSET) * scale + px;
     const cy = (src.y + src.height/2 - WORLD_OFFSET) * scale + py;
-    relDragLine = { x1: cx, y1: cy, x2: clientX, y2: clientY };
+    const cur = _toOverlay(clientX, clientY);
+    relDragLine = { x1: cx, y1: cy, x2: cur.x, y2: cur.y };
   }
 
   function updateRelDrag(clientX, clientY) {
@@ -884,7 +923,15 @@
     if (!src) return;
     const cx = (src.x + src.width/2 - WORLD_OFFSET) * scale + px;
     const cy = (src.y + src.height/2 - WORLD_OFFSET) * scale + py;
-    relDragLine = { x1: cx, y1: cy, x2: clientX, y2: clientY };
+    const cur = _toOverlay(clientX, clientY);
+    relDragLine = { x1: cx, y1: cy, x2: cur.x, y2: cur.y };
+  }
+
+  function clearRelDragLine() {
+    relDragActive = false;
+    relDragLine = null;
+    relDragSourceId = null;
+    relDragLocked = false;
   }
 
   function finishRelDrag(clientX, clientY) {
@@ -1309,7 +1356,7 @@
   // ── Context menu ─────────────────────────────
 
   function openCtxMenu(e, elId) {
-    e.preventDefault(); e.stopPropagation();
+    e.preventDefault?.(); e.stopPropagation?.();
     ctxMenu = { x: e.clientX, y: e.clientY, elId };
   }
 
@@ -1460,6 +1507,12 @@
     window.zoomToFit = () => zoomToFit();
     window.zoomToSelection = () => zoomToSelection();
     window.c2w = (clientX, clientY) => c2w(clientX, clientY);
+    window.clearRelDragLine = () => clearRelDragLine();
+    window.updateRelDragEndpoint = (clientX, clientY) => {
+      if (!relDragActive) return;
+      const cur = _toOverlay(clientX, clientY);
+      relDragLine = { ...relDragLine, x2: cur.x, y2: cur.y };
+    };
   });
 </script>
 
@@ -1474,7 +1527,7 @@
   onpointerup={onPointerUp}
   ondblclick={onDblClick}
   onwheel={onWheel}
-  oncontextmenu={e => { e.preventDefault(); }}
+  oncontextmenu={e => { e.preventDefault(); if (ctxMenu) closeCtxMenu(); }}
   style="position:relative;width:100%;height:100%;overflow:hidden;"
 >
   <canvas bind:this={canvasEl} style="display:block;width:100%;height:100%;"></canvas>
@@ -1484,18 +1537,7 @@
     bind:this={domOverlay}
     style="position:absolute;inset:0;pointer-events:none;"
   >
-    <!-- NoteEditor overlay — appears on double-click of note/ai-note/label -->
-    <NoteOverlay />
-    <!-- Media overlays — images, video, audio, draw cards -->
-    <MediaOverlay />
-    <!-- Marquee selection box — above all DOM cards -->
-    {#if marqueeRect}
-      <div
-        class="dom-marquee"
-        style="left:{marqueeRect.x}px;top:{marqueeRect.y}px;width:{marqueeRect.w}px;height:{marqueeRect.h}px;"
-      ></div>
-    {/if}
-    <!-- Relation drag wire preview -->
+    <!-- Relation drag wire preview — behind all cards -->
     {#if relDragActive && relDragLine}
       {@const { x1, y1, x2, y2 } = relDragLine}
       {@const dx = Math.abs(x2 - x1) * 0.5}
@@ -1507,6 +1549,17 @@
         />
         <circle cx={x2} cy={y2} r="4" fill="rgba(232,68,10,0.8)" />
       </svg>
+    {/if}
+    <!-- NoteEditor overlay — appears on double-click of note/ai-note/label -->
+    <NoteOverlay />
+    <!-- Media overlays — images, video, audio, draw cards -->
+    <MediaOverlay />
+    <!-- Marquee selection box — above all DOM cards -->
+    {#if marqueeRect}
+      <div
+        class="dom-marquee"
+        style="left:{marqueeRect.x}px;top:{marqueeRect.y}px;width:{marqueeRect.w}px;height:{marqueeRect.h}px;"
+      ></div>
     {/if}
   </div>
 
@@ -1528,7 +1581,14 @@
   <!-- Element context menu -->
   {#if ctxMenu}
     {@const ctxEl = $elementsStore.find(e => e.id === ctxMenu.elId)}
-    {@const isLight = false}
+    <!-- Click outside to close -->
+    <div
+      style="position:fixed;inset:0;z-index:1999;"
+      onclick={closeCtxMenu}
+      onkeydown={() => {}}
+      role="none"
+    ></div>
+
     <div
       class="el-ctx-menu"
       style="left:{ctxMenu.x}px;top:{ctxMenu.y}px;"
@@ -1539,42 +1599,33 @@
           <button
             class="ctx-color-swatch"
             class:active={ctxEl?.color === c}
-            style="background:{c ?? 'transparent'};{!c ? 'border:1px solid #555' : ''}"
+            style="background:{c ?? 'transparent'};{!c ? 'border:1px solid rgba(255,255,255,0.15)' : ''}"
             onclick={() => ctxSetColor(ctxMenu.elId, c)}
             aria-label={c ?? 'default color'}
           ></button>
         {/each}
       </div>
-      <div class="ctx-divider"></div>
+      <div class="ctx-sep"></div>
       {#if ctxEl?.type === 'note' || ctxEl?.type === 'ai-note' || ctxEl?.type === 'todo'}
         <button class="ctx-item" onclick={() => ctxToggleCollapse(ctxMenu.elId)}>
+          <span class="ctx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 5l5 4 5-4"/></svg></span>
           {ctxEl?.collapsed ? 'expand' : 'collapse'}
         </button>
       {/if}
-      {#if ctxEl?.type === 'image' || ctxEl?.type === 'video' || ctxEl?.type === 'audio'}
-        {#if ctxEl?.content?.sourcePath}
-          <button class="ctx-item" onclick={() => { closeCtxMenu(); window.openImgCtxMenu?.(ctxMenu.x, ctxMenu.y, ctxMenu.elId); }}>
-            file ops…
-          </button>
-        {/if}
-      {/if}
       <button class="ctx-item" onclick={() => ctxToggleLock(ctxMenu.elId)}>
+        <span class="ctx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="8" height="6" rx="1"/><path d="M5 6V4a2 2 0 014 0v2"/></svg></span>
         {ctxEl?.locked ? 'unlock' : 'lock'}
       </button>
       <button class="ctx-item" onclick={() => ctxTogglePin(ctxMenu.elId)}>
+        <span class="ctx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2l7 7-3 1-2-2-3 3-1-1 3-3-2-2z"/></svg></span>
         {ctxEl?.pinned ? 'unpin' : 'pin'}
       </button>
-      <div class="ctx-divider"></div>
-      <button class="ctx-item danger" onclick={() => ctxDelete(ctxMenu.elId)}>delete</button>
+      <div class="ctx-sep"></div>
+      <button class="ctx-item danger" onclick={() => ctxDelete(ctxMenu.elId)}>
+        <span class="ctx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="1,3.5 13,3.5"/><path d="M3,3.5l.8,8.5h6.4L11,3.5"/><line x1="5" y1="1.5" x2="9" y2="1.5"/></svg></span>
+        delete
+      </button>
     </div>
-
-    <!-- Click outside to close -->
-    <div
-      style="position:fixed;inset:0;z-index:999;"
-      onclick={closeCtxMenu}
-      onkeydown={() => {}}
-      role="none"
-    ></div>
   {/if}
 
   <!-- Brainstorm panel (outside DOM overlay so it's not clipped) -->
@@ -1612,33 +1663,52 @@
   .el-ctx-menu {
     position: fixed;
     z-index: 2000;
-    background: var(--card-bg, #1e1e1e);
-    border: 1px solid var(--border, #2a2a2a);
-    border-radius: 6px;
-    padding: 6px;
-    min-width: 120px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    background: rgba(13,13,14,0.97);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    padding: 5px;
+    min-width: 190px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    backdrop-filter: blur(40px);
+    -webkit-backdrop-filter: blur(40px);
     pointer-events: all;
+    user-select: none;
   }
   .ctx-color-row {
-    display: flex; gap: 4px; flex-wrap: wrap;
-    padding: 2px 0;
+    display: flex; gap: 5px; flex-wrap: wrap;
+    padding: 6px 8px 4px;
   }
   .ctx-color-swatch {
     width: 14px; height: 14px;
     border-radius: 3px;
     border: 1px solid transparent;
     cursor: pointer; padding: 0;
+    flex-shrink: 0;
   }
-  .ctx-color-swatch.active { outline: 2px solid var(--accent, #4a9eff); }
-  .ctx-divider { height: 1px; background: var(--border, #2a2a2a); margin: 4px 0; }
+  .ctx-color-swatch.active { outline: 2px solid rgba(255,255,255,0.6); outline-offset: 1px; }
+  .ctx-sep { height: 1px; background: rgba(255,255,255,0.06); margin: 3px 5px; }
   .ctx-item {
-    display: block; width: 100%;
-    padding: 5px 8px; text-align: left;
-    background: none; border: none; border-radius: 3px;
-    color: var(--text-primary, #e0e0e0);
-    font-size: 12px; cursor: pointer;
+    display: flex; align-items: center; gap: 10px;
+    width: 100%; padding: 7px 10px;
+    text-align: left; background: none; border: none;
+    border-radius: 6px;
+    color: rgba(255,255,255,0.78);
+    font-size: 12px; font-family: inherit;
+    letter-spacing: 0.01em;
+    cursor: default;
+    transition: background 0.1s, color 0.1s;
   }
-  .ctx-item:hover { background: var(--hover-bg, #252525); }
-  .ctx-item.danger { color: #e8440a; }
+  .ctx-item:hover { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.95); }
+  .ctx-item.danger { color: rgba(232,68,10,0.85); }
+  .ctx-item.danger:hover { background: rgba(232,68,10,0.1); color: #e8440a; }
+  .ctx-icon {
+    width: 14px; height: 14px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: rgba(255,255,255,0.22);
+    transition: color 0.1s;
+  }
+  .ctx-icon :global(svg) { width: 14px; height: 14px; }
+  .ctx-item:hover .ctx-icon { color: #E8440A; }
+  .ctx-item.danger .ctx-icon { color: rgba(232,68,10,0.5); }
+  .ctx-chevron { margin-left: auto; color: rgba(255,255,255,0.2); font-size: 14px; }
 </style>

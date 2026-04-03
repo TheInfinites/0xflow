@@ -7,36 +7,42 @@
   import { selectedStore } from '../stores/canvas.js';
 
   // ── State ────────────────────────────────────────────────────────────────
-  let visible      = false;
-  let menuX        = 0;
-  let menuY        = 0;
-  let ctxElId      = null;   // element store ID of the right-clicked media card
-  let fileOpElId   = null;   // persists while folder browser is open
-  let selMediaCount = 0;
+  let visible      = $state(false);
+  let menuX        = $state(0);
+  let menuY        = $state(0);
+  let ctxElId      = $state(null);   // element store ID of the right-clicked media card
+  let fileOpElId   = $state(null);   // persists while folder browser is open
+  let selMediaCount = $state(0);
 
   // Rename panel
-  let renamePanelVisible = false;
-  let renameStem   = '';
-  let renameExt    = '';
+  let renamePanelVisible = $state(false);
+  let renameStem   = $state('');
+  let renameExt    = $state('');
 
   // Folder browser panels: array of { dirPath, depth, x, y, subdirs, loading, creatingFolder, newFolderName }
-  let panels = [];
-  let fbMode = 'move-copy'; // 'move-copy' | 'export'
-  let fbExportFmt = null;
+  let panels = $state([]);
+  let fbMode = $state('move-copy'); // 'move-copy' | 'export'
+  let fbExportFmt = $state(null);
 
   // Batch rename modal
-  let batchVisible = false;
-  let batchCards   = [];
-  let batchFind    = '';
-  let batchReplace = '';
-  let batchPrefix  = '';
-  let batchSuffix  = '';
+  let batchVisible = $state(false);
+  let batchCards   = $state([]);
+  let batchFind    = $state('');
+  let batchReplace = $state('');
+  let batchPrefix  = $state('');
+  let batchSuffix  = $state('');
 
   // Hover timer for subfolder expansion
   let hoverTimer = null;
 
   // Cooldown flag so mouseover can't immediately reopen after close
   let justClosed = false;
+  // JS-tracked hover item id — replaces CSS :hover to avoid WebKit stuck-hover after right-click drag
+  let hoveredItemId = $state(null);
+  // Timestamp of last menu open — any hover/move event within 200ms is a phantom from right-click drag
+  let menuOpenedAt = 0;
+  const MENU_HOVER_GRACE = 200;
+  function menuReady() { return Date.now() - menuOpenedAt > MENU_HOVER_GRACE; }
 
   // ── Tauri helpers ────────────────────────────────────────────────────────
   const IS_TAURI = !!window.__TAURI__;
@@ -211,6 +217,8 @@
     // Position — temporarily show to measure, then reposition
     menuX = x;
     menuY = y;
+    hoveredItemId = null;
+    menuOpenedAt = Date.now();
     visible = true;
 
     // Use rAF to get actual dimensions after render
@@ -221,6 +229,12 @@
       const vw = window.innerWidth, vh = window.innerHeight;
       menuX = Math.min(x, vw - mw - 8);
       menuY = Math.min(y, vh - mh - 8);
+      // Point the rel-drag line to the left-center of the menu
+      requestAnimationFrame(() => {
+        const r = menu.getBoundingClientRect();
+        window.updateRelDragEndpoint?.(r.left, r.top + r.height / 2);
+        // (layout settled)
+      });
     });
   }
 
@@ -230,8 +244,10 @@
     ctxElId = null;
     fileOpElId = null;
     renamePanelVisible = false;
+    hoveredItemId = null;
     justClosed = true;
     setTimeout(() => { justClosed = false; }, 150);
+    window.clearRelDragLine?.();
   }
 
   // ── Rename panel ─────────────────────────────────────────────────────────
@@ -406,13 +422,13 @@
     return result + ext;
   }
 
-  $: batchPreviews = batchCards.map(el => {
+  let batchPreviews = $derived(batchCards.map(el => {
     const oldName = el.content.sourcePath.split(/[\\/]/).pop();
     const newName = applyBatchPattern(oldName, batchFind, batchReplace, batchPrefix, batchSuffix);
     return { id: el.id, sourcePath: el.content.sourcePath, oldName, newName, changed: newName !== oldName };
-  });
+  }));
 
-  $: batchChangedCount = batchPreviews.filter(p => p.changed).length;
+  let batchChangedCount = $derived(batchPreviews.filter(p => p.changed).length);
 
   async function doBatchRename() {
     let ok = 0, fail = 0;
@@ -462,7 +478,7 @@
   function onDocMousedown(e) {
     if (!visible) return;
     if (e.button !== 0) return;
-    if (e.target.closest('#fb-img-ctx-menu') || e.target.closest('.fb-panel') || e.target.closest('#cv')) return;
+    if (e.target.closest('#fb-img-ctx-menu') || e.target.closest('.fb-panel')) return;
     closeAll();
   }
 
@@ -489,6 +505,48 @@
 
   // ── Expose to window for legacy onclick= and Canvas.svelte ───────────────
   import { onMount } from 'svelte';
+  // Track which menu item is under pointer at document level — avoids WebKit stuck-hover
+  let _hoverClearTimer = null;
+  function onDocPointerMove(e) {
+    clearTimeout(_hoverClearTimer);
+    if (!menuReady()) { hoveredItemId = null; renamePanelVisible = false; return; }
+    const menu = document.getElementById('fb-img-ctx-menu');
+    if (!menu) { hoveredItemId = null; return; }
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const overMenuOrPanel = el?.closest('#fb-img-ctx-menu, .fb-panel');
+    if (!overMenuOrPanel) {
+      // pointer left menu and all panels — close everything
+      _hoverClearTimer = setTimeout(() => {
+        hoveredItemId = null;
+        renamePanelVisible = false;
+        panels = [];
+      }, 80);
+      return;
+    }
+    // update hovered item only when over the main menu, not a panel
+    if (el?.closest('#fb-img-ctx-menu')) {
+      const it = el?.closest('[data-iid]');
+      const next = (it && menu.contains(it)) ? it.dataset.iid : null;
+      if (next !== hoveredItemId) {
+        hoveredItemId = next;
+        if (next !== 'rename') renamePanelVisible = false;
+        // close panels when moving to a different item (or no item)
+        if (next !== 'movecopy') panels = [];
+      }
+    }
+    // when mouse is in a panel, keep hoveredItemId as-is (parent item stays highlighted)
+  }
+
+  $effect(() => {
+    if (visible) {
+      document.addEventListener('pointermove', onDocPointerMove, { passive: true });
+      return () => {
+        document.removeEventListener('pointermove', onDocPointerMove);
+        hoveredItemId = null;
+      };
+    }
+  });
+
   onMount(() => {
     loadProjectDir();
     Object.assign(window, {
@@ -508,7 +566,7 @@
   });
 </script>
 
-<svelte:window onmousedown={onDocMousedown} />
+<svelte:window onpointerdown={onDocMousedown} />
 
 <!-- ── Image context menu ── -->
 {#if visible}
@@ -520,12 +578,12 @@
   >
     <!-- Rename / batch rename -->
     {#if selMediaCount > 1}
-      <button class="ictx-item" onclick={() => { closeAll(); openBatchRenameModal(); }}>
+      <button class="ictx-item" class:ictx-hov={hoveredItemId==='batch'} data-iid="batch" onclick={() => { closeAll(); openBatchRenameModal(); }}>
         <span class="ictx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h10M2 7h7M2 10h5"/><path d="M10 8l2 2-2 2"/></svg></span>
         batch rename ({selMediaCount})
       </button>
     {:else}
-      <div class="ictx-item rename-item" onmouseenter={openRenamePanel} role="menuitem" tabindex="-1">
+      <div class="ictx-item rename-item" class:ictx-hov={hoveredItemId==='rename'} data-iid="rename" onmouseenter={() => { if (menuReady()) openRenamePanel(); }} role="menuitem" tabindex="-1">
         <span class="ictx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h10M2 7h7M2 10h5"/><path d="M10 8l2 2-2 2"/></svg></span>
         rename file
         {#if renamePanelVisible}
@@ -547,7 +605,7 @@
     <div class="ictx-sep"></div>
 
     <!-- Zoom to -->
-    <button class="ictx-item" onclick={zoomToCtxEl}>
+    <button class="ictx-item" class:ictx-hov={hoveredItemId==='zoom'} data-iid="zoom" onclick={zoomToCtxEl}>
       <span class="ictx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><polyline points="1,4.5 1,1 4.5,1"/><polyline points="9.5,1 13,1 13,4.5"/><polyline points="13,9.5 13,13 9.5,13"/><polyline points="4.5,13 1,13 1,9.5"/><rect x="4" y="4" width="6" height="6" rx="0.5" stroke-dasharray="1.5,1"/></svg></span>
       zoom to
     </button>
@@ -556,7 +614,7 @@
 
     <!-- Open file location -->
     {#if getSourcePath(ctxElId)}
-      <button class="ictx-item" onclick={openFileLocation}>
+      <button class="ictx-item" class:ictx-hov={hoveredItemId==='fileloc'} data-iid="fileloc" onclick={openFileLocation}>
         <span class="ictx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5A1.5 1.5 0 013.5 2h3l1.5 2H12a1 1 0 011 1v6a1 1 0 01-1 1H3.5A1.5 1.5 0 012 10.5z"/></svg></span>
         open file location
       </button>
@@ -566,8 +624,10 @@
     <!-- Move / Copy to folder -->
     <div
       class="ictx-item"
+      class:ictx-hov={hoveredItemId==='movecopy'}
+      data-iid="movecopy"
       data-action="move-copy"
-      onmouseenter={e => { if (!justClosed) openFolderBrowser(e.currentTarget, 'move-copy'); }}
+      onmouseenter={e => { if (menuReady() && !justClosed) openFolderBrowser(e.currentTarget, 'move-copy'); }}
       role="menuitem"
       tabindex="-1"
     >
@@ -579,7 +639,7 @@
     <div class="ictx-sep"></div>
 
     <!-- Export submenu -->
-    <div class="ictx-item ictx-has-submenu" role="menuitem" tabindex="-1">
+    <div class="ictx-item ictx-has-submenu" class:ictx-hov={hoveredItemId==='export'} data-iid="export" role="menuitem" tabindex="-1">
       <span class="ictx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 2v7M4.5 6.5L7 9l2.5-2.5"/><path d="M2 11h10"/></svg></span>
       export to folder
       <span class="ictx-chevron">›</span>
@@ -621,15 +681,15 @@
       {:else}
         <button class="fb-action-btn move" title="Move here"
           onclick={() => execFileOp('move', fileOpElId, panel.dirPath)}>
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8h9m0 0L8 5m3 3l-3 3"/><path d="M11 3h2a1 1 0 011 1v8a1 1 0 01-1 1h-2"/></svg>
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8h9m0 0L8 5m3 3l-3 3"/><path d="M11 3h2a1 1 0 011 1v8a1 1 0 01-1 1h-2"/></svg>
         </button>
         <button class="fb-action-btn copy" title="Copy here"
           onclick={() => execFileOp('copy', fileOpElId, panel.dirPath)}>
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="8" height="9" rx="1.5"/><path d="M3 11V3a1 1 0 011-1h7"/></svg>
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="8" height="9" rx="1.5"/><path d="M3 11V3a1 1 0 011-1h7"/></svg>
         </button>
         <button class="fb-action-btn open-folder" title="Open folder"
           onclick={async () => { closeAll(); if (IS_TAURI) { try { await window.__TAURI__.core.invoke('plugin:shell|open', { path: panel.dirPath }); } catch { window.showToast?.('Could not open folder'); } } else { window.showToast?.('Open folder requires the desktop app'); } }}>
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4.5A1.5 1.5 0 013.5 3h3l1.5 2H13a1 1 0 011 1v6a1 1 0 01-1 1H3.5A1.5 1.5 0 012 11.5z"/><path d="M10 9l1.5-1.5L13 9"/><line x1="11.5" y1="7.5" x2="11.5" y2="11"/></svg>
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4.5A1.5 1.5 0 013.5 3h3l1.5 2H13a1 1 0 011 1v6a1 1 0 01-1 1H3.5A1.5 1.5 0 012 11.5z"/><path d="M10 9l1.5-1.5L13 9"/><line x1="11.5" y1="7.5" x2="11.5" y2="11"/></svg>
         </button>
       {/if}
     </div>
@@ -647,7 +707,7 @@
           role="menuitem"
           tabindex="-1"
         >
-          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" width="13" height="13">
             <path d="M1.5 4A1 1 0 012.5 3h3l1 1.5H11.5A1 1 0 0112.5 5.5v4.5a1 1 0 01-1 1h-9a1 1 0 01-1-1V4z"/>
           </svg>
           <span style="overflow:hidden;text-overflow:ellipsis;">{subdir.name}</span>
@@ -678,7 +738,7 @@
           onmouseenter={() => clearTimeout(hoverTimer)}
           onclick={e => { e.stopPropagation(); startCreateFolder(i); }}
         >
-          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
             <path d="M7 2v10M2 7h10"/>
           </svg>
           new folder
@@ -755,14 +815,13 @@
     letter-spacing: 0.01em;
     color: rgba(255,255,255,0.78);
     cursor: default;
-    transition: background 0.1s, color 0.1s;
     background: none;
     border: none;
     width: 100%;
     text-align: left;
     font-family: inherit;
   }
-  .ictx-item:hover { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.95); }
+  .ictx-item.ictx-hov { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.95); }
   .ictx-sep {
     height: 1px;
     background: rgba(255,255,255,0.06);
@@ -773,17 +832,15 @@
     flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
     color: rgba(255,255,255,0.22);
-    transition: color 0.1s;
   }
   .ictx-icon :global(svg) { width: 14px; height: 14px; }
-  .ictx-item:hover .ictx-icon { color: #E8440A; }
+  .ictx-item.ictx-hov .ictx-icon { color: #E8440A; }
   .ictx-chevron {
     margin-left: auto;
     color: rgba(255,255,255,0.15);
     font-size: 14px; line-height: 1;
-    transition: color 0.1s, transform 0.12s;
   }
-  .ictx-item:hover .ictx-chevron { color: rgba(255,255,255,0.4); transform: translateX(2px); }
+  .ictx-item.ictx-hov .ictx-chevron { color: rgba(255,255,255,0.4); transform: translateX(2px); }
 
   /* Submenu */
   .ictx-has-submenu { position: relative; }
@@ -801,7 +858,7 @@
     backdrop-filter: blur(40px);
     -webkit-backdrop-filter: blur(40px);
   }
-  .ictx-has-submenu:hover .ictx-submenu { display: block; }
+  .ictx-has-submenu.ictx-hov .ictx-submenu { display: block; }
 
   /* Rename panel */
   .rename-item { position: relative; }
