@@ -28,11 +28,13 @@
 {#each elements as el (el.id)}
   {@const r = rect(el)}
   {@const isCard = el.type === 'note' || el.type === 'ai-note' || el.type === 'todo' || el.type === 'image' || el.type === 'draw' || el.type === 'video' || el.type === 'audio'}
+  {@const isVideo = el.type === 'video'}
   {@const isEditing = el.id === activeId}
   <div
     class="media-overlay-item"
     class:card-type={isCard}
     class:editing={isEditing}
+    class:no-clip={isVideo}
     style="left:{r.left}px;top:{r.top}px;width:{r.width * scale}px;height:{r.height * scale}px;"
   >
     {#if el.type === 'note' || el.type === 'ai-note'}
@@ -58,6 +60,9 @@
     box-sizing: border-box;
     border-radius: 6px;
     overflow: hidden;
+  }
+  .media-overlay-item.no-clip {
+    overflow: visible;
   }
   .media-overlay-item.card-type {
     pointer-events: none;
