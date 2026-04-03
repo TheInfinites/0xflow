@@ -126,8 +126,8 @@
     cursor: grab;
   }
   .note.selected {
-    border-color: rgba(74,158,255,0.8);
-    box-shadow: 0 0 0 1px rgba(74,158,255,0.3);
+    border-color: rgba(232,68,10,0.8);
+    box-shadow: 0 0 0 3px rgba(232,68,10,0.06);
   }
   .note-preview {
     flex: 1;

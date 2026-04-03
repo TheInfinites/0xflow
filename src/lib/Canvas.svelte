@@ -74,6 +74,22 @@
   // Context menu state
   let ctxMenu = $state(null); // { x, y, elId } or null
 
+  // Radial drag menu state (right-drag on empty canvas)
+  let radialMenu = $state(null); // { x, y } origin or null
+  let _radialMouseDown = false;
+  let _radialStartX = 0, _radialStartY = 0;
+  let _radialDragged = false;
+  let _radialHovered = $state(-1); // index of hovered item
+  const RADIAL_RADIUS = 82;
+  const RADIAL_DRAG_THRESHOLD = 6;
+  const RADIAL_ITEMS = [
+    { label: 'Note',      icon: '<rect x="2" y="2" width="11" height="11" rx="1.5"/><line x1="4.5" y1="5.5" x2="10.5" y2="5.5"/><line x1="4.5" y1="7.5" x2="10.5" y2="7.5"/><line x1="4.5" y1="9.5" x2="8" y2="9.5"/>',   angleDeg: -90 },
+    { label: 'Draw',      icon: '<path d="M3 12 Q5 8 8 7 Q11 6 12 3"/><circle cx="3" cy="12" r="1" fill="currentColor" stroke="none"/>',                                                                                         angleDeg: -35 },
+    { label: 'AI Note',   icon: '<circle cx="7.5" cy="7.5" r="5.5" stroke-width="1.2"/><circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/>',  color: '#E8440A',                                              angleDeg:  35 },
+    { label: 'Dashboard', icon: '<rect x="1" y="1" width="5" height="5" rx="0.8"/><rect x="9" y="1" width="5" height="5" rx="0.8"/><rect x="1" y="9" width="5" height="5" rx="0.8"/><rect x="9" y="9" width="5" height="5" rx="0.8"/>', angleDeg: 145 },
+    { label: 'Bookmark',  icon: '<path d="M3 2h9v11l-4.5-3L3 13z"/>',                                                                                                                                                            angleDeg: 215 },
+  ];
+
   // Last known mouse position (client coords) for placing new nodes
   let lastMouseClient = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
 
@@ -81,7 +97,7 @@
   let _clipboard = [];
 
   // Store unsubscribers (set in onMount, cleaned up in onDestroy)
-  let _unsubEl, _unsubSt, _unsubTheme;
+  let _unsubEl, _unsubSt, _unsubTheme, _docRadialCleanup;
 
   // Element color palette
   const EL_COLORS = [null, '#1e1e1e', '#2a2a1e', '#1e2a1e', '#1e1e2e', '#2e1e1e', '#1e2a2a', '#2a1e2a'];
@@ -166,6 +182,7 @@
 
   onDestroy(() => {
     _unsubEl?.(); _unsubSt?.(); _unsubTheme?.();
+    _docRadialCleanup?.();
     app?.destroy(false, { children: true });
   });
 
@@ -393,8 +410,8 @@
       const fc = el.content?.frameColor || 0;
       const fillHex = fc > 0 ? parseRgba(FRAME_COLORS[fc]) : { color: 0xffffff, alpha: 0.03 };
       g.roundRect(0, 0, w, h, 6).fill(fillHex);
-      const borderColor = isSelected ? 0x4a9eff : 0x555555;
-      g.roundRect(0, 0, w, h, 6).stroke({ color: borderColor, width: isSelected ? 2 : 1, alpha: isSelected ? 1 : 0.4 });
+      const borderColor = isSelected ? 0xe8440a : 0x555555;
+      g.roundRect(0, 0, w, h, 6).stroke({ color: borderColor, width: isSelected ? 1.5 : 1, alpha: isSelected ? 0.8 : 0.4 });
     } else if (el.type === 'label') {
       // transparent — just text
     } else {
@@ -426,17 +443,17 @@
         }
       }
 
-      // Selection ring
+      // Selection ring — orange matching main branch
       const rh = el.collapsed ? 32 : h;
       if (isSelected) {
-        g.roundRect(-2, -2, w + 4, rh + 4, 10).stroke({ color: 0x4a9eff, width: 2 });
+        g.roundRect(-2, -2, w + 4, rh + 4, 10).stroke({ color: 0xe8440a, width: 1.5 });
       } else {
         g.roundRect(0, 0, w, rh, 8).stroke({ color: isLight ? 0xcccccc : 0x333333, width: 1 });
       }
 
-      // Pinned indicator — small pin icon dot top-right
+      // Pinned indicator — small dot top-right
       if (el.pinned) {
-        g.circle(w - 8, 8, 3).fill({ color: 0x4a9eff, alpha: 0.8 });
+        g.circle(w - 8, 8, 3).fill({ color: 0xe8440a, alpha: 0.8 });
       }
       // Locked indicator — small dot top-right (offset from pin if both)
       if (el.locked) {
@@ -711,6 +728,16 @@
     const hit = app?.renderer?.events?.rootBoundary?.hitTest?.(e.clientX - r.left, e.clientY - r.top);
     if (hit && hit.label && _elContainers.has(hit.label)) return;
 
+    // Right-click drag on empty canvas → radial menu
+    if (e.button === 2) {
+      _radialMouseDown = true;
+      _radialStartX = e.clientX;
+      _radialStartY = e.clientY;
+      _radialDragged = false;
+      e.preventDefault();
+      return;
+    }
+
     if (e.button === 1 || (e.button === 0 && e.altKey)) {
       // Pan
       isPanning = true;
@@ -749,6 +776,33 @@
   function onPointerMove(e) {
     lastMouseClient = { x: e.clientX, y: e.clientY };
     const wp = c2w(e.clientX, e.clientY);
+
+    // Radial menu drag tracking
+    if (_radialMouseDown) {
+      const dx = e.clientX - _radialStartX, dy = e.clientY - _radialStartY;
+      if (!_radialDragged && Math.sqrt(dx*dx+dy*dy) > RADIAL_DRAG_THRESHOLD) {
+        _radialDragged = true;
+        radialMenu = { x: _radialStartX, y: _radialStartY };
+      }
+      if (radialMenu) {
+        const dist = Math.sqrt(dx*dx+dy*dy);
+        if (dist >= 40) {
+          const dragAngle = Math.atan2(dy, dx);
+          const TOLERANCE = 22 * Math.PI / 180;
+          let best = -1, bestDiff = Infinity;
+          RADIAL_ITEMS.forEach((item, i) => {
+            let diff = dragAngle - (item.angleDeg * Math.PI / 180);
+            while (diff > Math.PI) diff -= Math.PI * 2;
+            while (diff < -Math.PI) diff += Math.PI * 2;
+            if (Math.abs(diff) < bestDiff) { bestDiff = Math.abs(diff); best = i; }
+          });
+          _radialHovered = bestDiff <= TOLERANCE ? best : -1;
+        } else {
+          _radialHovered = -1;
+        }
+      }
+      return;
+    }
 
     if (relDragActive) {
       if (!relDragLocked) updateRelDrag(e.clientX, e.clientY);
@@ -793,6 +847,21 @@
 
   function onPointerUp(e) {
     const wp = c2w(e.clientX, e.clientY);
+
+    // Radial menu release
+    if (e.button === 2 && _radialMouseDown) {
+      _radialMouseDown = false;
+      if (radialMenu && _radialHovered >= 0) {
+        const item = RADIAL_ITEMS[_radialHovered];
+        const ox = _radialStartX, oy = _radialStartY;
+        const w = c2w(ox, oy);
+        radialMenu = null; _radialHovered = -1;
+        executeRadialItem(item, w.x, w.y);
+      } else {
+        radialMenu = null; _radialHovered = -1;
+      }
+      return;
+    }
 
     if (relDragActive) { finishRelDrag(e.clientX, e.clientY); return; }
 
@@ -874,20 +943,32 @@
     if (curTool !== 'select') return;
 
     selectedRelId = null;
-    if (!e.shiftKey && !selected.has(id)) {
-      clearSelection();
-    }
 
-    toggleSelect(id);
+    if (e.shiftKey) {
+      // Shift: toggle this element in/out of selection
+      toggleSelect(id);
+    } else if (!selected.has(id)) {
+      // Click on unselected element: clear others, select this one
+      clearSelection();
+      toggleSelect(id);
+    }
+    // Click on already-selected element (no shift): keep selection, just drag
 
     if (selected.has(id)) {
       isDragging = true;
       const els = $elementsStore;
-      dragOrigins = [...selected].map(sid => {
+      // Collect selected ids + any children of selected frames (so frames drag with their contents)
+      const dragIds = new Set(selected);
+      for (const sid of selected) {
+        const sel = els.find(e => e.id === sid);
+        if (sel?.type === 'frame' && sel.content?.groupIds?.length) {
+          sel.content.groupIds.forEach(cid => dragIds.add(cid));
+        }
+      }
+      dragOrigins = [...dragIds].map(sid => {
         const el = els.find(e => e.id === sid);
         return { id: sid, origX: el?.x || 0, origY: el?.y || 0, startClientX: e.clientX, startClientY: e.clientY };
       });
-      // Fix: all drag origins share the same start point
       dragOrigins.forEach(o => { o.startClientX = e.clientX; o.startClientY = e.clientY; });
     }
   }
@@ -1403,6 +1484,15 @@
     snapshot();
   }
 
+  // ── Radial menu actions ──────────────────────
+  function executeRadialItem(item, wx, wy) {
+    if (item.label === 'Note')         { makeNote(wx, wy); }
+    else if (item.label === 'Draw')    { curTool = 'pen'; setCurTool('pen'); }
+    else if (item.label === 'AI Note') { makeAiNote(wx, wy); }
+    else if (item.label === 'Dashboard') { onBack(); }
+    else if (item.label === 'Bookmark')  { /* bookmark support TBD */ }
+  }
+
   // ── Context menu ─────────────────────────────
 
   function openCtxMenu(e, elId) {
@@ -1538,6 +1628,60 @@
     if (!zoomRaf) zoomRaf = requestAnimationFrame(animateZoom);
   }
 
+  // ── Pinterest/masonry layout ─────────────────
+  function masonryLayout() {
+    const all = $elementsStore;
+    // Use selected elements (excluding frames), or all non-frame non-pinned elements
+    const targets = selected.size > 0
+      ? all.filter(e => selected.has(e.id) && e.type !== 'frame')
+      : all.filter(e => e.type !== 'frame' && !e.pinned);
+    if (targets.length < 2) return;
+
+    snapshot();
+
+    const GAP = 24;
+
+    // Determine column count: 2–5 based on element count
+    const cols = Math.max(2, Math.min(5, Math.round(Math.sqrt(targets.length * 1.5))));
+
+    // Use the median element width as the canonical column width so one huge
+    // element doesn't blow out all columns
+    const widths = [...targets].map(e => e.width || 240).sort((a, b) => a - b);
+    const COL_W = widths[Math.floor(widths.length / 2)];
+
+    // Anchor at top-left of current bounding box
+    const anchorX = Math.min(...targets.map(e => e.x));
+    const anchorY = Math.min(...targets.map(e => e.y));
+
+    // Sort reading order: top-to-bottom, left-to-right
+    const sorted = [...targets].sort((a, b) => {
+      const rowA = Math.round(a.y / 40), rowB = Math.round(b.y / 40);
+      return rowA !== rowB ? rowA - rowB : a.x - b.x;
+    });
+
+    // Place into shortest column each time
+    const colH = Array(cols).fill(0);
+    const updates = sorted.map(el => {
+      const col = colH.indexOf(Math.min(...colH));
+      const nx = anchorX + col * (COL_W + GAP);
+      const ny = anchorY + colH[col];
+      // Scale element width to column width, keep aspect ratio for height
+      const origW = el.width || 240;
+      const origH = el.height || 180;
+      const newH = Math.round((origH / origW) * COL_W);
+      colH[col] += newH + GAP;
+      return { id: el.id, x: nx, y: ny, width: COL_W, height: newH };
+    });
+
+    elementsStore.update(els => els.map(el => {
+      const u = updates.find(u => u.id === el.id);
+      return u ? { ...el, x: u.x, y: u.y, width: u.width, height: u.height } : el;
+    }));
+
+    snapshot();
+    window.showToast?.('masonry layout applied');
+  }
+
   // ── Expose to legacy bridge ──────────────────
   $effect(() => {
     window._pixiCanvas = {
@@ -1548,6 +1692,7 @@
       copySelected, pasteClipboard,
       alignSelected, distributeSelected,
       groupSelected, ungroupSelected,
+      masonryLayout,
       snapshot, clearSelection,
       doZoom: (factor, cx, cy) => doZoom(factor, cx ?? app?.screen.width/2 ?? 600, cy ?? app?.screen.height/2 ?? 400),
       toggleSnap: () => { snapEnabled = !snapEnabled; snapEnabledStore.set(snapEnabled); },
@@ -1563,6 +1708,45 @@
       if (!relDragActive) return;
       const cur = _toOverlay(clientX, clientY);
       relDragLine = { ...relDragLine, x2: cur.x, y2: cur.y };
+    };
+
+    // Document-level radial menu release (pointer may leave canvas during drag)
+    function onDocRadialUp(e) {
+      if (e.button !== 2 || !_radialMouseDown) return;
+      _radialMouseDown = false;
+      if (radialMenu && _radialHovered >= 0) {
+        const item = RADIAL_ITEMS[_radialHovered];
+        const w = c2w(_radialStartX, _radialStartY);
+        radialMenu = null; _radialHovered = -1;
+        executeRadialItem(item, w.x, w.y);
+      } else {
+        radialMenu = null; _radialHovered = -1;
+      }
+    }
+    function onDocRadialMove(e) {
+      if (!_radialMouseDown || !radialMenu) return;
+      const dx = e.clientX - _radialStartX, dy = e.clientY - _radialStartY;
+      const dist = Math.sqrt(dx*dx+dy*dy);
+      if (dist >= 40) {
+        const dragAngle = Math.atan2(dy, dx);
+        const TOLERANCE = 22 * Math.PI / 180;
+        let best = -1, bestDiff = Infinity;
+        RADIAL_ITEMS.forEach((item, i) => {
+          let diff = dragAngle - (item.angleDeg * Math.PI / 180);
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          if (Math.abs(diff) < bestDiff) { bestDiff = Math.abs(diff); best = i; }
+        });
+        _radialHovered = bestDiff <= TOLERANCE ? best : -1;
+      } else {
+        _radialHovered = -1;
+      }
+    }
+    document.addEventListener('pointerup', onDocRadialUp);
+    document.addEventListener('pointermove', onDocRadialMove);
+    _docRadialCleanup = () => {
+      document.removeEventListener('pointerup', onDocRadialUp);
+      document.removeEventListener('pointermove', onDocRadialMove);
     };
   });
 </script>
@@ -1619,14 +1803,49 @@
     {#each $elementsStore.filter(el => selected.has(el.id)) as el (el.id)}
       {#each RESIZE_HANDLES as handle}
         {@const pos = resizeHandlePos(el, handle, scale)}
+        {@const isCorner = handle === 'nw' || handle === 'ne' || handle === 'sw' || handle === 'se'}
         <div
           class="resize-handle"
+          class:resize-corner={isCorner}
+          class:resize-edge={!isCorner}
           style="left:{pos.left}px;top:{pos.top}px;cursor:{pos.cursor};"
           onpointerdown={e => startResize(e, el.id, handle)}
           role="none"
         ></div>
       {/each}
     {/each}
+  {/if}
+
+  <!-- Radial drag menu -->
+  {#if radialMenu}
+    <!-- backdrop to capture pointer release anywhere -->
+    <div
+      style="position:fixed;inset:0;z-index:8999;"
+      onpointerup={e => { if (e.button === 2) { radialMenu = null; _radialHovered = -1; _radialMouseDown = false; } }}
+      oncontextmenu={e => e.preventDefault()}
+      role="none"
+    ></div>
+    <div class="radial-wrap" style="left:{radialMenu.x}px;top:{radialMenu.y}px;">
+      {#each RADIAL_ITEMS as item, i}
+        {@const angle = item.angleDeg * Math.PI / 180}
+        {@const ix = Math.cos(angle) * RADIAL_RADIUS}
+        {@const iy = Math.sin(angle) * RADIAL_RADIUS}
+        {@const isLeft = Math.cos(angle) < -0.15}
+        <div
+          class="radial-item"
+          class:hovered={_radialHovered === i}
+          class:radial-item-left={isLeft}
+          style="transform:translate(calc({ix}px - 50%), calc({iy}px - 50%));"
+          role="none"
+        >
+          <span class="radial-item-icon" style={item.color ? `color:${item.color}` : ''}>
+            <svg viewBox="0 0 15 15">{@html item.icon}</svg>
+          </span>
+          <span>{item.label}</span>
+        </div>
+      {/each}
+      <div class="radial-center"></div>
+    </div>
   {/if}
 
   <!-- Element context menu -->
@@ -1702,12 +1921,78 @@
   /* ── Resize handles ── */
   .resize-handle {
     position: absolute;
-    width: 10px; height: 10px;
-    background: var(--accent, #4a9eff);
-    border: 1px solid rgba(0,0,0,0.4);
-    border-radius: 2px;
     z-index: 1200;
     pointer-events: all;
+  }
+  /* Corner handles — visible round dots */
+  .resize-corner {
+    width: 10px; height: 10px;
+  }
+  .resize-corner::after {
+    content: '';
+    display: block;
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.55);
+    margin: 2px auto 0;
+    box-shadow: 0 0 0 1px rgba(232,68,10,0.5);
+  }
+  /* Edge handles — invisible hit areas only */
+  .resize-edge {
+    width: 16px; height: 16px;
+    background: transparent;
+  }
+
+  /* ── Radial drag menu ── */
+  .radial-wrap {
+    position: fixed;
+    z-index: 9000;
+    pointer-events: none;
+  }
+  .radial-center {
+    position: absolute;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #E8440A;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+  .radial-item {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px 6px 8px;
+    border-radius: 8px;
+    font-family: 'Geist', sans-serif;
+    font-size: 11.5px;
+    letter-spacing: 0.01em;
+    color: rgba(255,255,255,0.72);
+    white-space: nowrap;
+    background: rgba(13,13,14,0.96);
+    border: 1px solid rgba(255,255,255,0.08);
+    backdrop-filter: blur(40px);
+    -webkit-backdrop-filter: blur(40px);
+    user-select: none;
+    pointer-events: none;
+  }
+  .radial-item.radial-item-left { flex-direction: row-reverse; }
+  .radial-item.hovered {
+    background: rgba(232,68,10,0.12);
+    border-color: rgba(232,68,10,0.35);
+    color: #fff;
+  }
+  .radial-item.hovered .radial-item-icon { color: #E8440A; }
+  .radial-item-icon {
+    width: 14px; height: 14px;
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: rgba(255,255,255,0.22);
+  }
+  .radial-item-icon :global(svg) {
+    width: 14px; height: 14px;
+    stroke: currentColor; fill: none;
+    stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
   }
 
   /* ── Element context menu ── */

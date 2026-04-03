@@ -67,6 +67,7 @@
 
   let { elId, onclose = () => {} } = $props();
 
+  let containerEl; // wraps toolbar + editor — used for outside-click detection
   let editorEl;
   let slashMenuEl = $state(null);
   let editor = null;
@@ -191,7 +192,7 @@
   });
 
   function onDocMousedown(e) {
-    if (editorEl && !editorEl.contains(e.target) && !slashMenuEl?.contains(e.target)) {
+    if (containerEl && !containerEl.contains(e.target) && !slashMenuEl?.contains(e.target)) {
       saveContent();
       onclose();
     }
@@ -200,51 +201,58 @@
 
 <svelte:document onmousedown={onDocMousedown} />
 
-<!-- Formatting toolbar -->
-<div class="ne-toolbar" onmousedown={e => e.preventDefault()}>
-  <button class="ne-tb-btn" onclick={() => editor?.chain().focus().toggleBold().run()}        title="Bold"><svg viewBox="0 0 12 12"><text x="1" y="10" font-weight="700" font-size="11" font-family="serif">B</text></svg></button>
-  <button class="ne-tb-btn" onclick={() => editor?.chain().focus().toggleItalic().run()}      title="Italic"><svg viewBox="0 0 12 12"><text x="2" y="10" font-style="italic" font-size="11" font-family="serif">I</text></svg></button>
-  <button class="ne-tb-btn" onclick={() => editor?.chain().focus().toggleStrike().run()}      title="Strike"><svg viewBox="0 0 12 12"><text x="1" y="10" font-size="10" font-family="serif" text-decoration="line-through">S</text><line x1="0" y1="6" x2="12" y2="6" stroke="currentColor" stroke-width="1"/></svg></button>
-  <div class="ne-tb-sep"></div>
-  <button class="ne-tb-btn" onclick={() => editor?.chain().focus().setHeading({level:1}).run()} title="H1"><svg viewBox="0 0 16 12"><text x="0" y="10" font-weight="600" font-size="10" font-family="sans-serif">H1</text></svg></button>
-  <button class="ne-tb-btn" onclick={() => editor?.chain().focus().setHeading({level:2}).run()} title="H2"><svg viewBox="0 0 16 12"><text x="0" y="10" font-weight="600" font-size="10" font-family="sans-serif">H2</text></svg></button>
-  <div class="ne-tb-sep"></div>
-  <button class="ne-tb-btn" onclick={() => editor?.chain().focus().toggleBulletList().run()}  title="Bullet list"><svg viewBox="0 0 12 12" fill="currentColor"><circle cx="2" cy="3.5" r="1"/><rect x="5" y="3" width="7" height="1"/><circle cx="2" cy="6.5" r="1"/><rect x="5" y="6" width="7" height="1"/><circle cx="2" cy="9.5" r="1"/><rect x="5" y="9" width="7" height="1"/></svg></button>
-  <button class="ne-tb-btn" onclick={() => editor?.chain().focus().toggleTaskList().run()}    title="To-do"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1" y="2" width="4" height="4" rx="0.8"/><line x1="7" y1="4" x2="11" y2="4"/><rect x="1" y="7" width="4" height="4" rx="0.8"/><line x1="7" y1="9" x2="11" y2="9"/></svg></button>
-  <button class="ne-tb-btn" onclick={() => editor?.chain().focus().toggleBlockquote().run()}  title="Quote"><svg viewBox="0 0 12 12" fill="currentColor"><text x="1" y="10" font-size="14" font-family="serif" opacity="0.9">"</text></svg></button>
-  <button class="ne-tb-btn" onclick={() => editor?.chain().focus().toggleCodeBlock().run()}   title="Code"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3.5,3 1,6 3.5,9"/><polyline points="8.5,3 11,6 8.5,9"/></svg></button>
-</div>
-
-<div
-  class="note-editor-wrap"
-  role="textbox"
-  aria-multiline="true"
-  aria-label="Note editor"
-  tabindex="0"
-  bind:this={editorEl}
->
-  <!-- TipTap mounts here — no Svelte children so ProseMirror DOM is never disturbed -->
-</div>
-
-{#if slashOpen && filteredCmds.length > 0}
-  <div class="slash-menu" bind:this={slashMenuEl} role="listbox" aria-label="Block type">
-    {#each filteredCmds as cmd, i}
-      <button
-        class="slash-item"
-        class:active={i === slashIdx}
-        role="option"
-        aria-selected={i === slashIdx}
-        onmousedown={e => { e.preventDefault(); applySlashCmd(cmd); }}
-        onmouseenter={() => { slashIdx = i; }}
-      >
-        <span class="slash-icon">{cmd.icon}</span>
-        <span class="slash-label">{cmd.label}</span>
-      </button>
-    {/each}
+<div class="ne-container" bind:this={containerEl} role="none">
+  <!-- Formatting toolbar -->
+  <div class="ne-toolbar" onmousedown={e => e.preventDefault()}>
+    <button class="ne-tb-btn" onmousedown={e => { e.preventDefault(); editor?.chain().focus().toggleBold().run(); }}        title="Bold"><svg viewBox="0 0 12 12"><text x="1" y="10" font-weight="700" font-size="11" font-family="serif">B</text></svg></button>
+    <button class="ne-tb-btn" onmousedown={e => { e.preventDefault(); editor?.chain().focus().toggleItalic().run(); }}      title="Italic"><svg viewBox="0 0 12 12"><text x="2" y="10" font-style="italic" font-size="11" font-family="serif">I</text></svg></button>
+    <button class="ne-tb-btn" onmousedown={e => { e.preventDefault(); editor?.chain().focus().toggleStrike().run(); }}      title="Strike"><svg viewBox="0 0 12 12"><text x="1" y="10" font-size="10" font-family="serif" text-decoration="line-through">S</text><line x1="0" y1="6" x2="12" y2="6" stroke="currentColor" stroke-width="1"/></svg></button>
+    <div class="ne-tb-sep"></div>
+    <button class="ne-tb-btn" onmousedown={e => { e.preventDefault(); editor?.chain().focus().setHeading({level:1}).run(); }} title="H1"><svg viewBox="0 0 16 12"><text x="0" y="10" font-weight="600" font-size="10" font-family="sans-serif">H1</text></svg></button>
+    <button class="ne-tb-btn" onmousedown={e => { e.preventDefault(); editor?.chain().focus().setHeading({level:2}).run(); }} title="H2"><svg viewBox="0 0 16 12"><text x="0" y="10" font-weight="600" font-size="10" font-family="sans-serif">H2</text></svg></button>
+    <div class="ne-tb-sep"></div>
+    <button class="ne-tb-btn" onmousedown={e => { e.preventDefault(); editor?.chain().focus().toggleBulletList().run(); }}  title="Bullet list"><svg viewBox="0 0 12 12" fill="currentColor"><circle cx="2" cy="3.5" r="1"/><rect x="5" y="3" width="7" height="1"/><circle cx="2" cy="6.5" r="1"/><rect x="5" y="6" width="7" height="1"/><circle cx="2" cy="9.5" r="1"/><rect x="5" y="9" width="7" height="1"/></svg></button>
+    <button class="ne-tb-btn" onmousedown={e => { e.preventDefault(); editor?.chain().focus().toggleTaskList().run(); }}    title="To-do"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1" y="2" width="4" height="4" rx="0.8"/><line x1="7" y1="4" x2="11" y2="4"/><rect x="1" y="7" width="4" height="4" rx="0.8"/><line x1="7" y1="9" x2="11" y2="9"/></svg></button>
+    <button class="ne-tb-btn" onmousedown={e => { e.preventDefault(); editor?.chain().focus().toggleBlockquote().run(); }}  title="Quote"><svg viewBox="0 0 12 12" fill="currentColor"><text x="1" y="10" font-size="14" font-family="serif" opacity="0.9">"</text></svg></button>
+    <button class="ne-tb-btn" onmousedown={e => { e.preventDefault(); editor?.chain().focus().toggleCodeBlock().run(); }}   title="Code"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3.5,3 1,6 3.5,9"/><polyline points="8.5,3 11,6 8.5,9"/></svg></button>
   </div>
-{/if}
+
+  <div
+    class="note-editor-wrap"
+    role="textbox"
+    aria-multiline="true"
+    aria-label="Note editor"
+    tabindex="0"
+    bind:this={editorEl}
+  >
+    <!-- TipTap mounts here — no Svelte children so ProseMirror DOM is never disturbed -->
+  </div>
+
+  {#if slashOpen && filteredCmds.length > 0}
+    <div class="slash-menu" bind:this={slashMenuEl} role="listbox" aria-label="Block type">
+      {#each filteredCmds as cmd, i}
+        <button
+          class="slash-item"
+          class:active={i === slashIdx}
+          role="option"
+          aria-selected={i === slashIdx}
+          onmousedown={e => { e.preventDefault(); applySlashCmd(cmd); }}
+          onmouseenter={() => { slashIdx = i; }}
+        >
+          <span class="slash-icon">{cmd.icon}</span>
+          <span class="slash-label">{cmd.label}</span>
+        </button>
+      {/each}
+    </div>
+  {/if}
+</div>
 
 <style>
+  .ne-container {
+    display: flex; flex-direction: column;
+    width: 100%; height: 100%;
+    min-height: 0;
+  }
   .ne-toolbar {
     display: flex; align-items: center; gap: 1px;
     padding: 4px 8px;
