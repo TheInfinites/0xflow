@@ -7,9 +7,10 @@
   import AudioPlayer from './AudioPlayer.svelte';
   import DrawCard    from './DrawCard.svelte';
   import NoteCard    from './NoteCard.svelte';
+  import TodoCard    from './TodoCard.svelte';
 
   const WORLD_OFFSET = 3000;
-  const MEDIA_TYPES = new Set(['image', 'video', 'audio', 'draw', 'note', 'ai-note']);
+  const MEDIA_TYPES = new Set(['image', 'video', 'audio', 'draw', 'note', 'ai-note', 'todo']);
 
   let scale    = $derived($scaleStore);
   let px       = $derived($pxStore);
@@ -26,7 +27,7 @@
 
 {#each elements as el (el.id)}
   {@const r = rect(el)}
-  {@const isCard = el.type === 'note' || el.type === 'ai-note' || el.type === 'image' || el.type === 'draw' || el.type === 'video' || el.type === 'audio'}
+  {@const isCard = el.type === 'note' || el.type === 'ai-note' || el.type === 'todo' || el.type === 'image' || el.type === 'draw' || el.type === 'video' || el.type === 'audio'}
   {@const isVideo = el.type === 'video'}
   {@const isEditing = el.id === activeId}
   <div
@@ -46,6 +47,8 @@
       <AudioPlayer {el} />
     {:else if el.type === 'draw'}
       <DrawCard {el} />
+    {:else if el.type === 'todo'}
+      <TodoCard {el} />
     {/if}
   </div>
 {/each}

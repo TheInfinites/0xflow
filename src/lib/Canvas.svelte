@@ -5,6 +5,7 @@
   import { elementsStore, strokesStore, relationsStore, snapshot, undo, redo, canUndo, canRedo } from '../stores/elements.js';
   import { scaleStore, pxStore, pyStore, setCurTool, getCurTool, setSelected, setScale, setPx, setPy, activeEditorIdStore, setActiveEditorId, snapEnabledStore, isLightStore } from '../stores/canvas.js';
   import { activeProjectIdStore } from '../stores/projects.js';
+  import { brainstormOpenStore } from '../stores/ui.js';
   import NoteOverlay   from './NoteOverlay.svelte';
   import MediaOverlay  from './MediaOverlay.svelte';
   import BrainstormPanel from './BrainstormPanel.svelte';
@@ -66,6 +67,9 @@
   let resizeHandle = null;   // 'n'|'ne'|'e'|'se'|'s'|'sw'|'w'|'nw'
   let resizeEl = null;       // element id being resized
   let resizeOrigin = null;   // { el snapshot, startClientX, startClientY }
+
+  // Selected relation
+  let selectedRelId = $state(null);
 
   // Context menu state
   let ctxMenu = $state(null); // { x, y, elId } or null
@@ -148,7 +152,12 @@
     // Subscribe to store changes — unsubs collected for top-level onDestroy
     _unsubEl    = elementsStore.subscribe(renderElements);
     _unsubSt    = strokesStore.subscribe(renderStrokes);
-    _unsubTheme = isLightStore.subscribe(() => { renderElements($elementsStore); renderStrokes($strokesStore); });
+    _unsubTheme = isLightStore.subscribe((isLight) => {
+      if (app) app.renderer.background.color = isLight ? 0xf0ede8 : 0x0e0e0f;
+      drawDotGrid();
+      renderElements($elementsStore);
+      renderStrokes($strokesStore);
+    });
 
     // Initial render from any loaded state
     renderElements($elementsStore);
@@ -368,8 +377,8 @@
     const isSelected = selected.has(el.id);
     const w = el.width || 240, h = el.height || 180;
 
-    // Notes/ai-notes are rendered as DOM overlays — Pixi just needs a transparent hit area
-    if (el.type === 'note' || el.type === 'ai-note') {
+    // Notes/ai-notes/todos are rendered as DOM overlays — Pixi just needs a transparent hit area
+    if (el.type === 'note' || el.type === 'ai-note' || el.type === 'todo') {
       g.rect(0, 0, w, h).fill({ color: 0x000000, alpha: 0 });
       return g;
     }
@@ -637,7 +646,18 @@
 
       let g = relGraphics.get(rel.id);
       if (!g) {
-        g = new Graphics(); relLayer.addChild(g); relGraphics.set(rel.id, g);
+        g = new Graphics();
+        g.eventMode = 'static';
+        g.cursor = 'pointer';
+        const relId = rel.id;
+        g.on('pointerdown', (e) => {
+          if (e.button !== 0) return;
+          e.stopPropagation();
+          selectedRelId = selectedRelId === relId ? null : relId;
+          selected = new Set(); setSelected(new Set());
+        });
+        relLayer.addChild(g);
+        relGraphics.set(rel.id, g);
       }
       g.clear();
       // Cubic bezier
@@ -648,10 +668,18 @@
       const c1x = ax + dx*0.25 + nx*bulge, c1y = ay + dy*0.25 + ny*bulge;
       const c2x = ax + dx*0.75 - nx*bulge, c2y = ay + dy*0.75 - ny*bulge;
       const isLight = $isLightStore;
-      const color = isLight ? 0x000000 : 0xffffff;
+      const isSel = rel.id === selectedRelId;
+      const color = isSel ? 0xE8440A : (isLight ? 0x000000 : 0xffffff);
+      const alpha = isSel ? 0.85 : 0.35;
+      const width = isSel ? 2.5 : 1.5;
+      // Invisible wide hit area
       g.moveTo(ax, ay);
       g.bezierCurveTo(c1x, c1y, c2x, c2y, bx, by);
-      g.stroke({ color, width: 1.5, alpha: 0.35, cap: 'round' });
+      g.stroke({ color: 0xffffff, width: 12, alpha: 0 });
+      // Visible line
+      g.moveTo(ax, ay);
+      g.bezierCurveTo(c1x, c1y, c2x, c2y, bx, by);
+      g.stroke({ color, width, alpha, cap: 'round' });
     }
     for (const id of existing) {
       const g = relGraphics.get(id);
@@ -711,7 +739,8 @@
       makeLabel(wp.x, wp.y); return;
     }
     if (curTool === 'select') {
-      // Marquee start on empty canvas
+      // Marquee start on empty canvas — clear relation selection
+      selectedRelId = null;
       marqueeActive = true;
       marqueeStart = wp;
     }
@@ -821,7 +850,7 @@
     const hit = app?.renderer?.events?.rootBoundary?.hitTest?.(e.clientX - r.left, e.clientY - r.top);
     if (!hit?.label) return;
     const el = $elementsStore.find(x => x.id === hit.label);
-    if (el && (el.type === 'note' || el.type === 'ai-note' || el.type === 'label')) {
+    if (el && (el.type === 'note' || el.type === 'ai-note' || el.type === 'label' || el.type === 'todo')) {
       setActiveEditorId(el.id);
     }
   }
@@ -844,6 +873,7 @@
     if (e.button !== 0) return;
     if (curTool !== 'select') return;
 
+    selectedRelId = null;
     if (!e.shiftKey && !selected.has(id)) {
       clearSelection();
     }
@@ -1101,6 +1131,33 @@
     return id;
   }
 
+  function makeDrawCard(wx, wy) {
+    snapshot();
+    const id = 'draw_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+    const { x, y } = snapXY(wx - 200, wy - 150);
+    elementsStore.update(els => [...els, {
+      id, type: 'draw',
+      x, y, width: 400, height: 300, zIndex: Date.now(),
+      pinned: false, locked: false, votes: 0, reactions: [],
+      color: null, content: { strokes: [] },
+    }]);
+    return id;
+  }
+
+  function makeTodo(wx, wy) {
+    snapshot();
+    const id = 'todo_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+    const { x, y } = snapXY(wx - 110, wy - 70);
+    elementsStore.update(els => [...els, {
+      id, type: 'todo',
+      x, y, width: 220, height: 200, zIndex: Date.now(),
+      pinned: false, locked: false, votes: 0, reactions: [],
+      color: null, content: { todoTitle: '', todoItems: [] },
+    }]);
+    setActiveEditorId(id);
+    return id;
+  }
+
   // ── Delete selected ──────────────────────────
   function deleteSelected() {
     if (!selected.size) return;
@@ -1128,9 +1185,12 @@
       if (e.key === 'g') { e.preventDefault(); groupSelected(); return; }
     }
 
-    if (e.key === 'Escape')   { clearSelection(); return; }
+    if (e.key === 'Escape')   { clearSelection(); selectedRelId = null; return; }
     if (e.key === 'z' && !e.ctrlKey && !e.metaKey) { if (selected.size) zoomToSelection(); else zoomToFit(); return; }
-    if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelected(); return; }
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (selectedRelId) { snapshot(); relationsStore.update(rs => rs.filter(r => r.id !== selectedRelId)); selectedRelId = null; return; }
+      deleteSelected(); return;
+    }
     if (e.key === '0')        { zoomToFit(); return; }
     if (e.key === '+' || e.key === '=') { doZoom(1/0.92, app.screen.width/2, app.screen.height/2); return; }
     if (e.key === '-')        { doZoom(0.92, app.screen.width/2, app.screen.height/2); return; }
@@ -1142,6 +1202,10 @@
     // Create shortcuts
     if (e.key === 'n' || e.key === 'N') { const wp = c2w(lastMouseClient.x, lastMouseClient.y); makeNote(wp.x, wp.y); }
     if (e.key === 'i' || e.key === 'I') { const wp = c2w(lastMouseClient.x, lastMouseClient.y); makeAiNote(wp.x, wp.y); }
+    if (e.key === 'o' || e.key === 'O') { const wp = c2w(lastMouseClient.x, lastMouseClient.y); makeTodo(wp.x, wp.y); }
+    if (e.key === 'w' || e.key === 'W') { const wp = c2w(lastMouseClient.x, lastMouseClient.y); makeDrawCard(wp.x, wp.y); }
+    if (e.key === 'b' || e.key === 'B') { brainstormOpenStore.update(v => !v); }
+    if (e.ctrlKey && e.key === 'f') { e.preventDefault(); window.toggleSearch?.(); }
     if (e.key === 'g' || e.key === 'G') { snapEnabled = !snapEnabled; snapEnabledStore.set(snapEnabled); window.showToast?.(snapEnabled ? 'Snap on' : 'Snap off'); }
   }
 
@@ -1478,7 +1542,7 @@
   $effect(() => {
     window._pixiCanvas = {
       serializePixiCanvas, restorePixiCanvas,
-      makeNote, makeAiNote, makeLabel,
+      makeNote, makeAiNote, makeLabel, makeTodo, makeDrawCard,
       zoomToFit, resetView, zoomToSelection, zoomToElement,
       deleteSelected, selectAll, duplicateSelected,
       copySelected, pasteClipboard,

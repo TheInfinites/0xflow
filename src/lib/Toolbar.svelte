@@ -87,7 +87,6 @@
     background: rgba(10,10,10,0.97); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
     border: 1px solid rgba(255,255,255,0.1); border-top: 2px solid rgba(255,255,255,0.07);
     border-radius: 12px; padding: 4px 5px;
-    box-shadow: 0 -2px 40px rgba(0,0,0,0.5);
   }
   .t {
     width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;

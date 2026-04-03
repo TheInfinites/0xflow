@@ -1588,6 +1588,52 @@ body.on-canvas.light .stroke-wrap.stroke-selected { filter: drop-shadow(0 0 5px 
 .ProseMirror li[data-type="taskItem"] > div { flex: 1; margin: 0; }
 .ProseMirror li[data-type="taskItem"][data-checked="true"] > div { opacity: 0.38; text-decoration: line-through; }
 
+/* ── Light-mode canvas overrides ──────────────────────────── */
+
+/* todo cards always have dark bg on canvas */
+body.on-canvas.light .todo-badge { color: rgba(255,255,255,0.35); }
+body.on-canvas.light .todo-title { color: rgba(255,255,255,0.85); }
+body.on-canvas.light .todo-title::placeholder { color: rgba(255,255,255,0.2); }
+body.on-canvas.light .todo-cb { border-color: rgba(255,255,255,0.25); }
+body.on-canvas.light .todo-item-text { color: rgba(255,255,255,0.75); }
+body.on-canvas.light .todo-item-text::placeholder { color: rgba(255,255,255,0.2); }
+body.on-canvas.light .todo-item.checked .todo-item-text { color: rgba(255,255,255,0.25); }
+body.on-canvas.light .todo-item-del { color: rgba(255,255,255,0.2); }
+body.on-canvas.light .todo-add { color: rgba(255,255,255,0.18); }
+body.on-canvas.light .todo-add:hover { color: rgba(255,255,255,0.45); }
+body.on-canvas.light .todo-progress { background: rgba(255,255,255,0.06); }
+
+/* command palette — light mode */
+body.on-canvas.light .cmd-input-wrap { border-bottom-color: rgba(0,0,0,0.06); }
+body.on-canvas.light .cmd-input-wrap svg { stroke: rgba(0,0,0,0.25); }
+body.on-canvas.light .cmd-hint { color: rgba(0,0,0,0.2); border-color: rgba(0,0,0,0.1); }
+body.on-canvas.light .cmd-section { color: rgba(0,0,0,0.25); }
+body.on-canvas.light .cmd-item:hover, body.on-canvas.light .cmd-item.active { background: rgba(0,0,0,0.04); }
+body.on-canvas.light .cmd-item.active { background: rgba(232,68,10,0.06); }
+body.on-canvas.light .cmd-icon { background: rgba(0,0,0,0.03); border-color: rgba(0,0,0,0.04); }
+body.on-canvas.light .cmd-item.active .cmd-icon { background: rgba(232,68,10,0.08); border-color: rgba(232,68,10,0.12); }
+body.on-canvas.light .cmd-icon svg { stroke: rgba(0,0,0,0.4); }
+body.on-canvas.light .cmd-item.active .cmd-icon svg { stroke: #E8440A; }
+body.on-canvas.light .cmd-label { color: rgba(0,0,0,0.7); }
+body.on-canvas.light .cmd-item.active .cmd-label { color: rgba(0,0,0,0.9); }
+body.on-canvas.light .cmd-shortcut { color: rgba(0,0,0,0.2); background: rgba(0,0,0,0.03); border-color: rgba(0,0,0,0.06); }
+body.on-canvas.light .cmd-footer { border-top-color: rgba(0,0,0,0.05); color: rgba(0,0,0,0.2); }
+body.on-canvas.light .cmd-footer kbd { background: rgba(0,0,0,0.03); border-color: rgba(0,0,0,0.08); }
+
+/* bookmark panel — light mode */
+body.on-canvas.light .bkm-header { color: rgba(0,0,0,0.25); }
+body.on-canvas.light .bkm-label { color: rgba(0,0,0,0.65); }
+body.on-canvas.light .bkm-btn { background: rgba(0,0,0,0.04); border-color: rgba(0,0,0,0.08); color: rgba(0,0,0,0.45); }
+body.on-canvas.light .bkm-add-btn { background: rgba(0,0,0,0.03); border-color: rgba(0,0,0,0.08); color: rgba(0,0,0,0.4); }
+body.on-canvas.light .bkm-empty { color: rgba(0,0,0,0.2); }
+
+/* resize handle dots — light mode */
+body.on-canvas.light .rh-nw::after, body.on-canvas.light .rh-ne::after,
+body.on-canvas.light .rh-sw::after, body.on-canvas.light .rh-se::after { background: rgba(0,0,0,0.35); }
+
+/* collapse button — light mode */
+body.on-canvas.light .collapse-btn svg { stroke: rgba(0,0,0,0.5); }
+
 /* transitions */
 html, body, #bar, .note, .img-card, .bar-btn, .frame, #topbar {
   transition: background 0.2s, border-color 0.2s, color 0.2s;
