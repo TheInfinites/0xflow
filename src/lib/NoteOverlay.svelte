@@ -38,7 +38,7 @@
   {:else}
     <div
       class="note-overlay"
-      style="left:{rect.left}px; top:{rect.top}px; width:{rect.width * scale}px; height:{rect.height * scale}px;"
+      style="left:{rect.left}px; top:{rect.top}px; width:{rect.width}px; height:{rect.height}px; transform:scale({scale}); transform-origin:top left;"
     >
       <NoteEditor elId={activeEl.id} onclose={closeEditor} />
     </div>
@@ -51,10 +51,12 @@
     z-index: 600;
     pointer-events: auto;
     box-sizing: border-box;
-    background: #1a1a1b;
-    border: 1px solid rgba(74,158,255,0.8);
-    box-shadow: 0 0 0 1px rgba(74,158,255,0.3);
-    border-radius: 8px;
-    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    background: #141415;
+    border: 1px solid rgba(255,255,255,0.1);
+    box-shadow: 0 0 0 2px rgba(74,158,255,0.25), 0 8px 32px rgba(0,0,0,0.6);
+    border-radius: 10px;
+    overflow: visible;
   }
 </style>

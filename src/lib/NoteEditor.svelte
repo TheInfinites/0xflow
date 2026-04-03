@@ -9,20 +9,71 @@
   import Underline from '@tiptap/extension-underline';
   import { elementsStore, snapshot } from '../stores/elements.js';
 
-  // ── Props ────────────────────────────────────
+  // Custom TaskItem that renders our own checkbox DOM — no native input
+  const CustomTaskItem = TaskItem.extend({
+    addNodeView() {
+      return ({ node, getPos, editor }) => {
+        const li = document.createElement('li');
+        li.setAttribute('data-type', 'taskItem');
+        li.setAttribute('data-checked', node.attrs.checked ? 'true' : 'false');
+        li.style.cssText = 'display:flex;align-items:center;gap:8px;margin:4px 0;list-style:none;';
+
+        const box = document.createElement('span');
+        box.className = 'task-box';
+        box.style.cssText = `
+          flex-shrink:0; width:13px; height:13px;
+          border:1px solid rgba(255,255,255,${node.attrs.checked ? '0.45' : '0.18'});
+          border-radius:3px; cursor:pointer; display:flex;
+          align-items:center; justify-content:center;
+          background:${node.attrs.checked ? 'rgba(255,255,255,0.1)' : 'transparent'};
+          transition: border-color 0.1s, background 0.1s;
+          font-size:9px; color:rgba(255,255,255,0.8); user-select:none;
+        `;
+        box.textContent = node.attrs.checked ? '✓' : '';
+
+        box.addEventListener('mousedown', e => {
+          e.preventDefault();
+          if (editor.isEditable && typeof getPos === 'function') {
+            editor.chain().focus().command(({ tr }) => {
+              tr.setNodeMarkup(getPos(), undefined, { checked: !node.attrs.checked });
+              return true;
+            }).run();
+          }
+        });
+
+        const content = document.createElement('div');
+        content.style.cssText = `flex:1; ${node.attrs.checked ? 'opacity:0.38;text-decoration:line-through;' : ''}`;
+
+        li.append(box, content);
+
+        return {
+          dom: li,
+          contentDOM: content,
+          update(updatedNode) {
+            if (updatedNode.type !== node.type) return false;
+            const checked = updatedNode.attrs.checked;
+            li.setAttribute('data-checked', checked ? 'true' : 'false');
+            box.style.borderColor = `rgba(255,255,255,${checked ? '0.45' : '0.18'})`;
+            box.style.background = checked ? 'rgba(255,255,255,0.1)' : 'transparent';
+            box.textContent = checked ? '✓' : '';
+            content.style.opacity = checked ? '0.38' : '1';
+            content.style.textDecoration = checked ? 'line-through' : 'none';
+            return true;
+          },
+        };
+      };
+    },
+  });
+
   let { elId, onclose = () => {} } = $props();
 
-  // ── DOM refs ─────────────────────────────────
   let editorEl;
-
-  // ── TipTap instance ──────────────────────────
+  let slashMenuEl = $state(null);
   let editor = null;
 
-  // ── Slash menu state ─────────────────────────
-  let slashOpen   = $state(false);
-  let slashQuery  = $state('');
-  let slashIdx    = $state(0);
-  let slashMenuEl = $state(null);
+  let slashOpen  = $state(false);
+  let slashQuery = $state('');
+  let slashIdx   = $state(0);
 
   const SLASH_COMMANDS = [
     { label: 'Text',        icon: '¶',   run: e => e.chain().focus().setParagraph().run() },
@@ -43,7 +94,6 @@
       : SLASH_COMMANDS
   );
 
-  // ── Helpers ──────────────────────────────────
   function getEl() {
     return $elementsStore.find(e => e.id === elId) ?? null;
   }
@@ -57,7 +107,6 @@
     );
   }
 
-  // ── Slash menu helpers ────────────────────────
   function openSlash(query) {
     slashQuery = query;
     slashIdx   = 0;
@@ -65,29 +114,42 @@
   }
 
   function closeSlash() {
-    slashOpen = false;
+    slashOpen  = false;
     slashQuery = '';
-    slashIdx = 0;
+    slashIdx   = 0;
   }
 
   function applySlashCmd(cmd) {
     closeSlash();
-    // Delete the slash + query text
     const { state } = editor;
     const { from } = state.selection;
     const textBefore = state.doc.textBetween(Math.max(0, from - 30), from);
     const slashMatch = textBefore.match(/\/[^/\s]*$/);
     if (slashMatch) {
-      editor.chain()
-        .focus()
-        .deleteRange({ from: from - slashMatch[0].length, to: from })
-        .run();
+      editor.chain().focus().deleteRange({ from: from - slashMatch[0].length, to: from }).run();
     }
     cmd.run(editor);
     saveContent();
   }
 
-  // ── Mount ────────────────────────────────────
+  // Keydown listener attached directly to ProseMirror DOM — fires before ProseMirror
+  function onProseMirrorKeydown(e) {
+    if (!slashOpen) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault(); e.stopPropagation();
+      slashIdx = (slashIdx + 1) % filteredCmds.length;
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault(); e.stopPropagation();
+      slashIdx = (slashIdx - 1 + filteredCmds.length) % filteredCmds.length;
+    } else if (e.key === 'Enter') {
+      e.preventDefault(); e.stopPropagation();
+      if (filteredCmds[slashIdx]) applySlashCmd(filteredCmds[slashIdx]);
+    } else if (e.key === 'Escape') {
+      e.preventDefault(); e.stopPropagation();
+      closeSlash();
+    }
+  }
+
   onMount(() => {
     const el = getEl();
     const initialContent = el?.content?.blocks ?? { type: 'doc', content: [{ type: 'paragraph' }] };
@@ -99,12 +161,11 @@
         Underline,
         CodeBlock,
         TaskList,
-        TaskItem.configure({ nested: true }),
+        CustomTaskItem.configure({ nested: true }),
         Placeholder.configure({ placeholder: 'Type / for commands…' }),
       ],
       content: initialContent,
       onUpdate: () => saveContent(),
-      // Slash menu detection
       onTransaction: ({ editor: e }) => {
         const { state } = e;
         const { from } = state.selection;
@@ -118,35 +179,19 @@
       },
     });
 
-    editorEl.querySelector('.ProseMirror')?.focus();
+    const pm = editorEl.querySelector('.ProseMirror');
+    pm?.addEventListener('keydown', onProseMirrorKeydown, true);
+    pm?.focus();
   });
 
   onDestroy(() => {
+    const pm = editorEl?.querySelector?.('.ProseMirror');
+    pm?.removeEventListener('keydown', onProseMirrorKeydown, true);
     editor?.destroy();
   });
 
-  // ── Keyboard handling for slash menu ─────────
-  function onEditorKeydown(e) {
-    if (!slashOpen) return;
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      slashIdx = (slashIdx + 1) % filteredCmds.length;
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      slashIdx = (slashIdx - 1 + filteredCmds.length) % filteredCmds.length;
-    } else if (e.key === 'Enter') {
-      if (filteredCmds[slashIdx]) {
-        e.preventDefault();
-        applySlashCmd(filteredCmds[slashIdx]);
-      }
-    } else if (e.key === 'Escape') {
-      closeSlash();
-    }
-  }
-
-  // Close editor on outside click
   function onDocMousedown(e) {
-    if (editorEl && !editorEl.contains(e.target)) {
+    if (editorEl && !editorEl.contains(e.target) && !slashMenuEl?.contains(e.target)) {
       saveContent();
       onclose();
     }
@@ -155,16 +200,30 @@
 
 <svelte:document onmousedown={onDocMousedown} />
 
+<!-- Formatting toolbar -->
+<div class="ne-toolbar" onmousedown={e => e.preventDefault()}>
+  <button class="ne-tb-btn" onclick={() => editor?.chain().focus().toggleBold().run()}        title="Bold"><svg viewBox="0 0 12 12"><text x="1" y="10" font-weight="700" font-size="11" font-family="serif">B</text></svg></button>
+  <button class="ne-tb-btn" onclick={() => editor?.chain().focus().toggleItalic().run()}      title="Italic"><svg viewBox="0 0 12 12"><text x="2" y="10" font-style="italic" font-size="11" font-family="serif">I</text></svg></button>
+  <button class="ne-tb-btn" onclick={() => editor?.chain().focus().toggleStrike().run()}      title="Strike"><svg viewBox="0 0 12 12"><text x="1" y="10" font-size="10" font-family="serif" text-decoration="line-through">S</text><line x1="0" y1="6" x2="12" y2="6" stroke="currentColor" stroke-width="1"/></svg></button>
+  <div class="ne-tb-sep"></div>
+  <button class="ne-tb-btn" onclick={() => editor?.chain().focus().setHeading({level:1}).run()} title="H1"><svg viewBox="0 0 16 12"><text x="0" y="10" font-weight="600" font-size="10" font-family="sans-serif">H1</text></svg></button>
+  <button class="ne-tb-btn" onclick={() => editor?.chain().focus().setHeading({level:2}).run()} title="H2"><svg viewBox="0 0 16 12"><text x="0" y="10" font-weight="600" font-size="10" font-family="sans-serif">H2</text></svg></button>
+  <div class="ne-tb-sep"></div>
+  <button class="ne-tb-btn" onclick={() => editor?.chain().focus().toggleBulletList().run()}  title="Bullet list"><svg viewBox="0 0 12 12" fill="currentColor"><circle cx="2" cy="3.5" r="1"/><rect x="5" y="3" width="7" height="1"/><circle cx="2" cy="6.5" r="1"/><rect x="5" y="6" width="7" height="1"/><circle cx="2" cy="9.5" r="1"/><rect x="5" y="9" width="7" height="1"/></svg></button>
+  <button class="ne-tb-btn" onclick={() => editor?.chain().focus().toggleTaskList().run()}    title="To-do"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1" y="2" width="4" height="4" rx="0.8"/><line x1="7" y1="4" x2="11" y2="4"/><rect x="1" y="7" width="4" height="4" rx="0.8"/><line x1="7" y1="9" x2="11" y2="9"/></svg></button>
+  <button class="ne-tb-btn" onclick={() => editor?.chain().focus().toggleBlockquote().run()}  title="Quote"><svg viewBox="0 0 12 12" fill="currentColor"><text x="1" y="10" font-size="14" font-family="serif" opacity="0.9">"</text></svg></button>
+  <button class="ne-tb-btn" onclick={() => editor?.chain().focus().toggleCodeBlock().run()}   title="Code"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3.5,3 1,6 3.5,9"/><polyline points="8.5,3 11,6 8.5,9"/></svg></button>
+</div>
+
 <div
   class="note-editor-wrap"
   role="textbox"
   aria-multiline="true"
   aria-label="Note editor"
   tabindex="0"
-  onkeydown={onEditorKeydown}
   bind:this={editorEl}
 >
-  <!-- TipTap mounts here -->
+  <!-- TipTap mounts here — no Svelte children so ProseMirror DOM is never disturbed -->
 </div>
 
 {#if slashOpen && filteredCmds.length > 0}
@@ -186,86 +245,101 @@
 {/if}
 
 <style>
+  .ne-toolbar {
+    display: flex; align-items: center; gap: 1px;
+    padding: 4px 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    flex-shrink: 0;
+  }
+  .ne-tb-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px;
+    background: none; border: none; border-radius: 4px;
+    color: rgba(255,255,255,0.3);
+    cursor: pointer; padding: 0; flex-shrink: 0;
+    transition: color 0.1s, background 0.1s;
+  }
+  .ne-tb-btn:hover { color: rgba(255,255,255,0.85); background: rgba(255,255,255,0.05); }
+  .ne-tb-btn svg { width: 12px; height: 12px; display: block; fill: currentColor; }
+  .ne-tb-sep {
+    width: 1px; height: 14px;
+    background: rgba(255,255,255,0.08);
+    margin: 0 3px; flex-shrink: 0;
+  }
+
   .note-editor-wrap {
-    width: 100%;
-    height: 100%;
+    flex: 1;
     overflow-y: auto;
-    padding: 12px 14px;
+    padding: 10px 14px 12px;
     box-sizing: border-box;
     cursor: text;
     pointer-events: auto;
+    min-height: 0;
   }
 
-  /* ProseMirror base */
   :global(.ProseMirror) {
     outline: none;
     min-height: 60px;
     font-size: 13px;
-    line-height: 1.55;
-    color: var(--text-primary, #e0e0e0);
+    line-height: 1.6;
+    color: rgba(255,255,255,0.82);
     font-family: 'Geist', sans-serif;
+    font-weight: 300;
   }
 
-  :global(.ProseMirror p) { margin: 0 0 4px; }
-  :global(.ProseMirror h1) { font-size: 18px; font-weight: 600; margin: 6px 0 4px; }
-  :global(.ProseMirror h2) { font-size: 15px; font-weight: 600; margin: 5px 0 3px; }
-  :global(.ProseMirror h3) { font-size: 13px; font-weight: 600; margin: 4px 0 2px; }
-  :global(.ProseMirror ul, .ProseMirror ol) { margin: 2px 0; padding-left: 20px; }
+  :global(.ProseMirror p) { margin: 0 0 2px; }
+  :global(.ProseMirror h1) { font-size: 16px; font-weight: 600; color: rgba(255,255,255,0.95); margin: 8px 0 3px; letter-spacing: -0.01em; }
+  :global(.ProseMirror h2) { font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.9); margin: 6px 0 2px; }
+  :global(.ProseMirror h3) { font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.85); margin: 4px 0 2px; }
+  :global(.ProseMirror ul, .ProseMirror ol) { margin: 2px 0; padding-left: 16px; }
   :global(.ProseMirror li) { margin: 1px 0; }
   :global(.ProseMirror blockquote) {
-    border-left: 2px solid var(--accent, #4a9eff);
+    border-left: 2px solid rgba(255,255,255,0.15);
     margin: 4px 0; padding-left: 10px;
-    color: var(--text-secondary, #aaa);
+    color: rgba(255,255,255,0.45);
+    font-style: italic;
   }
   :global(.ProseMirror pre) {
-    background: rgba(0,0,0,0.3);
-    border-radius: 4px; padding: 8px;
+    background: rgba(0,0,0,0.4);
+    border-radius: 4px; padding: 8px 10px;
     font-family: 'DM Mono', monospace;
     font-size: 11px; overflow-x: auto;
+    color: rgba(255,255,255,0.7);
+    margin: 4px 0;
   }
   :global(.ProseMirror code) {
     font-family: 'DM Mono', monospace;
     font-size: 11px;
-    background: rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.07);
+    color: rgba(255,255,255,0.7);
     padding: 1px 4px; border-radius: 3px;
   }
   :global(.ProseMirror hr) {
     border: none;
-    border-top: 1px solid var(--border, #2a2a2a);
+    border-top: 1px solid rgba(255,255,255,0.08);
     margin: 8px 0;
   }
-  :global(.ProseMirror strong) { font-weight: 600; }
-  :global(.ProseMirror em) { font-style: italic; }
-  :global(.ProseMirror u) { text-decoration: underline; }
-  :global(.ProseMirror s) { text-decoration: line-through; }
+  :global(.ProseMirror strong) { font-weight: 600; color: rgba(255,255,255,0.95); }
+  :global(.ProseMirror em) { font-style: italic; color: rgba(255,255,255,0.65); }
+  :global(.ProseMirror u) { text-decoration: underline; text-underline-offset: 2px; }
+  :global(.ProseMirror s) { text-decoration: line-through; opacity: 0.5; }
 
-  /* Task list */
-  :global(.ProseMirror ul[data-type="taskList"]) { list-style: none; padding-left: 4px; }
-  :global(.ProseMirror li[data-type="taskItem"]) { display: flex; align-items: flex-start; gap: 6px; }
-  :global(.ProseMirror li[data-type="taskItem"] > label) { flex-shrink: 0; padding-top: 2px; }
-  :global(.ProseMirror li[data-type="taskItem"] > label input[type="checkbox"]) {
-    width: 13px; height: 13px; cursor: pointer; accent-color: var(--accent, #4a9eff);
-  }
-  :global(.ProseMirror li[data-type="taskItem"][data-checked="true"] > div) {
-    text-decoration: line-through; opacity: 0.55;
-  }
+  /* task list styles live in style.css for reliable global application */
 
-  /* Placeholder */
   :global(.ProseMirror p.is-editor-empty:first-child::before) {
     content: attr(data-placeholder);
-    color: var(--text-faint, #555);
+    color: rgba(255,255,255,0.18);
     pointer-events: none;
     height: 0; float: left;
+    font-style: normal;
   }
 
-  /* Selection */
-  :global(.ProseMirror ::selection) { background: rgba(74, 158, 255, 0.25); }
+  :global(.ProseMirror ::selection) { background: rgba(74,158,255,0.2); }
 
-  /* Slash menu */
   .slash-menu {
     position: absolute;
-    bottom: calc(100% + 4px);
-    left: 14px;
+    bottom: calc(100% + 6px);
+    left: 0;
     background: var(--card-bg, #1e1e1e);
     border: 1px solid var(--border, #2a2a2a);
     border-radius: 6px;

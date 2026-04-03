@@ -8,7 +8,6 @@
   const tools = [
     { id: 'select',  key: 'v', tip: 'select  v',         svg: '<path d="M3 2l4 10 2-3.5 3.5-2z"/>' },
     { id: 'note',    key: 'n', tip: 'note  n',           svg: '<rect x="2" y="2" width="11" height="11" rx="1.5"/><line x1="4.5" y1="5.5" x2="10.5" y2="5.5"/><line x1="4.5" y1="7.5" x2="10.5" y2="7.5"/><line x1="4.5" y1="9.5" x2="8" y2="9.5"/>' },
-    { id: 'todo',    key: 'o', tip: 'to-do  o',          svg: '<rect x="2" y="2.5" width="4" height="3.5" rx="0.5"/><line x1="8" y1="4.25" x2="13" y2="4.25"/><rect x="2" y="9" width="4" height="3.5" rx="0.5"/><line x1="8" y1="10.75" x2="13" y2="10.75"/>' },
     { id: 'text',    key: 't', tip: 'text  t',           svg: '<line x1="7.5" y1="2" x2="7.5" y2="13"/><line x1="3" y1="4" x2="12" y2="4"/>' },
     { id: 'frame',   key: 'f', tip: 'frame  f',          svg: '<rect x="2" y="2" width="11" height="11" rx="1.5"/>' },
     { id: 'sep' },
@@ -32,9 +31,8 @@
   const CANVAS_TOOLS = new Set(['select','pen','eraser','arrow','frame','rect','ellipse','line','text']);
 
   function handleClick(t) {
-    if (t.id === 'note')     { const p = window.c2w?.(window.innerWidth/2, window.innerHeight/2) ?? { x: 3000, y: 3000 }; window._pixiCanvas?.makeNote?.(p.x, p.y); return; }
-    if (t.id === 'todo')     { const p = window.c2w?.(window.innerWidth/2, window.innerHeight/2) ?? { x: 3000, y: 3000 }; window._pixiCanvas?.makeTodo?.(p.x, p.y); return; }
-    if (t.id === 'ai-note')  { const p = window.c2w?.(window.innerWidth/2, window.innerHeight/2) ?? { x: 3000, y: 3000 }; window._pixiCanvas?.makeAiNote?.(p.x, p.y); return; }
+    if (t.id === 'note')     { const m = window.getLastMousePos?.() ?? { x: window.innerWidth/2, y: window.innerHeight/2 }; const p = window.c2w?.(m.x, m.y) ?? { x: 3000, y: 3000 }; window._pixiCanvas?.makeNote?.(p.x, p.y); return; }
+    if (t.id === 'ai-note')  { const m = window.getLastMousePos?.() ?? { x: window.innerWidth/2, y: window.innerHeight/2 }; const p = window.c2w?.(m.x, m.y) ?? { x: 3000, y: 3000 }; window._pixiCanvas?.makeAiNote?.(p.x, p.y); return; }
     if (t.id === 'zoom-in')  { window.doZoom?.(1.15); return; }
     if (t.id === 'zoom-out') { window.doZoom?.(1/1.15); return; }
     if (t.id === 'zoom-fit') { window.zoomToFit?.(); return; }

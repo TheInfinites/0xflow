@@ -39,7 +39,7 @@
     // Resize element to native video aspect ratio, preserving width
     const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
     if (vw && vh && el?.id) {
-      const FOOTER_H = 30; // footer: 5px*2 padding + 13px icons + 1px border ≈ 30px world units
+      const FOOTER_H = 50; // footer: seek row + buttons row ~50px world units
       const targetH = Math.round(el.width * vh / vw) + FOOTER_H;
       if (Math.abs(targetH - el.height) > 4) {
         elementsStore.update(els => els.map(e =>
@@ -134,47 +134,45 @@
   {/if}
 
   <div class="vc-footer" onpointerdown={e => e.stopPropagation()}>
-    <!-- prev frame: simple ‹ chevron -->
-    <button class="vc-btn" onclick={() => stepFrame(-1)} title="Previous frame">
-      <svg viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="8,2 4,6.5 8,11"/></svg>
-    </button>
-    <!-- play/pause -->
-    <button class="vc-btn vc-play" onclick={togglePlay} title={playing ? 'Pause' : 'Play'}>
-      {#if playing}
-        <svg viewBox="0 0 12 12" fill="currentColor"><rect x="2" y="1" width="3" height="10"/><rect x="7" y="1" width="3" height="10"/></svg>
-      {:else}
-        <svg viewBox="0 0 12 12" fill="currentColor"><polygon points="2,1 11,6 2,11"/></svg>
-      {/if}
-    </button>
-    <!-- next frame: simple › chevron -->
-    <button class="vc-btn" onclick={() => stepFrame(1)} title="Next frame">
-      <svg viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="5,2 9,6.5 5,11"/></svg>
-    </button>
-    <!-- seek -->
-    <input
-      type="range" class="vc-seek"
-      min="0" max={duration || 1} step="0.01"
-      value={currentTime}
-      oninput={onSeek}
-    />
-    <!-- time -->
-    <span class="vc-time">{fmt(currentTime)} / {fmt(duration)}</span>
-    <!-- volume -->
-    <button class="vc-btn vc-vol" class:muted onclick={toggleMute} title={muted ? 'Unmute' : 'Mute'}>
-      {#if muted}
-        <svg viewBox="0 0 13 13" fill="currentColor"><path d="M2 4.5h2.5l3.5-3v10l-3.5-3H2z"/><line x1="9.5" y1="4" x2="12.5" y2="8" stroke="currentColor" stroke-width="1.3"/><line x1="12.5" y1="4" x2="9.5" y2="8" stroke="currentColor" stroke-width="1.3"/></svg>
-      {:else}
-        <svg viewBox="0 0 13 13" fill="currentColor"><path d="M2 4.5h2.5l3.5-3v10l-3.5-3H2z"/><path d="M9 4.5c.8.5 1.3 1.2 1.3 2s-.5 1.5-1.3 2" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
-      {/if}
-    </button>
-    <!-- fullscreen -->
-    <button class="vc-btn" onclick={toggleFullscreen} title="Fullscreen">
-      <svg viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><polyline points="1,4 1,1 4,1"/><polyline points="9,1 12,1 12,4"/><polyline points="12,9 12,12 9,12"/><polyline points="4,12 1,12 1,9"/></svg>
-    </button>
-    <!-- screenshot -->
-    <button class="vc-btn" onclick={takeScreenshot} title="Screenshot">
-      <svg viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="11" height="8" rx="1"/><circle cx="6.5" cy="7" r="2"/><path d="M4.5 3l.8-1.5h2.4l.8 1.5"/></svg>
-    </button>
+    <!-- Row 1: seek bar + time -->
+    <div class="vc-row">
+      <input
+        type="range" class="vc-seek"
+        min="0" max={duration || 1} step="0.01"
+        value={currentTime}
+        oninput={onSeek}
+      />
+      <span class="vc-time">{fmt(currentTime)} / {fmt(duration)}</span>
+    </div>
+    <!-- Row 2: all buttons spread -->
+    <div class="vc-row vc-btn-row">
+      <button class="vc-btn" onclick={() => stepFrame(-1)} title="Previous frame">
+        <svg viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="8,2 4,6.5 8,11"/></svg>
+      </button>
+      <button class="vc-btn vc-play-btn" onclick={togglePlay} title={playing ? 'Pause' : 'Play'}>
+        {#if playing}
+          <svg viewBox="0 0 12 12" fill="currentColor"><rect x="2" y="1" width="3" height="10"/><rect x="7" y="1" width="3" height="10"/></svg>
+        {:else}
+          <svg viewBox="0 0 12 12" fill="currentColor"><polygon points="2,1 11,6 2,11"/></svg>
+        {/if}
+      </button>
+      <button class="vc-btn" onclick={() => stepFrame(1)} title="Next frame">
+        <svg viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="5,2 9,6.5 5,11"/></svg>
+      </button>
+      <button class="vc-btn vc-vol" class:muted onclick={toggleMute} title={muted ? 'Unmute' : 'Mute'}>
+        {#if muted}
+          <svg viewBox="0 0 13 13" fill="currentColor"><path d="M2 4.5h2.5l3.5-3v10l-3.5-3H2z"/><line x1="9.5" y1="4" x2="12.5" y2="8" stroke="currentColor" stroke-width="1.3"/><line x1="12.5" y1="4" x2="9.5" y2="8" stroke="currentColor" stroke-width="1.3"/></svg>
+        {:else}
+          <svg viewBox="0 0 13 13" fill="currentColor"><path d="M2 4.5h2.5l3.5-3v10l-3.5-3H2z"/><path d="M9 4.5c.8.5 1.3 1.2 1.3 2s-.5 1.5-1.3 2" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+        {/if}
+      </button>
+      <button class="vc-btn" onclick={toggleFullscreen} title="Fullscreen">
+        <svg viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><polyline points="1,4 1,1 4,1"/><polyline points="9,1 12,1 12,4"/><polyline points="12,9 12,12 9,12"/><polyline points="4,12 1,12 1,9"/></svg>
+      </button>
+      <button class="vc-btn" onclick={takeScreenshot} title="Screenshot">
+        <svg viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="11" height="8" rx="1"/><circle cx="6.5" cy="7" r="2"/><path d="M4.5 3l.8-1.5h2.4l.8 1.5"/></svg>
+      </button>
+    </div>
   </div>
 </div>
 
@@ -207,37 +205,48 @@
     color: rgba(255,255,255,0.2); font-size: 11px;
   }
   .vc-footer {
-    display: flex; align-items: center; gap: 4px;
-    padding: 6px 8px;
-    background: rgba(0,0,0,0.55);
+    display: flex; flex-direction: column; gap: 1px;
+    padding: 5px 10px 6px;
+    background: rgba(0,0,0,0.85);
     flex-shrink: 0;
     pointer-events: auto;
+  }
+  .vc-row {
+    display: flex; align-items: center; gap: 0; width: 100%;
+  }
+  .vc-btn-row .vc-btn {
+    flex: 1 1 0; justify-content: center; padding: 5px 0;
   }
   .vc-btn {
     display: inline-flex; align-items: center; justify-content: center;
     background: none; border: none; border-radius: 3px;
-    color: rgba(255,255,255,0.28);
-    cursor: pointer; padding: 3px; flex-shrink: 0;
+    color: rgba(255,255,255,0.22);
+    cursor: pointer; padding: 4px 5px;
+    transition: color 0.1s;
   }
-  .vc-btn:hover { color: rgba(255,255,255,0.9); }
-  .vc-btn svg { width: 13px; height: 13px; display: block; }
-  .vc-play svg { width: 12px; height: 12px; }
-  .vc-vol.muted { color: rgba(255,255,255,0.12); }
+  .vc-btn:hover { color: rgba(255,255,255,0.8); }
+  .vc-btn svg { width: 11px; height: 11px; display: block; }
+  .vc-play-btn { color: rgba(255,255,255,0.55); }
+  .vc-play-btn:hover { color: #fff; }
+  .vc-play-btn svg { width: 10px; height: 10px; }
+  .vc-vol.muted { color: rgba(255,255,255,0.1); }
   .vc-seek {
     flex: 1; height: 2px;
     cursor: pointer;
     appearance: none; -webkit-appearance: none;
-    background: rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.1);
     border-radius: 2px; outline: none; border: none;
   }
   .vc-seek::-webkit-slider-thumb {
     appearance: none; -webkit-appearance: none;
-    width: 7px; height: 7px; border-radius: 50%;
-    background: rgba(255,255,255,0.7); cursor: pointer;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: rgba(255,255,255,0.6); cursor: pointer;
+    transition: background 0.1s, transform 0.1s;
   }
-  .vc-seek:hover::-webkit-slider-thumb { background: #fff; }
+  .vc-seek:hover::-webkit-slider-thumb { background: #fff; transform: scale(1.2); }
   .vc-time {
-    font-size: 9px; color: rgba(255,255,255,0.3);
+    font-size: 8px; color: rgba(255,255,255,0.25);
     font-family: 'DM Mono', monospace; white-space: nowrap;
+    padding-left: 8px; letter-spacing: 0.03em;
   }
 </style>

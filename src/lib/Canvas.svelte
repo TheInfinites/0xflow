@@ -70,6 +70,9 @@
   // Context menu state
   let ctxMenu = $state(null); // { x, y, elId } or null
 
+  // Last known mouse position (client coords) for placing new nodes
+  let lastMouseClient = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+
   // Clipboard
   let _clipboard = [];
 
@@ -365,8 +368,8 @@
     const isSelected = selected.has(el.id);
     const w = el.width || 240, h = el.height || 180;
 
-    // Notes/todos/ai-notes are rendered as DOM overlays — Pixi just needs a transparent hit area
-    if (el.type === 'note' || el.type === 'ai-note' || el.type === 'todo') {
+    // Notes/ai-notes are rendered as DOM overlays — Pixi just needs a transparent hit area
+    if (el.type === 'note' || el.type === 'ai-note') {
       g.rect(0, 0, w, h).fill({ color: 0x000000, alpha: 0 });
       return g;
     }
@@ -452,11 +455,6 @@
     let text = '';
     if (el.type === 'note' || el.type === 'ai-note') {
       text = extractTiptapText(el.content?.blocks);
-    } else if (el.type === 'todo') {
-      const items = el.content?.todoItems || [];
-      const title = el.content?.todoTitle || 'to-do';
-      const done = items.filter(i => i.done).length;
-      text = `${title}${items.length ? `  ${done}/${items.length}` : ''}`;
     }
     if (!text) return null;
 
@@ -720,6 +718,7 @@
   }
 
   function onPointerMove(e) {
+    lastMouseClient = { x: e.clientX, y: e.clientY };
     const wp = c2w(e.clientX, e.clientY);
 
     if (relDragActive) {
@@ -822,7 +821,7 @@
     const hit = app?.renderer?.events?.rootBoundary?.hitTest?.(e.clientX - r.left, e.clientY - r.top);
     if (!hit?.label) return;
     const el = $elementsStore.find(x => x.id === hit.label);
-    if (el && (el.type === 'note' || el.type === 'ai-note' || el.type === 'todo' || el.type === 'label')) {
+    if (el && (el.type === 'note' || el.type === 'ai-note' || el.type === 'label')) {
       setActiveEditorId(el.id);
     }
   }
@@ -1089,18 +1088,6 @@
     return id;
   }
 
-  function makeTodo(wx, wy) {
-    snapshot();
-    const id = 'todo_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
-    const { x, y } = snapXY(wx - 120, wy - 80);
-    elementsStore.update(els => [...els, {
-      id, type: 'todo',
-      x, y, width: 240, height: 200, zIndex: Date.now(),
-      pinned: false, locked: false, votes: 0, reactions: [],
-      color: null, content: { todoTitle: 'to-do', todoItems: [] },
-    }]);
-    return id;
-  }
 
   function makeLabel(wx, wy) {
     snapshot();
@@ -1153,9 +1140,8 @@
     if (toolMap[e.key]) { curTool = toolMap[e.key]; setCurTool(curTool); return; }
 
     // Create shortcuts
-    if (e.key === 'n' || e.key === 'N') { const wp = c2w(app.screen.width/2, app.screen.height/2); makeNote(wp.x, wp.y); }
-    if (e.key === 'i' || e.key === 'I') { const wp = c2w(app.screen.width/2, app.screen.height/2); makeAiNote(wp.x, wp.y); }
-    if (e.key === 'o' || e.key === 'O') { const wp = c2w(app.screen.width/2, app.screen.height/2); makeTodo(wp.x, wp.y); }
+    if (e.key === 'n' || e.key === 'N') { const wp = c2w(lastMouseClient.x, lastMouseClient.y); makeNote(wp.x, wp.y); }
+    if (e.key === 'i' || e.key === 'I') { const wp = c2w(lastMouseClient.x, lastMouseClient.y); makeAiNote(wp.x, wp.y); }
     if (e.key === 'g' || e.key === 'G') { snapEnabled = !snapEnabled; snapEnabledStore.set(snapEnabled); window.showToast?.(snapEnabled ? 'Snap on' : 'Snap off'); }
   }
 
@@ -1492,7 +1478,7 @@
   $effect(() => {
     window._pixiCanvas = {
       serializePixiCanvas, restorePixiCanvas,
-      makeNote, makeAiNote, makeTodo, makeLabel,
+      makeNote, makeAiNote, makeLabel,
       zoomToFit, resetView, zoomToSelection, zoomToElement,
       deleteSelected, selectAll, duplicateSelected,
       copySelected, pasteClipboard,
@@ -1507,6 +1493,7 @@
     window.zoomToFit = () => zoomToFit();
     window.zoomToSelection = () => zoomToSelection();
     window.c2w = (clientX, clientY) => c2w(clientX, clientY);
+    window.getLastMousePos = () => lastMouseClient;
     window.clearRelDragLine = () => clearRelDragLine();
     window.updateRelDragEndpoint = (clientX, clientY) => {
       if (!relDragActive) return;
@@ -1606,7 +1593,7 @@
         {/each}
       </div>
       <div class="ctx-sep"></div>
-      {#if ctxEl?.type === 'note' || ctxEl?.type === 'ai-note' || ctxEl?.type === 'todo'}
+      {#if ctxEl?.type === 'note' || ctxEl?.type === 'ai-note'}
         <button class="ctx-item" onclick={() => ctxToggleCollapse(ctxMenu.elId)}>
           <span class="ctx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 5l5 4 5-4"/></svg></span>
           {ctxEl?.collapsed ? 'expand' : 'collapse'}
