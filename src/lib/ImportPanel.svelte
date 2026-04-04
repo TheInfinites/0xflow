@@ -8,12 +8,15 @@
 
   function toggle(e) {
     e.stopPropagation();
+    const triggerEl = e.currentTarget ?? e.target;
     open = !open;
     if (open) {
       // position panel below button, right-aligned
       requestAnimationFrame(() => {
-        if (!btnEl || !panelEl) return;
-        const r = btnEl.getBoundingClientRect();
+        if (!panelEl) return;
+        const btn = triggerEl ?? btnEl;
+        if (!btn) return;
+        const r = btn.getBoundingClientRect();
         const pw = panelEl.offsetWidth;
         panelEl.style.top = (r.bottom + 6) + 'px';
         let left = r.right - pw;
@@ -128,7 +131,7 @@
     cursor: pointer;
     border: none;
     background: transparent;
-    color: var(--fg, #e4e4e7);
+    color: rgba(255,255,255,0.4);
     width: 100%;
     text-align: left;
     font-size: 13px;

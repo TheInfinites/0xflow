@@ -38,7 +38,7 @@
   {:else}
     <div
       class="note-overlay"
-      style="left:{rect.left}px; top:{rect.top}px; width:{rect.width}px; height:{rect.height}px; transform:scale({scale}); transform-origin:top left;"
+      style="left:{rect.left}px; top:{rect.top}px; width:{rect.width}px; height:{rect.height}px; transform:scale({scale}); transform-origin:top left; --note-font-size:{activeEl.content?.fontSize ?? 12}px"
     >
       <NoteEditor elId={activeEl.id} onclose={closeEditor} />
     </div>
@@ -55,7 +55,7 @@
     flex-direction: column;
     background: #141415;
     border: 1px solid rgba(255,255,255,0.1);
-    box-shadow: 0 0 0 2px rgba(74,158,255,0.25), 0 8px 32px rgba(0,0,0,0.6);
+    box-shadow: none;
     border-radius: 10px;
     overflow: visible;
   }

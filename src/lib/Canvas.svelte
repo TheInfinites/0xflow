@@ -104,7 +104,7 @@
   const RADIAL_ITEMS = [
     { label: 'Note',      icon: '<rect x="2" y="2" width="11" height="11" rx="1.5"/><line x1="4.5" y1="5.5" x2="10.5" y2="5.5"/><line x1="4.5" y1="7.5" x2="10.5" y2="7.5"/><line x1="4.5" y1="9.5" x2="8" y2="9.5"/>',   angleDeg: -90 },
     { label: 'Draw',      icon: '<path d="M3 12 Q5 8 8 7 Q11 6 12 3"/><circle cx="3" cy="12" r="1" fill="currentColor" stroke="none"/>',                                                                                         angleDeg: -35 },
-    { label: 'AI Note',   icon: '<circle cx="7.5" cy="7.5" r="5.5" stroke-width="1.2"/><circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/>',  color: '#E8440A',                                              angleDeg:  35 },
+    { label: 'Import',    icon: '<path d="M7.5 2v8M4 7l3.5 3.5L11 7"/><rect x="2" y="11" width="11" height="2" rx="0.8"/>',                                                                                                      angleDeg:  35 },
     { label: 'Dashboard', icon: '<rect x="1" y="1" width="5" height="5" rx="0.8"/><rect x="9" y="1" width="5" height="5" rx="0.8"/><rect x="1" y="9" width="5" height="5" rx="0.8"/><rect x="9" y="9" width="5" height="5" rx="0.8"/>', angleDeg: 145 },
     { label: 'Bookmark',  icon: '<path d="M3 2h9v11l-4.5-3L3 13z"/>',                                                                                                                                                            angleDeg: 215 },
   ];
@@ -430,7 +430,7 @@
       const fillHex = fc > 0 ? parseRgba(FRAME_COLORS[fc]) : { color: 0xffffff, alpha: 0.03 };
       g.roundRect(0, 0, w, h, 6).fill(fillHex);
       const borderColor = isSelected ? 0xe8440a : 0x555555;
-      g.roundRect(0, 0, w, h, 6).stroke({ color: borderColor, width: isSelected ? 1.5 : 1, alpha: isSelected ? 0.8 : 0.4 });
+      g.roundRect(0, 0, w, h, 6).stroke({ color: borderColor, width: isSelected ? 0.75 : 1, alpha: isSelected ? 0.8 : 0.4 });
     } else if (el.type === 'label') {
       // transparent — just text
     } else {
@@ -465,7 +465,7 @@
       // Selection ring — orange matching main branch
       const rh = el.collapsed ? 32 : h;
       if (isSelected) {
-        g.roundRect(-2, -2, w + 4, rh + 4, 10).stroke({ color: 0xe8440a, width: 1.5 });
+        g.roundRect(-2, -2, w + 4, rh + 4, 10).stroke({ color: 0xe8440a, width: 0.75 });
       } else {
         g.roundRect(0, 0, w, rh, 8).stroke({ color: isLight ? 0xcccccc : 0x333333, width: 1 });
       }
@@ -1380,10 +1380,40 @@
     const h = resizeHandle;
     let { x, y, w, h: ht } = resizeOrigin;
 
-    if (h.includes('e')) { w = Math.max(MIN_W, resizeOrigin.w + dx); }
-    if (h.includes('w')) { const nw = Math.max(MIN_W, resizeOrigin.w - dx); x = resizeOrigin.x + (resizeOrigin.w - nw); w = nw; }
-    if (h.includes('s')) { ht = Math.max(MIN_H, resizeOrigin.h + dy); }
-    if (h.includes('n')) { const nh = Math.max(MIN_H, resizeOrigin.h - dy); y = resizeOrigin.y + (resizeOrigin.h - nh); ht = nh; }
+    const resizingEl = $elementsStore.find(el => el.id === resizeEl);
+    const lockAspect = resizingEl?.type === 'image';
+    const aspect = resizeOrigin.w / resizeOrigin.h;
+
+    if (lockAspect) {
+      // Use the dominant axis delta to drive uniform scaling
+      const isCorner = h.length === 2;
+      if (isCorner) {
+        const absDx = Math.abs(dx), absDy = Math.abs(dy);
+        const useDx = absDx > absDy;
+        if (h.includes('e')) {
+          w = Math.max(MIN_W, resizeOrigin.w + (useDx ? dx : dy * aspect));
+        } else {
+          const nw = Math.max(MIN_W, resizeOrigin.w - (useDx ? dx : dy * aspect));
+          x = resizeOrigin.x + (resizeOrigin.w - nw);
+          w = nw;
+        }
+        ht = w / aspect;
+        if (h.includes('n')) y = resizeOrigin.y + (resizeOrigin.h - ht);
+      } else if (h === 'e' || h === 'w') {
+        if (h === 'e') { w = Math.max(MIN_W, resizeOrigin.w + dx); }
+        else { const nw = Math.max(MIN_W, resizeOrigin.w - dx); x = resizeOrigin.x + (resizeOrigin.w - nw); w = nw; }
+        ht = w / aspect;
+      } else {
+        if (h === 's') { ht = Math.max(MIN_H, resizeOrigin.h + dy); }
+        else { const nh = Math.max(MIN_H, resizeOrigin.h - dy); y = resizeOrigin.y + (resizeOrigin.h - nh); ht = nh; }
+        w = ht * aspect;
+      }
+    } else {
+      if (h.includes('e')) { w = Math.max(MIN_W, resizeOrigin.w + dx); }
+      if (h.includes('w')) { const nw = Math.max(MIN_W, resizeOrigin.w - dx); x = resizeOrigin.x + (resizeOrigin.w - nw); w = nw; }
+      if (h.includes('s')) { ht = Math.max(MIN_H, resizeOrigin.h + dy); }
+      if (h.includes('n')) { const nh = Math.max(MIN_H, resizeOrigin.h - dy); y = resizeOrigin.y + (resizeOrigin.h - nh); ht = nh; }
+    }
 
     if (snapEnabled) { w = snap(w); ht = snap(ht); x = snap(x); y = snap(y); }
 
@@ -1507,9 +1537,8 @@
 
   // ── Radial menu actions ──────────────────────
   function executeRadialItem(item, wx, wy) {
-    if (item.label === 'Note')         { makeNote(wx, wy); }
-    else if (item.label === 'Draw')    { curTool = 'pen'; setCurTool('pen'); }
-    else if (item.label === 'AI Note') { makeAiNote(wx, wy); }
+    if (item.label === 'Note')           { makeNote(wx, wy); }
+    else if (item.label === 'Draw')      { curTool = 'pen'; setCurTool('pen'); }
     else if (item.label === 'Dashboard') { onBack(); }
     else if (item.label === 'Bookmark')  { _addBookmark(); }
   }
@@ -1877,6 +1906,26 @@
       {/each}
       <div class="radial-center"></div>
     </div>
+    {#if _radialHovered === 2}
+      {@const impRect = _bmItemElAll[2]?.getBoundingClientRect()}
+      <div
+        class="radial-bm-submenu"
+        style="left:{impRect ? impRect.right + 8 : 0}px; top:{impRect ? impRect.top - 4 : 0}px; width:220px;"
+        onclick={e => e.stopPropagation()}
+        onpointerenter={e => { e.stopPropagation(); _radialSubmenuLocked = true; }}
+        onpointerleave={e => { if (!e.currentTarget.contains(/** @type {Node} */(e.relatedTarget))) { _radialSubmenuLocked = false; } }}
+        role="none"
+      >
+        <div class="radial-import-list">
+          <button class="radial-bm-jump" onclick={e => { e.stopPropagation(); _closeRadialMenu(); window.triggerImport?.('image/*'); }}>Image <em>.jpg .png .gif …</em></button>
+          <button class="radial-bm-jump" onclick={e => { e.stopPropagation(); _closeRadialMenu(); window.triggerImport?.('video/*'); }}>Video <em>.mp4 .mov …</em></button>
+          <button class="radial-bm-jump" onclick={e => { e.stopPropagation(); _closeRadialMenu(); window.triggerImport?.('audio/*'); }}>Audio <em>.mp3 .wav …</em></button>
+          <button class="radial-bm-jump" onclick={e => { e.stopPropagation(); _closeRadialMenu(); window.triggerImport?.('application/pdf'); }}>PDF <em>.pdf</em></button>
+          <div class="radial-import-sep"></div>
+          <button class="radial-bm-jump" onclick={e => { e.stopPropagation(); _closeRadialMenu(); window.triggerImport?.('*/*'); }}>Any file</button>
+        </div>
+      </div>
+    {/if}
     {#if _radialHovered === 4}
       {@const bmRect = _bmItemElAll[4]?.getBoundingClientRect()}
       <div
@@ -1986,13 +2035,7 @@
     width: 10px; height: 10px;
   }
   .resize-corner::after {
-    content: '';
-    display: block;
-    width: 5px; height: 5px;
-    border-radius: 50%;
-    background: rgba(255,255,255,0.55);
-    margin: 2px auto 0;
-    box-shadow: 0 0 0 1px rgba(232,68,10,0.5);
+    content: none;
   }
   /* Edge handles — invisible hit areas only */
   .resize-edge {
@@ -2036,11 +2079,11 @@
   }
   .radial-item.radial-item-left { flex-direction: row-reverse; }
   .radial-item.hovered {
-    background: rgba(232,68,10,0.12);
-    border-color: rgba(232,68,10,0.35);
-    color: #fff;
+    background: #E8440A;
+    border-color: #E8440A;
+    color: #000;
   }
-  .radial-item.hovered .radial-item-icon { color: #E8440A; }
+  .radial-item.hovered .radial-item-icon { color: #000; }
   .radial-item-icon {
     width: 14px; height: 14px;
     flex-shrink: 0;
@@ -2067,6 +2110,10 @@
     pointer-events: all;
   }
   .radial-bm-list { max-height: 160px; overflow-y: auto; }
+  .radial-import-list { display: flex; flex-direction: column; padding: 2px 0; }
+  .radial-import-list .radial-bm-jump { display: flex; align-items: center; justify-content: space-between; padding: 5px 12px; }
+  .radial-import-list .radial-bm-jump em { font-style: normal; font-size: 10px; color: rgba(255,255,255,0.25); margin-left: 8px; }
+  .radial-import-sep { height: 1px; background: rgba(255,255,255,0.07); margin: 3px 8px; }
   .radial-bm-add { border-bottom: 1px solid rgba(255,255,255,0.07); margin-bottom: 4px; border-top: none; margin-top: 0; }
   .radial-bm-row {
     display: flex; align-items: center;

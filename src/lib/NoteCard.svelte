@@ -4,7 +4,10 @@
 
   import { snapshot } from '../stores/elements.js';
 
-  let { el } = $props();
+  let { el: elProp } = $props();
+
+  // Read directly from store so any content update (e.g. fontSize) triggers re-render
+  let el = $derived($elementsStore.find(e => e.id === elProp.id) ?? elProp);
 
   let isSelected = $derived($selectedStore.has(el.id));
 
@@ -72,6 +75,76 @@
     return blocks.content.map(node).join('');
   }
 
+  function blocksToText(blocks) {
+    if (!blocks?.content) return '';
+
+    function inline(nodes = []) {
+      return nodes.map(n => {
+        if (n.type !== 'text') return '';
+        let t = n.text ?? '';
+        if (n.marks) for (const m of n.marks) {
+          if (m.type === 'bold')   t = `**${t}**`;
+          if (m.type === 'italic') t = `_${t}_`;
+          if (m.type === 'strike') t = `~~${t}~~`;
+          if (m.type === 'code')   t = `\`${t}\``;
+        }
+        return t;
+      }).join('');
+    }
+
+    function node(n, ctx = {}) {
+      if (n.type === 'paragraph') {
+        const text = inline(n.content);
+        return text ? text + '\n' : '\n';
+      }
+      if (n.type === 'heading') {
+        const level = n.attrs?.level ?? 1;
+        return '#'.repeat(level) + ' ' + inline(n.content) + '\n';
+      }
+      if (n.type === 'bulletList') {
+        return (n.content ?? []).map(c => node(c, { list: 'bullet' })).join('');
+      }
+      if (n.type === 'orderedList') {
+        return (n.content ?? []).map((c, i) => node(c, { list: 'ordered', idx: i + 1 })).join('');
+      }
+      if (n.type === 'listItem') {
+        const prefix = ctx.list === 'ordered' ? `${ctx.idx}. ` : '- ';
+        const inner = (n.content ?? []).map(c => node(c, ctx)).join('').trimEnd();
+        return prefix + inner + '\n';
+      }
+      if (n.type === 'taskList') {
+        return (n.content ?? []).map(c => node(c, { list: 'task' })).join('');
+      }
+      if (n.type === 'taskItem') {
+        const inner = (n.content ?? []).map(c => c.type === 'paragraph' ? inline(c.content) : node(c, ctx)).join('').trimEnd();
+        return (n.attrs?.checked ? '[x] ' : '[ ] ') + inner + '\n';
+      }
+      if (n.type === 'blockquote') {
+        return (n.content ?? []).map(c => node(c, ctx)).join('').split('\n').map(l => l ? '> ' + l : '').join('\n') + '\n';
+      }
+      if (n.type === 'codeBlock') {
+        const lang = n.attrs?.language ?? '';
+        return '```' + lang + '\n' + inline(n.content) + '\n```\n';
+      }
+      if (n.type === 'horizontalRule') return '---\n';
+      return '';
+    }
+
+    return blocks.content.map(n => node(n)).join('').trim();
+  }
+
+  let copied = $state(false);
+  function copyText(e) {
+    e.stopPropagation();
+    const text = blocksToText(el.content?.blocks);
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      copied = true;
+      setTimeout(() => { copied = false; }, 1500);
+    });
+  }
+
+  let fontSize = $derived(el.content?.fontSize ?? 12);
   let previewHtml = $derived(blocksToHtml(el.content?.blocks));
   let noteIdx = $derived((() => {
     const els = $elementsStore;
@@ -87,7 +160,7 @@
   class="note"
   class:selected={isSelected}
   class:ai-note={el.type === 'ai-note'}
-  style={el.color ? `--note-accent:${el.color}` : ''}
+  style="{el.color ? `--note-accent:${el.color};` : ''}--note-font-size:{fontSize}px"
 >
   {#if el.color}
     <div class="note-color-strip" style="background:{el.color}"></div>
@@ -104,6 +177,13 @@
 
   <div class="note-bottom">
     <div class="note-reactions"></div>
+    <button class="note-copy" onclick={copyText} title="Copy text" class:done={copied}>
+      {#if copied}
+        <svg viewBox="0 0 10 10"><polyline points="1.5,5 4,7.5 8.5,2.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      {:else}
+        <svg viewBox="0 0 10 10"><rect x="3" y="1" width="6" height="7" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M1 3h1.5v5.5h4.5v1.5H2a1 1 0 01-1-1V3z" fill="currentColor" opacity="0.5"/></svg>
+      {/if}
+    </button>
     <span class="note-votes">
       <svg viewBox="0 0 10 10"><path d="M5 2l1.5 3h3l-2.4 1.8.9 3L5 8.2 2 9.8l.9-3L.5 5h3z"/></svg>
       {el.votes ?? 0}
@@ -132,7 +212,7 @@
   .note-preview {
     flex: 1;
     font-family: 'Geist', sans-serif;
-    font-size: 12px;
+    font-size: var(--note-font-size, 12px);
     font-weight: 300;
     line-height: 1.6;
     color: rgba(255,255,255,0.7);
@@ -176,6 +256,7 @@
   .note-bottom {
     position: absolute; bottom: 6px; left: 8px; right: 8px;
     display: flex; align-items: center; gap: 2px; height: 20px;
+    pointer-events: none;
   }
   .note-reactions { display: flex; gap: 2px; flex: 1; }
   .note-votes {
@@ -185,6 +266,17 @@
     padding: 2px 5px; user-select: none;
   }
   .note-votes svg { width: 9px; height: 9px; stroke: currentColor; fill: none; stroke-width: 2; }
+  .note-copy {
+    background: none; border: none; padding: 2px 4px; cursor: pointer;
+    color: var(--text-dim, rgba(255,255,255,0.25));
+    display: flex; align-items: center;
+    transition: color 0.15s, background 0.15s;
+    border-radius: 3px;
+    pointer-events: auto;
+  }
+  .note-copy svg { width: 10px; height: 10px; display: block; }
+  .note-copy:hover { color: rgba(255,255,255,0.7); background: rgba(255,255,255,0.06); }
+  .note-copy.done { color: #6ecc8a; }
   .ai-badge {
     font-family: 'Geist Mono', monospace; font-size: 8px;
     letter-spacing: 0.1em; color: #E8440A;

@@ -192,7 +192,8 @@
   });
 
   function onDocMousedown(e) {
-    if (containerEl && !containerEl.contains(e.target) && !slashMenuEl?.contains(e.target)) {
+    const selBar = document.getElementById('selection-bar');
+    if (containerEl && !containerEl.contains(e.target) && !slashMenuEl?.contains(e.target) && !selBar?.contains(e.target)) {
       saveContent();
       onclose();
     }
@@ -258,6 +259,7 @@
     padding: 4px 8px;
     border-bottom: 1px solid rgba(255,255,255,0.06);
     flex-shrink: 0;
+    overflow: hidden;
   }
   .ne-tb-btn {
     display: inline-flex; align-items: center; justify-content: center;
@@ -288,7 +290,7 @@
   :global(.ProseMirror) {
     outline: none;
     min-height: 60px;
-    font-size: 13px;
+    font-size: var(--note-font-size, 13px);
     line-height: 1.6;
     color: rgba(255,255,255,0.82);
     font-family: 'Geist', sans-serif;

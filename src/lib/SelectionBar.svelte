@@ -61,12 +61,9 @@
     const id = singleEl.id;
     const cur = singleEl.content?.fontSize ?? 12;
     const next = Math.max(8, Math.min(48, cur + delta));
-    snapshot();
-    elementsStore.update(els => {
-      const el = els.find(e => e.id === id);
-      if (el) el.content = { ...(el.content ?? {}), fontSize: next };
-      return els;
-    });
+    elementsStore.update(els =>
+      els.map(e => e.id === id ? { ...e, content: { ...(e.content ?? {}), fontSize: next } } : e)
+    );
   }
 
   // Group/ungroup visibility
