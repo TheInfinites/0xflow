@@ -877,6 +877,10 @@
         const w = c2w(_radialStartX, _radialStartY);
         _closeRadialMenu();
         executeRadialItem(item, w.x, w.y);
+      } else if (!radialMenu && !_radialDragged) {
+        // Plain right-click (no drag) → open command palette at click position
+        _radialHovered = -1;
+        window.openCommandPalette?.(_radialStartX, _radialStartY);
       } else if (!radialMenu) {
         _radialHovered = -1;
       }
@@ -1770,6 +1774,10 @@
         const w = c2w(_radialStartX, _radialStartY);
         _closeRadialMenu();
         executeRadialItem(item, w.x, w.y);
+      } else if (!radialMenu && !_radialDragged) {
+        // Plain right-click (no drag) → open command palette at click position
+        _radialHovered = -1;
+        window.openCommandPalette?.(e.clientX, e.clientY);
       } else if (!radialMenu) {
         _radialHovered = -1;
       }

@@ -86,7 +86,6 @@ function createProject(name) {
   const projects = loadProjects();
   projects.unshift(p);
   saveProjects(projects);
-  showToast(`"${p.name}" created`);
   return p;
 }
 

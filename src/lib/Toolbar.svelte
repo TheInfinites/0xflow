@@ -27,7 +27,6 @@
     { id: 'theme',   tip: 'toggle theme',   svg: '<circle cx="7.5" cy="7.5" r="3"/><line x1="7.5" y1="1" x2="7.5" y2="2.5"/><line x1="7.5" y1="12.5" x2="7.5" y2="14"/><line x1="1" y1="7.5" x2="2.5" y2="7.5"/><line x1="12.5" y1="7.5" x2="14" y2="7.5"/><line x1="3" y1="3" x2="4.1" y2="4.1"/><line x1="10.9" y1="10.9" x2="12" y2="12"/><line x1="12" y1="3" x2="10.9" y2="4.1"/><line x1="4.1" y1="10.9" x2="3" y2="12"/>' },
   ];
 
-  // Tool ids that are actual canvas tools (set via setCurTool)
   const CANVAS_TOOLS = new Set(['select','pen','eraser','arrow','frame','rect','ellipse','line','text']);
 
   function handleClick(t) {
@@ -46,7 +45,33 @@
     return curTool === t.id;
   }
 
+  // ── Dock magnification ───────────────────────
+  const MAX_SCALE = 1.55;
+  const REACH = 72; // px from button center to start fading
+
   let toolbarEl;
+  // Per-tool scale, driven by mouse position
+  let scales = $state(tools.map(() => 1));
+
+  function updateScales(mouseX) {
+    if (!toolbarEl) return;
+    const btns = toolbarEl.querySelectorAll('.t');
+    const next = tools.map(() => 1);
+    let bi = 0;
+    for (let i = 0; i < tools.length; i++) {
+      if (tools[i].id === 'sep') continue;
+      const btn = btns[bi++];
+      if (!btn) continue;
+      const r = btn.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const dist = Math.abs(mouseX - cx);
+      if (dist < REACH) {
+        const t = Math.cos((dist / REACH) * (Math.PI / 2));
+        next[i] = 1 + (MAX_SCALE - 1) * t;
+      }
+    }
+    scales = next;
+  }
 
   onMount(() => {
     function onClick(e) {
@@ -56,13 +81,22 @@
       const t = tools.find(x => x.tip === tip);
       if (t) handleClick(t);
     }
-    toolbarEl?.addEventListener('click', onClick);
-    return () => toolbarEl?.removeEventListener('click', onClick);
+    function onMouseMove(e) { updateScales(e.clientX); }
+    function onMouseLeave() { scales = tools.map(() => 1); }
+
+    toolbarEl.addEventListener('click', onClick);
+    toolbarEl.addEventListener('mousemove', onMouseMove);
+    toolbarEl.addEventListener('mouseleave', onMouseLeave);
+    return () => {
+      toolbarEl.removeEventListener('click', onClick);
+      toolbarEl.removeEventListener('mousemove', onMouseMove);
+      toolbarEl.removeEventListener('mouseleave', onMouseLeave);
+    };
   });
 </script>
 
 <div id="toolbar" class="svelte-toolbar" bind:this={toolbarEl}>
-  {#each tools as t}
+  {#each tools as t, i}
     {#if t.id === 'sep'}
       <div class="sep"></div>
     {:else}
@@ -72,6 +106,7 @@
         class:accent={t.accent}
         data-tip={t.tip}
         title={t.tip}
+        style="transform: translateY({-(scales[i] - 1) * 14}px) scale({scales[i]})"
       >
         <!-- eslint-disable-next-line svelte/no-at-html-tags -->
         <svg viewBox="0 0 15 15">{@html t.svg}</svg>
@@ -87,6 +122,7 @@
     background: rgba(10,10,10,0.97); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
     border: 1px solid rgba(255,255,255,0.1); border-top: 2px solid rgba(255,255,255,0.07);
     border-radius: 12px; padding: 4px 5px;
+    overflow: visible;
   }
   .t {
     width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
