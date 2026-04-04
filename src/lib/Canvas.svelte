@@ -6,6 +6,7 @@
   import { scaleStore, pxStore, pyStore, setCurTool, getCurTool, setSelected, setScale, setPx, setPy, activeEditorIdStore, setActiveEditorId, snapEnabledStore, isLightStore } from '../stores/canvas.js';
   import { activeProjectIdStore } from '../stores/projects.js';
   import { brainstormOpenStore } from '../stores/ui.js';
+  import { store } from './projects-service.js';
   import NoteOverlay   from './NoteOverlay.svelte';
   import MediaOverlay  from './MediaOverlay.svelte';
   import BrainstormPanel from './BrainstormPanel.svelte';
@@ -80,6 +81,24 @@
   let _radialStartX = 0, _radialStartY = 0;
   let _radialDragged = false;
   let _radialHovered = $state(-1); // index of hovered item
+
+  // Bookmark submenu
+  let _bookmarks = $state([]);
+  let _bmLabelInput = $state('');
+  function _bmKey() { return 'freeflow_bkmarks_' + (get(activeProjectIdStore) ?? 'default'); }
+  function _loadBookmarks() { try { _bookmarks = JSON.parse(store.get(_bmKey()) ?? 'null') || []; } catch { _bookmarks = []; } }
+  function _saveBookmarks() { try { store.set(_bmKey(), JSON.stringify(_bookmarks)); } catch {} }
+  function _addBookmark() {
+    const label = _bmLabelInput.trim() || `view ${_bookmarks.length + 1}`;
+    _bookmarks = [..._bookmarks, { label, scale: get(scaleStore), px: get(pxStore), py: get(pyStore), ts: Date.now() }];
+    _bmLabelInput = '';
+    _saveBookmarks();
+  }
+  function _deleteBookmark(i) { _bookmarks = _bookmarks.filter((_, idx) => idx !== i); _saveBookmarks(); }
+  function _jumpBookmark(bm) { window._applyViewportTo?.(bm.scale, bm.px, bm.py); _closeRadialMenu(); }
+  let _radialSubmenuLocked = false;
+  let _bmItemElAll = $state([]);
+  function _closeRadialMenu() { radialMenu = null; _radialHovered = -1; _radialMouseDown = false; _radialSubmenuLocked = false; }
   const RADIAL_RADIUS = 82;
   const RADIAL_DRAG_THRESHOLD = 6;
   const RADIAL_ITEMS = [
@@ -783,6 +802,7 @@
       if (!_radialDragged && Math.sqrt(dx*dx+dy*dy) > RADIAL_DRAG_THRESHOLD) {
         _radialDragged = true;
         radialMenu = { x: _radialStartX, y: _radialStartY };
+        _loadBookmarks();
       }
       if (radialMenu) {
         const dist = Math.sqrt(dx*dx+dy*dy);
@@ -796,9 +816,9 @@
             while (diff < -Math.PI) diff += Math.PI * 2;
             if (Math.abs(diff) < bestDiff) { bestDiff = Math.abs(diff); best = i; }
           });
-          _radialHovered = bestDiff <= TOLERANCE ? best : -1;
+          if (!_radialSubmenuLocked) _radialHovered = bestDiff <= TOLERANCE ? best : -1;
         } else {
-          _radialHovered = -1;
+          if (!_radialSubmenuLocked) _radialHovered = -1;
         }
       }
       return;
@@ -851,15 +871,16 @@
     // Radial menu release
     if (e.button === 2 && _radialMouseDown) {
       _radialMouseDown = false;
-      if (radialMenu && _radialHovered >= 0) {
+      if (radialMenu && _radialHovered >= 0 && !_radialSubmenuLocked) {
+        // Drag-select: hovered item → execute immediately
         const item = RADIAL_ITEMS[_radialHovered];
-        const ox = _radialStartX, oy = _radialStartY;
-        const w = c2w(ox, oy);
-        radialMenu = null; _radialHovered = -1;
+        const w = c2w(_radialStartX, _radialStartY);
+        _closeRadialMenu();
         executeRadialItem(item, w.x, w.y);
-      } else {
-        radialMenu = null; _radialHovered = -1;
+      } else if (!radialMenu) {
+        _radialHovered = -1;
       }
+      // else: menu is showing → keep open for click
       return;
     }
 
@@ -1490,7 +1511,7 @@
     else if (item.label === 'Draw')    { curTool = 'pen'; setCurTool('pen'); }
     else if (item.label === 'AI Note') { makeAiNote(wx, wy); }
     else if (item.label === 'Dashboard') { onBack(); }
-    else if (item.label === 'Bookmark')  { /* bookmark support TBD */ }
+    else if (item.label === 'Bookmark')  { _addBookmark(); }
   }
 
   // ── Context menu ─────────────────────────────
@@ -1714,14 +1735,16 @@
     function onDocRadialUp(e) {
       if (e.button !== 2 || !_radialMouseDown) return;
       _radialMouseDown = false;
-      if (radialMenu && _radialHovered >= 0) {
+      if (radialMenu && _radialHovered >= 0 && !_radialSubmenuLocked) {
+        // Drag-select: execute immediately
         const item = RADIAL_ITEMS[_radialHovered];
         const w = c2w(_radialStartX, _radialStartY);
-        radialMenu = null; _radialHovered = -1;
+        _closeRadialMenu();
         executeRadialItem(item, w.x, w.y);
-      } else {
-        radialMenu = null; _radialHovered = -1;
+      } else if (!radialMenu) {
+        _radialHovered = -1;
       }
+      // else: menu open → keep open for click
     }
     function onDocRadialMove(e) {
       if (!_radialMouseDown || !radialMenu) return;
@@ -1737,16 +1760,19 @@
           while (diff < -Math.PI) diff += Math.PI * 2;
           if (Math.abs(diff) < bestDiff) { bestDiff = Math.abs(diff); best = i; }
         });
-        _radialHovered = bestDiff <= TOLERANCE ? best : -1;
+        if (!_radialSubmenuLocked) _radialHovered = bestDiff <= TOLERANCE ? best : -1;
       } else {
-        _radialHovered = -1;
+        if (!_radialSubmenuLocked) _radialHovered = -1;
       }
     }
+    function onDocContextMenu(e) { e.preventDefault(); }
     document.addEventListener('pointerup', onDocRadialUp);
     document.addEventListener('pointermove', onDocRadialMove);
+    document.addEventListener('contextmenu', onDocContextMenu);
     _docRadialCleanup = () => {
       document.removeEventListener('pointerup', onDocRadialUp);
       document.removeEventListener('pointermove', onDocRadialMove);
+      document.removeEventListener('contextmenu', onDocContextMenu);
     };
   });
 </script>
@@ -1821,7 +1847,8 @@
     <!-- backdrop to capture pointer release anywhere -->
     <div
       style="position:fixed;inset:0;z-index:8999;"
-      onpointerup={e => { if (e.button === 2) { radialMenu = null; _radialHovered = -1; _radialMouseDown = false; } }}
+      onpointerup={e => { if (e.button === 2 && _radialHovered < 0) { _closeRadialMenu(); } }}
+      onclick={e => { if (e.target === e.currentTarget) { _closeRadialMenu(); } }}
       oncontextmenu={e => e.preventDefault()}
       role="none"
     ></div>
@@ -1836,7 +1863,11 @@
           class:hovered={_radialHovered === i}
           class:radial-item-left={isLeft}
           style="transform:translate(calc({ix}px - 50%), calc({iy}px - 50%));"
-          role="none"
+          role="button"
+          tabindex="0"
+          bind:this={_bmItemElAll[i]}
+          onclick={e => { e.stopPropagation(); const w = c2w(_radialStartX, _radialStartY); _closeRadialMenu(); executeRadialItem(item, w.x, w.y); }}
+          onkeydown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); const w = c2w(_radialStartX, _radialStartY); _closeRadialMenu(); executeRadialItem(item, w.x, w.y); } }}
         >
           <span class="radial-item-icon" style={item.color ? `color:${item.color}` : ''}>
             <svg viewBox="0 0 15 15">{@html item.icon}</svg>
@@ -1846,6 +1877,32 @@
       {/each}
       <div class="radial-center"></div>
     </div>
+    {#if _radialHovered === 4}
+      {@const bmRect = _bmItemElAll[4]?.getBoundingClientRect()}
+      <div
+        class="radial-bm-submenu"
+        style="left:{bmRect ? bmRect.left - 8 : 0}px; top:{bmRect ? bmRect.top : 0}px; transform: translateX(-100%);"
+        onclick={e => e.stopPropagation()}
+        onpointerenter={e => { e.stopPropagation(); _radialSubmenuLocked = true; }}
+        onpointerleave={e => { if (!e.currentTarget.contains(/** @type {Node} */(e.relatedTarget))) { _radialSubmenuLocked = false; } }}
+        role="none"
+      >
+        <div class="radial-bm-add">
+          <input type="text" placeholder="label…" bind:value={_bmLabelInput} onkeydown={e => { if (e.key === 'Enter') { e.stopPropagation(); _addBookmark(); } }} onclick={e => e.stopPropagation()} />
+          <button onclick={e => { e.stopPropagation(); _addBookmark(); }}>+ save view</button>
+        </div>
+        {#if _bookmarks.length > 0}
+          <div class="radial-bm-list">
+            {#each _bookmarks as bm, bi}
+              <div class="radial-bm-row">
+                <button class="radial-bm-jump" onclick={e => { e.stopPropagation(); _jumpBookmark(bm); }}>{bm.label}</button>
+                <button class="radial-bm-del" onclick={e => { e.stopPropagation(); _deleteBookmark(bi); }} aria-label="delete">✕</button>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
   {/if}
 
   <!-- Element context menu -->
@@ -1947,7 +2004,7 @@
   .radial-wrap {
     position: fixed;
     z-index: 9000;
-    pointer-events: none;
+    pointer-events: none; /* items override with pointer-events:all */
   }
   .radial-center {
     position: absolute;
@@ -1974,7 +2031,8 @@
     backdrop-filter: blur(40px);
     -webkit-backdrop-filter: blur(40px);
     user-select: none;
-    pointer-events: none;
+    pointer-events: all;
+    cursor: pointer;
   }
   .radial-item.radial-item-left { flex-direction: row-reverse; }
   .radial-item.hovered {
@@ -1994,6 +2052,53 @@
     stroke: currentColor; fill: none;
     stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
   }
+
+  /* ── Bookmark submenu ── */
+  .radial-bm-submenu {
+    position: fixed;
+    width: 200px;
+    background: rgba(13,13,14,0.97);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px;
+    backdrop-filter: blur(40px);
+    -webkit-backdrop-filter: blur(40px);
+    padding: 6px 0;
+    z-index: 9001;
+    pointer-events: all;
+  }
+  .radial-bm-list { max-height: 160px; overflow-y: auto; }
+  .radial-bm-add { border-bottom: 1px solid rgba(255,255,255,0.07); margin-bottom: 4px; border-top: none; margin-top: 0; }
+  .radial-bm-row {
+    display: flex; align-items: center;
+    padding: 0 4px 0 8px;
+  }
+  .radial-bm-jump {
+    flex: 1; background: none; border: none; cursor: pointer;
+    color: rgba(255,255,255,0.72); font-size: 11px; font-family: 'Geist', sans-serif;
+    text-align: left; padding: 4px 4px; border-radius: 4px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .radial-bm-jump:hover { background: rgba(255,255,255,0.06); color: #fff; }
+  .radial-bm-del {
+    background: none; border: none; cursor: pointer;
+    color: rgba(255,255,255,0.2); font-size: 9px; padding: 4px 6px;
+  }
+  .radial-bm-del:hover { color: #e84444; }
+  .radial-bm-add {
+    display: flex; gap: 4px; padding: 6px 8px;
+  }
+  .radial-bm-add input {
+    flex: 1; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 4px; padding: 3px 6px; color: rgba(255,255,255,0.72);
+    font-size: 10px; font-family: 'Geist', sans-serif;
+  }
+  .radial-bm-add input:focus { outline: none; border-color: rgba(232,68,10,0.5); }
+  .radial-bm-add button {
+    background: none; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px;
+    padding: 3px 7px; cursor: pointer; color: rgba(255,255,255,0.5);
+    font-size: 10px; font-family: 'Geist', sans-serif; white-space: nowrap;
+  }
+  .radial-bm-add button:hover { color: #fff; border-color: rgba(232,68,10,0.5); }
 
   /* ── Element context menu ── */
   .el-ctx-menu {

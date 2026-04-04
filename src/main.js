@@ -66,7 +66,7 @@ import Minimap         from './lib/Minimap.svelte';
 import CommandPalette  from './lib/CommandPalette.svelte';
 
 const pixiMount = document.getElementById('pixi-canvas-mount');
-if (pixiMount) mount(Canvas, { target: pixiMount });
+if (pixiMount) mount(Canvas, { target: pixiMount, props: { onBack: () => window.goToDashboard?.() } });
 
 const toolbarMount = document.getElementById('svelte-toolbar-mount');
 if (toolbarMount) mount(Toolbar, { target: toolbarMount });
