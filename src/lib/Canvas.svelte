@@ -980,8 +980,10 @@
     // Click on already-selected element (no shift): keep selection, just drag
 
     if (selected.has(id)) {
-      isDragging = true;
       const els = $elementsStore;
+      const clickedEl = els.find(e => e.id === id);
+      if (clickedEl?.pinned) return; // pinned elements cannot be dragged
+      isDragging = true;
       // Collect selected ids + any children of selected frames (so frames drag with their contents)
       const dragIds = new Set(selected);
       for (const sid of selected) {
@@ -990,10 +992,13 @@
           sel.content.groupIds.forEach(cid => dragIds.add(cid));
         }
       }
-      dragOrigins = [...dragIds].map(sid => {
-        const el = els.find(e => e.id === sid);
-        return { id: sid, origX: el?.x || 0, origY: el?.y || 0, startClientX: e.clientX, startClientY: e.clientY };
-      });
+      // Exclude pinned elements from drag
+      dragOrigins = [...dragIds]
+        .filter(sid => !els.find(e => e.id === sid)?.pinned)
+        .map(sid => {
+          const el = els.find(e => e.id === sid);
+          return { id: sid, origX: el?.x || 0, origY: el?.y || 0, startClientX: e.clientX, startClientY: e.clientY };
+        });
       dragOrigins.forEach(o => { o.startClientX = e.clientX; o.startClientY = e.clientY; });
     }
   }
