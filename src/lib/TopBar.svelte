@@ -18,15 +18,6 @@
   </div>
 
   <div id="filter-bar" style="flex:1;display:flex;align-items:center;gap:6px;margin:0 16px;">
-    <div id="search-wrap">
-      <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="3.5"/><line x1="7.5" y1="7.5" x2="11" y2="11"/></svg>
-      <input
-        class="svelte-search-input"
-        type="text"
-        placeholder="search..."
-        bind:value={searchQuery}
-      />
-    </div>
     <button class="sort-btn" class:active={currentSort === 'recent'} onclick={() => dispatch('setSort', 'recent')}>
       <svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.5"/><polyline points="6,3 6,6 8,7.5"/></svg>
       recent

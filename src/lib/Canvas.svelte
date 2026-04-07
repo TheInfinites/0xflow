@@ -34,6 +34,7 @@
   let curTool = $state('select');
   let selected = new Set();       // Set of element ids
   let isDragging = false;
+  let dragMoved = false; // true if pointer moved during a drag (suppresses pointertap play toggle)
   let isPanning = false;
   let panStart = { x: 0, y: 0, px: 0, py: 0 };
   let marqueeActive = false;
@@ -345,6 +346,7 @@
     c.on('pointerdown', e => onElPointerDown(e, el.id));
     c.on('pointertap', e => {
       if (e.button !== 0) return;
+      if (dragMoved) return;
       const elData = $elementsStore.find(x => x.id === el.id);
       if (elData?.type === 'video') window._videoPlayers?.[el.id]?.togglePlay();
     });
@@ -837,6 +839,7 @@
     }
 
     if (isDragging && dragOrigins.length) {
+      dragMoved = true;
       const dx = (e.clientX - dragOrigins[0].startClientX) / scale;
       const dy = (e.clientY - dragOrigins[0].startClientY) / scale;
       elementsStore.update(els => {
@@ -966,6 +969,7 @@
     e.stopPropagation();
     if (e.button !== 0) return;
     if (curTool !== 'select') return;
+    dragMoved = false;
 
     selectedRelId = null;
 
