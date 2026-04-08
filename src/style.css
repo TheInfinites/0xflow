@@ -568,6 +568,7 @@ body.dash-light #empty-state h3 { color: rgba(0,0,0,0.5); }
   display: flex; align-items: center; justify-content: space-between; padding: 0 16px; gap: 12px;
   background: rgba(10,10,10,0.92); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
   border-bottom: 1px solid rgba(255,255,255,0.06);
+  pointer-events: auto;
 }
 /* ── Window controls (Tauri) ── */
 #win-controls { display: none; }
