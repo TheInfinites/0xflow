@@ -478,7 +478,7 @@
   function onDocMousedown(e) {
     if (!visible) return;
     if (e.button !== 0) return;
-    if (e.target.closest('#fb-img-ctx-menu') || e.target.closest('.fb-panel')) return;
+    if (e.target.closest('#fb-img-ctx-menu') || e.target.closest('[data-depth]')) return;
     closeAll();
   }
 
@@ -506,35 +506,20 @@
   // ── Expose to window for legacy onclick= and Canvas.svelte ───────────────
   import { onMount } from 'svelte';
   // Track which menu item is under pointer at document level — avoids WebKit stuck-hover
-  let _hoverClearTimer = null;
   function onDocPointerMove(e) {
-    clearTimeout(_hoverClearTimer);
     if (!menuReady()) { hoveredItemId = null; renamePanelVisible = false; return; }
     const menu = document.getElementById('fb-img-ctx-menu');
     if (!menu) { hoveredItemId = null; return; }
     const el = document.elementFromPoint(e.clientX, e.clientY);
-    const overMenuOrPanel = el?.closest('#fb-img-ctx-menu, .fb-panel');
-    if (!overMenuOrPanel) {
-      // pointer left menu and all panels — close everything
-      _hoverClearTimer = setTimeout(() => {
-        hoveredItemId = null;
-        renamePanelVisible = false;
-        panels = [];
-      }, 80);
-      return;
+    const overMenu = el?.closest('#fb-img-ctx-menu');
+    if (!overMenu) return; // not over menu — do nothing (panel, gap, or elsewhere)
+    const it = el?.closest('[data-iid]');
+    const next = (it && menu.contains(it)) ? it.dataset.iid : null;
+    if (next !== hoveredItemId) {
+      hoveredItemId = next;
+      if (next !== 'rename') renamePanelVisible = false;
+      if (next !== 'movecopy' && next !== null) panels = [];
     }
-    // update hovered item only when over the main menu, not a panel
-    if (el?.closest('#fb-img-ctx-menu')) {
-      const it = el?.closest('[data-iid]');
-      const next = (it && menu.contains(it)) ? it.dataset.iid : null;
-      if (next !== hoveredItemId) {
-        hoveredItemId = next;
-        if (next !== 'rename') renamePanelVisible = false;
-        // close panels when moving to a different item (or no item)
-        if (next !== 'movecopy') panels = [];
-      }
-    }
-    // when mouse is in a panel, keep hoveredItemId as-is (parent item stays highlighted)
   }
 
   $effect(() => {

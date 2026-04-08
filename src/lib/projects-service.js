@@ -125,6 +125,8 @@ function deleteProject(id) {
 
 // ── Canvas save (v2) ──────────────────────────
 
+let _loadingCanvas = false; // suppress debounced save during load
+
 async function _saveCurrentCanvas() {
   const id = getActiveProjectId();
   if (!id) return;
@@ -176,6 +178,7 @@ async function openProject(id, e) {
   isOnCanvasStore.set(true);
 
   // Load canvas state — try v2 first, then attempt v1→v2 migration, else DOM restore
+  _loadingCanvas = true;
   clearCanvasState();
   const state = await loadCanvasV2(id);
   if (state) {
@@ -191,6 +194,7 @@ async function openProject(id, e) {
     }
     // No canvas data — blank canvas, nothing to show
   }
+  _loadingCanvas = false;
 
   // Restore project directory button (was previously done in legacy loadCanvasState)
   window.loadProjectDir?.();
@@ -310,13 +314,40 @@ function initProjectsService() {
     }
   }, 30000);
 
-  // Save on page unload
+  // Debounced save on element changes — saves 2s after any store mutation
+  let _debounceSaveTimer = null;
+  elementsStore.subscribe(() => {
+    if (!get(isOnCanvasStore) || _loadingCanvas) return;
+    clearTimeout(_debounceSaveTimer);
+    _debounceSaveTimer = setTimeout(() => _saveCurrentCanvas(), 2000);
+  });
+
+  // Save on page unload (browser)
   window.addEventListener('beforeunload', () => {
     if (get(isOnCanvasStore)) {
       const id = getActiveProjectId();
       if (id) saveCanvasV2(id).catch(() => {});
     }
   });
+
+  // Tauri: save before window closes (beforeunload is unreliable in WebView2)
+  if (IS_TAURI_STORAGE) {
+    try {
+      const tauriWindow = window.__TAURI__?.window?.getCurrentWindow?.();
+      if (tauriWindow?.onCloseRequested) {
+        tauriWindow.onCloseRequested(async (event) => {
+          event.preventDefault();
+          if (get(isOnCanvasStore)) {
+            const id = getActiveProjectId();
+            if (id) await saveCanvasV2(id).catch(() => {});
+          }
+          tauriWindow.destroy();
+        });
+      }
+    } catch (e) {
+      console.warn('[projects-service] could not attach close-requested handler:', e);
+    }
+  }
 }
 
 // ── Helpers ───────────────────────────────────

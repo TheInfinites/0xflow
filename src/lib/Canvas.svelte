@@ -45,6 +45,7 @@
   let relDragLine   = $state(null); // { x1, y1, x2, y2 }
   let relDragSourceId = null;
   let relDragLocked = false; // true once menu is open — freezes endpoint
+  let _relDragConnected = false; // set by finishRelDrag so onRcUp knows the outcome
   let dragOrigins = [];
   let dragDelta = { x: 0, y: 0 };
   let snapEnabled = false;
@@ -257,7 +258,7 @@
   }
 
   function animateZoom() {
-    if (!zoomTarget) { zoomRaf = null; return; }
+    if (!zoomTarget || isPanning) { zoomRaf = null; return; }
     const ds = zoomTarget.scale - scale;
     const dx = zoomTarget.px - px;
     const dy = zoomTarget.py - py;
@@ -368,15 +369,26 @@
       function onRcUp(ev) {
         document.removeEventListener('pointermove', onRcMove);
         document.removeEventListener('pointerup', onRcUp);
-        if (isMedia) {
-          // draw line from element center to menu position; clears when menu closes
+        if (moved) {
+          const connected = _relDragConnected;
+          _relDragConnected = false;
+          if (connected) {
+            clearRelDragLine();
+          } else {
+            // Released on empty canvas — keep the line visible, lock it, open ctx menu
+            relDragLocked = true;
+            if (isMedia) {
+              window.openImgCtxMenu?.(ev.clientX, ev.clientY, el.id);
+            } else {
+              openCtxMenu(ev, el.id);
+            }
+          }
+        } else if (isMedia) {
+          // Plain right-click on media (no drag) → draw line + open image ctx menu
           if (!relDragActive) startRelDrag(el.id, ev.clientX, ev.clientY);
           else updateRelDrag(ev.clientX, ev.clientY);
-          relDragLocked = true; // freeze endpoint — menu will snap it via updateRelDragEndpoint
+          relDragLocked = true;
           window.openImgCtxMenu?.(ev.clientX, ev.clientY, el.id);
-        } else if (moved) {
-          finishRelDrag(ev.clientX, ev.clientY);
-          clearRelDragLine();
         } else {
           clearRelDragLine();
           openCtxMenu(ev, el.id);
@@ -744,10 +756,16 @@
 
   // ── Pointer event handlers ───────────────────
   function onPointerDown(e) {
-    // Suppress if a Pixi element was hit
+    // Suppress if a Pixi element was hit (walk up ancestors — hitTest returns deepest child)
     const r = canvasEl.getBoundingClientRect();
     const hit = app?.renderer?.events?.rootBoundary?.hitTest?.(e.clientX - r.left, e.clientY - r.top);
-    if (hit && hit.label && _elContainers.has(hit.label)) return;
+    if (hit) {
+      let node = hit;
+      while (node) {
+        if (node.label && _elContainers.has(node.label)) return;
+        node = node.parent;
+      }
+    }
 
     // Right-click drag on empty canvas → radial menu
     if (e.button === 2) {
@@ -760,7 +778,8 @@
     }
 
     if (e.button === 1 || (e.button === 0 && e.altKey)) {
-      // Pan
+      // Pan — cancel any in-progress zoom animation so it doesn't fight the drag
+      zoomTarget = null; zoomRaf = null;
       isPanning = true;
       panStart = { x: e.clientX, y: e.clientY, px, py };
       return;
@@ -959,7 +978,8 @@
       const factor = e.deltaY > 0 ? 0.92 : 1 / 0.92;
       doZoom(factor, e.clientX, e.clientY);
     } else {
-      // Pan (trackpad horizontal)
+      // Pan (trackpad horizontal) — cancel zoom animation so it doesn't snap back
+      zoomTarget = null; zoomRaf = null;
       px -= e.deltaX; py -= e.deltaY;
       applyViewport();
     }
@@ -1055,6 +1075,7 @@
     if (!src) return;
     relDragSourceId = sourceId;
     relDragActive = true;
+    _relDragConnected = false;
     const cx = (src.x + src.width/2 - WORLD_OFFSET) * scale + px;
     const cy = (src.y + src.height/2 - WORLD_OFFSET) * scale + py;
     const cur = _toOverlay(clientX, clientY);
@@ -1079,23 +1100,48 @@
   }
 
   function finishRelDrag(clientX, clientY) {
-    if (!relDragActive) return;
-    relDragActive = false;
-    relDragLine = null;
+    if (!relDragActive) return false;
     const srcId = relDragSourceId;
-    relDragSourceId = null;
-    if (!srcId) return;
-    // Find element under cursor
+    if (!srcId) { clearRelDragLine(); return false; }
+
+    // Find element under cursor — check Pixi scene (walk ancestors) and DOM overlay elements
     const r = canvasEl.getBoundingClientRect();
     const hit = app?.renderer?.events?.rootBoundary?.hitTest?.(clientX - r.left, clientY - r.top);
-    const targetId = hit?.label;
-    if (targetId && targetId !== srcId && _elContainers.has(targetId)) {
+    let targetId = null;
+    if (hit) {
+      let node = hit;
+      while (node) {
+        if (node.label && _elContainers.has(node.label)) { targetId = node.label; break; }
+        node = node.parent;
+      }
+    }
+    // Fallback: test world coords against all elements (catches DOM overlay elements)
+    if (!targetId) {
+      const wp = c2w(clientX, clientY);
+      const found = $elementsStore.find(e =>
+        e.id !== srcId &&
+        wp.x >= e.x && wp.x <= e.x + e.width &&
+        wp.y >= e.y && wp.y <= e.y + e.height
+      );
+      if (found) targetId = found.id;
+    }
+
+    if (targetId && targetId !== srcId) {
+      // Connected — clear line and create relation
+      clearRelDragLine();
       const already = $relationsStore.some(r => (r.elAId === srcId && r.elBId === targetId) || (r.elAId === targetId && r.elBId === srcId));
       if (!already) {
         snapshot();
         relationsStore.update(rs => [...rs, { id: crypto.randomUUID(), elAId: srcId, elBId: targetId }]);
       }
+      _relDragConnected = true;
+      return true;
     }
+
+    // Released on empty canvas — leave line visible for onRcUp to decide
+    relDragActive = false;
+    _relDragConnected = false;
+    return false;
   }
 
   function finishMarquee(start, end) {
@@ -1492,60 +1538,57 @@
   function alignSelected(dir) {
     if (selected.size < 2) return;
     snapshot();
-    const els = $elementsStore.filter(e => selected.has(e.id));
+    const els = get(elementsStore).filter(e => selected.has(e.id));
+    if (!els.length) return;
     const minX = Math.min(...els.map(e => e.x));
-    const maxX = Math.max(...els.map(e => e.x + e.width));
+    const maxX = Math.max(...els.map(e => e.x + (e.width  || 0)));
     const minY = Math.min(...els.map(e => e.y));
-    const maxY = Math.max(...els.map(e => e.y + e.height));
+    const maxY = Math.max(...els.map(e => e.y + (e.height || 0)));
     const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
 
-    elementsStore.update(all => {
-      for (const el of all) {
-        if (!selected.has(el.id)) continue;
-        if (dir === 'left')    el.x = minX;
-        if (dir === 'right')   el.x = maxX - el.width;
-        if (dir === 'centerH') el.x = cx - el.width / 2;
-        if (dir === 'top')     el.y = minY;
-        if (dir === 'bottom')  el.y = maxY - el.height;
-        if (dir === 'centerV') el.y = cy - el.height / 2;
-      }
-      return all;
-    });
-    snapshot();
+    elementsStore.update(all => all.map(el => {
+      if (!selected.has(el.id)) return el;
+      let nx = el.x, ny = el.y;
+      if (dir === 'left')    nx = minX;
+      if (dir === 'right')   nx = maxX - (el.width  || 0);
+      if (dir === 'centerH') nx = cx   - (el.width  || 0) / 2;
+      if (dir === 'top')     ny = minY;
+      if (dir === 'bottom')  ny = maxY - (el.height || 0);
+      if (dir === 'centerV') ny = cy   - (el.height || 0) / 2;
+      return { ...el, x: nx, y: ny };
+    }));
   }
 
   function distributeSelected(axis) {
     if (selected.size < 3) return;
     snapshot();
-    const els = [...$elementsStore.filter(e => selected.has(e.id))];
+    const sorted = [...get(elementsStore).filter(e => selected.has(e.id))];
+    const newPositions = new Map();
     if (axis === 'H') {
-      els.sort((a, b) => a.x - b.x);
-      const total = els[els.length-1].x + els[els.length-1].width - els[0].x;
-      const sumW = els.reduce((s, e) => s + e.width, 0);
-      const gap = (total - sumW) / (els.length - 1);
-      let cx = els[0].x + els[0].width;
-      elementsStore.update(all => {
-        for (let i = 1; i < els.length - 1; i++) {
-          const el = all.find(e => e.id === els[i].id);
-          if (el) { el.x = cx + gap; cx += gap + el.width; }
-        }
-        return all;
-      });
+      sorted.sort((a, b) => a.x - b.x);
+      const total = sorted[sorted.length-1].x + (sorted[sorted.length-1].width||0) - sorted[0].x;
+      const sumW = sorted.reduce((s, e) => s + (e.width||0), 0);
+      const gap = (total - sumW) / (sorted.length - 1);
+      let cx = sorted[0].x + (sorted[0].width||0);
+      for (let i = 1; i < sorted.length - 1; i++) {
+        newPositions.set(sorted[i].id, { x: cx + gap });
+        cx += gap + (sorted[i].width||0);
+      }
     } else {
-      els.sort((a, b) => a.y - b.y);
-      const total = els[els.length-1].y + els[els.length-1].height - els[0].y;
-      const sumH = els.reduce((s, e) => s + e.height, 0);
-      const gap = (total - sumH) / (els.length - 1);
-      let cy = els[0].y + els[0].height;
-      elementsStore.update(all => {
-        for (let i = 1; i < els.length - 1; i++) {
-          const el = all.find(e => e.id === els[i].id);
-          if (el) { el.y = cy + gap; cy += gap + el.height; }
-        }
-        return all;
-      });
+      sorted.sort((a, b) => a.y - b.y);
+      const total = sorted[sorted.length-1].y + (sorted[sorted.length-1].height||0) - sorted[0].y;
+      const sumH = sorted.reduce((s, e) => s + (e.height||0), 0);
+      const gap = (total - sumH) / (sorted.length - 1);
+      let cy = sorted[0].y + (sorted[0].height||0);
+      for (let i = 1; i < sorted.length - 1; i++) {
+        newPositions.set(sorted[i].id, { y: cy + gap });
+        cy += gap + (sorted[i].height||0);
+      }
     }
-    snapshot();
+    elementsStore.update(all => all.map(el => {
+      const np = newPositions.get(el.id);
+      return np ? { ...el, ...np } : el;
+    }));
   }
 
   // ── Radial menu actions ──────────────────────
@@ -1563,7 +1606,7 @@
     ctxMenu = { x: e.clientX, y: e.clientY, elId };
   }
 
-  function closeCtxMenu() { ctxMenu = null; }
+  function closeCtxMenu() { ctxMenu = null; clearRelDragLine(); }
 
   function ctxSetColor(elId, color) {
     snapshot();
@@ -1845,7 +1888,7 @@
     style="position:absolute;inset:0;pointer-events:none;"
   >
     <!-- Relation drag wire preview — behind all cards -->
-    {#if relDragActive && relDragLine}
+    {#if relDragLine}
       {@const { x1, y1, x2, y2 } = relDragLine}
       {@const dx = Math.abs(x2 - x1) * 0.5}
       <svg class="rel-drag-svg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;">

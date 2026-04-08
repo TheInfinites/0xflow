@@ -162,9 +162,17 @@
     ctxId = id;
     const btn = e.target.closest('.card-action-btn') || e.target;
     const rect = btn.getBoundingClientRect();
-    ctxX = Math.min(rect.right, window.innerWidth - 196);
-    ctxY = Math.min(rect.bottom + 4, window.innerHeight - 200);
-    ctxOpen = true;
+    const menuW = 180, menuH = 240;
+    // Open above the button, right-aligned to it (card menus open upward from bottom-right)
+    let x = rect.right - menuW;
+    let y = rect.top - menuH - 6;
+    // Flip down if too close to top
+    if (y < 8) y = rect.bottom + 6;
+    // Clamp to viewport
+    ctxX = Math.max(8, Math.min(x, window.innerWidth - menuW - 8));
+    ctxY = Math.max(8, y);
+    // Defer so onDocClick for this same event fires before we open, not after
+    setTimeout(() => { ctxOpen = true; }, 0);
   }
 
   function closeCtxMenu() { ctxOpen = false; ctxId = null; }
@@ -188,7 +196,8 @@
 
   // ── keyboard ─────────────────────────────────
   function onKeydown(e) {
-    if (e.target.tagName === 'INPUT') return;
+    if (document.body.classList.contains('on-canvas')) return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
     if (e.key === 'n' || e.key === 'N') openNewModal();
     if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
       e.preventDefault();
@@ -311,3 +320,59 @@
     </button>
   </div>
 {/if}
+
+<style>
+  #svelte-ctx-menu {
+    background: #1a1a1c;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    padding: 5px;
+    min-width: 160px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+  .ctx-item {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%; padding: 7px 10px;
+    background: none; border: none; cursor: pointer;
+    border-radius: 6px;
+    color: rgba(255,255,255,0.6);
+    font-size: 12px; font-family: 'Geist', sans-serif;
+    font-weight: 400; text-transform: none; letter-spacing: normal;
+    text-align: left;
+    transition: background 0.1s, color 0.1s;
+  }
+  .ctx-item:hover { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.95); }
+  .ctx-item.danger { color: rgba(232,68,10,0.85); }
+  .ctx-item.danger:hover { background: rgba(232,68,10,0.1); color: #e8440a; }
+  .ctx-item :global(svg) { width:12px; height:12px; stroke:currentColor; fill:none; stroke-width:1.4; stroke-linecap:round; stroke-linejoin:round; flex-shrink:0; }
+  .ctx-divider { height: 1px; background: rgba(255,255,255,0.07); margin: 4px 5px; }
+  .ctx-label { font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255,255,255,0.2); padding: 6px 10px 3px; font-family: 'Geist', sans-serif; }
+  .ctx-folder-item {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%; padding: 6px 10px;
+    background: none; border: none; cursor: pointer;
+    border-radius: 5px;
+    color: rgba(255,255,255,0.45);
+    font-size: 11px; font-family: 'Geist', sans-serif;
+    font-weight: 400; text-transform: none; letter-spacing: normal;
+    text-align: left;
+    transition: background 0.1s, color 0.1s;
+  }
+  .ctx-folder-item:hover { background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.8); }
+  .ctx-folder-item :global(svg) { width:11px; height:11px; stroke:currentColor; fill:none; stroke-width:1.4; stroke-linecap:round; stroke-linejoin:round; flex-shrink:0; }
+
+  /* Light mode overrides */
+  :global(body.dash-light) #svelte-ctx-menu {
+    background: #f0ede8;
+    border-color: rgba(0,0,0,0.12);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+  }
+  :global(body.dash-light) .ctx-item { color: rgba(0,0,0,0.5); }
+  :global(body.dash-light) .ctx-item:hover { background: rgba(0,0,0,0.05); color: rgba(0,0,0,0.85); }
+  :global(body.dash-light) .ctx-divider { background: rgba(0,0,0,0.08); }
+  :global(body.dash-light) .ctx-label { color: rgba(0,0,0,0.25); }
+  :global(body.dash-light) .ctx-folder-item { color: rgba(0,0,0,0.4); }
+  :global(body.dash-light) .ctx-folder-item:hover { color: rgba(0,0,0,0.8); background: rgba(0,0,0,0.04); }
+</style>

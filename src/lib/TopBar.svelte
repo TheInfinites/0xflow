@@ -37,7 +37,7 @@
   </div>
 
   <div id="topbar-right">
-    <span id="app-version" style="font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,0.2);letter-spacing:0.05em;">v0.5.0</span>
+    <span id="app-version" style="font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,0.2);letter-spacing:0.05em;">v0.8.0</span>
     <button id="update-btn" class="pill-btn" onclick={() => window.checkForAppUpdate?.(false)}
       style="display:none;background:rgba(232,68,10,0.15);color:#E8440A;border-color:rgba(232,68,10,0.3);">↑ update</button>
     <span id="topbar-date"></span>
@@ -55,8 +55,7 @@
       <svg viewBox="0 0 12 12"><line x1="6" y1="1" x2="6" y2="11"/><line x1="1" y1="6" x2="11" y2="6"/></svg>
       new canvas
     </button>
-    <button id="dash-close-btn" onclick={toggleDashboard} title="back to canvas  ⌘\\"
-      style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;background:none;border:1px solid rgba(255,255,255,0.1);border-radius:6px;cursor:pointer;color:rgba(255,255,255,0.4);transition:all 0.1s;">
+    <button id="dash-close-btn" onclick={toggleDashboard} title="back to canvas  ⌘\\">
       <svg viewBox="0 0 12 12" style="width:10px;height:10px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;">
         <line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/>
       </svg>
