@@ -61,7 +61,7 @@
   });
 </script>
 
-<div id="bar" data-tauri-drag-region class="svelte-bar">
+<div id="bar" class="svelte-bar">
   <div id="bar-left">
     <button id="back-btn" title="dashboard  ⌘\\" onclick={onback}>
       <svg viewBox="0 0 13 13"><rect x="1" y="1" width="5" height="5" rx="1"/><rect x="7" y="1" width="5" height="5" rx="1"/><rect x="1" y="7" width="5" height="5" rx="1"/><rect x="7" y="7" width="5" height="5" rx="1"/></svg>
