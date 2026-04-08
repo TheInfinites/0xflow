@@ -37,7 +37,7 @@
   </div>
 
   <div id="topbar-right">
-    <span id="app-version" style="font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,0.2);letter-spacing:0.05em;">v0.8.0</span>
+    <span id="app-version" style="font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,0.2);letter-spacing:0.05em;">v0.8.2</span>
     <button id="update-btn" class="pill-btn" onclick={() => window.checkForAppUpdate?.(false)}
       style="display:none;background:rgba(232,68,10,0.15);color:#E8440A;border-color:rgba(232,68,10,0.3);">↑ update</button>
     <span id="topbar-date"></span>

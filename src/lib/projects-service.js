@@ -7,6 +7,7 @@
 //   saveProjects, saveFolders, store, markDbReady, dashRender, etc.
 // ════════════════════════════════════════════
 import { get } from 'svelte/store';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { initDB, dbGetAllSettings, dbLoadProjects, dbLoadFolders, dbSaveProject, dbDeleteProject, dbSaveFolder, dbDeleteFolder } from './db.js';
 import {
   projectsStore, foldersStore,
@@ -125,7 +126,8 @@ function deleteProject(id) {
 
 // ── Canvas save (v2) ──────────────────────────
 
-let _loadingCanvas = false; // suppress debounced save during load
+let _loadingCanvas = false;
+let _debounceSaveTimer = null;
 
 async function _saveCurrentCanvas() {
   const id = getActiveProjectId();
@@ -177,31 +179,39 @@ async function openProject(id, e) {
   document.body.classList.add('on-canvas');
   isOnCanvasStore.set(true);
 
+  clearTimeout(_debounceSaveTimer);
+  _debounceSaveTimer = null;
+
   // Load canvas state — try v2 first, then attempt v1→v2 migration, else DOM restore
   _loadingCanvas = true;
   clearCanvasState();
-  const state = await loadCanvasV2(id);
-  if (state) {
-    applyCanvasState(state);
-  } else {
-    // Try v1 migration: read raw v1 data and convert to v2 in-memory
-    const migrated = await _tryMigrateV1(id);
-    if (migrated) {
-      applyCanvasState(migrated);
-      // Persist as v2 so we never need to migrate again
-      await saveCanvasV2(id);
-      showToast('canvas migrated to new format');
+  try {
+    const state = await loadCanvasV2(id);
+    if (state) {
+      applyCanvasState(state);
+    } else {
+      // Try v1 migration: read raw v1 data and convert to v2 in-memory
+      const migrated = await _tryMigrateV1(id);
+      if (migrated) {
+        applyCanvasState(migrated);
+        // Persist as v2 so we never need to migrate again
+        await saveCanvasV2(id);
+        showToast('canvas migrated to new format');
+      }
+      // No canvas data — blank canvas, nothing to show
     }
-    // No canvas data — blank canvas, nothing to show
+  } finally {
+    _loadingCanvas = false;
   }
-  _loadingCanvas = false;
 
   // Restore project directory button (was previously done in legacy loadCanvasState)
   window.loadProjectDir?.();
 }
 
-function goToDashboard() {
-  _saveCurrentCanvas();
+async function goToDashboard() {
+  clearTimeout(_debounceSaveTimer);
+  _debounceSaveTimer = null;
+  await _saveCurrentCanvas();
   document.body.classList.remove('on-canvas');
   isOnCanvasStore.set(false);
   dashRender();
@@ -315,7 +325,6 @@ function initProjectsService() {
   }, 30000);
 
   // Debounced save on element changes — saves 2s after any store mutation
-  let _debounceSaveTimer = null;
   elementsStore.subscribe(() => {
     if (!get(isOnCanvasStore) || _loadingCanvas) return;
     clearTimeout(_debounceSaveTimer);
@@ -333,7 +342,7 @@ function initProjectsService() {
   // Tauri: save before window closes (beforeunload is unreliable in WebView2)
   if (IS_TAURI_STORAGE) {
     try {
-      const tauriWindow = window.__TAURI__?.window?.getCurrentWindow?.();
+      const tauriWindow = getCurrentWindow();
       if (tauriWindow?.onCloseRequested) {
         tauriWindow.onCloseRequested(async (event) => {
           event.preventDefault();

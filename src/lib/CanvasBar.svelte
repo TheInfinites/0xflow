@@ -1,9 +1,10 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { activeProjectIdStore, projectsStore } from '../stores/projects.js';
   import { canUndo, canRedo, undo, redo } from '../stores/elements.js';
   import { IS_TAURI } from './media-service.js';
   import { alwaysOnTopStore, projectDirStore } from '../stores/ui.js';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
 
   let { onback = () => {} } = $props();
 
@@ -18,6 +19,8 @@
   let winMin      = $state(null);
   let winMax      = $state(null);
   let winClose    = $state(null);
+
+  let _win = null; // Tauri window handle, set in onMount
 
   function startRename() {
     renameVal = project?.name ?? '';
@@ -40,15 +43,21 @@
 
   onMount(() => {
     if (!IS_TAURI) return;
-    const win = window.__TAURI__.window.getCurrentWindow();
+    _win = getCurrentWindow();
     if (winControls) winControls.style.display = 'flex';
     [winMin, winMax, winClose].forEach(btn => btn?.addEventListener('mousedown', e => e.stopPropagation()));
     function isDragTarget(e) {
       if (e.target.closest('.win-ctrl, button, input, textarea, select, a')) return false;
       return !!e.target.closest('#bar, #topbar');
     }
-    document.addEventListener('mousedown', e => { if (isDragTarget(e)) win.startDragging(); });
-    document.addEventListener('dblclick',  e => { if (isDragTarget(e)) win.toggleMaximize(); });
+    const onMouseDown = e => { if (isDragTarget(e)) _win.startDragging(); };
+    const onDblClick  = e => { if (isDragTarget(e)) _win.toggleMaximize(); };
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('dblclick',  onDblClick);
+    onDestroy(() => {
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('dblclick',  onDblClick);
+    });
   });
 </script>
 
@@ -115,9 +124,9 @@
     <button class="bar-btn" onclick={() => window.openProjectDirInExplorer?.()} title="Open project folder in file explorer">↗ open folder</button>
     <button class="bar-btn" onclick={() => window.exportSharedCanvas?.()} title="Export self-contained canvas (all media bundled inline)">⬡ share</button>
     <div bind:this={winControls} id="win-controls" style="display:none;margin-left:12px;gap:1px;align-items:center;">
-      <button bind:this={winMin}   class="win-ctrl" id="win-min"   title="Minimize" onclick={e => { e.stopPropagation(); IS_TAURI && window.__TAURI__.window.getCurrentWindow().minimize(); }}>─</button>
-      <button bind:this={winMax}   class="win-ctrl" id="win-max"   title="Maximize" onclick={e => { e.stopPropagation(); IS_TAURI && window.__TAURI__.window.getCurrentWindow().toggleMaximize(); }}>□</button>
-      <button bind:this={winClose} class="win-ctrl win-close" id="win-close" title="Close"    onclick={e => { e.stopPropagation(); IS_TAURI && window.__TAURI__.window.getCurrentWindow().close(); }}>✕</button>
+      <button bind:this={winMin}   class="win-ctrl" id="win-min"   title="Minimize" onclick={e => { e.stopPropagation(); _win?.minimize(); }}>─</button>
+      <button bind:this={winMax}   class="win-ctrl" id="win-max"   title="Maximize" onclick={e => { e.stopPropagation(); _win?.toggleMaximize(); }}>□</button>
+      <button bind:this={winClose} class="win-ctrl win-close" id="win-close" title="Close"    onclick={e => { e.stopPropagation(); _win?.close(); }}>✕</button>
     </div>
   </div>
 </div>
