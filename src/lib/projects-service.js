@@ -217,9 +217,9 @@ async function goToDashboard() {
   dashRender();
 }
 
-function toggleDashboard() {
+async function toggleDashboard() {
   if (get(isOnCanvasStore)) {
-    goToDashboard();
+    await goToDashboard();
   } else {
     const id = getActiveProjectId() || createProject('untitled canvas').id;
     setActiveProjectId(id);
