@@ -1,8 +1,19 @@
 <script>
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onMount } from 'svelte';
   const dispatch = createEventDispatcher();
 
   let { searchQuery = $bindable(''), currentSort, dashView } = $props();
+
+  let appVersion = $state('');
+
+  onMount(async () => {
+    try {
+      const { getVersion } = await import('@tauri-apps/api/app');
+      appVersion = await getVersion();
+    } catch {
+      // browser / fallback
+    }
+  });
 
   // Dashboard theme toggle delegates to legacy
   function toggleDashTheme() { window.toggleDashTheme?.(); }
@@ -37,7 +48,7 @@
   </div>
 
   <div id="topbar-right">
-    <span id="app-version" style="font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,0.2);letter-spacing:0.05em;">v0.8.3</span>
+    {#if appVersion}<span id="app-version" style="font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,0.2);letter-spacing:0.05em;">v{appVersion}</span>{/if}
     <button id="update-btn" class="pill-btn" onclick={() => window.checkForAppUpdate?.(false)}
       style="display:none;background:rgba(232,68,10,0.15);color:#E8440A;border-color:rgba(232,68,10,0.3);">↑ update</button>
     <span id="topbar-date"></span>
