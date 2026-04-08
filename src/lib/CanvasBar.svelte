@@ -43,7 +43,7 @@
 
   onMount(() => {
     if (!IS_TAURI) return;
-    _win = getCurrentWindow();
+    try { _win = getCurrentWindow(); } catch(e) { console.error('[CanvasBar] getCurrentWindow failed:', e); }
     if (winControls) winControls.style.display = 'flex';
     [winMin, winMax, winClose].forEach(btn => btn?.addEventListener('mousedown', e => e.stopPropagation()));
     function isDragTarget(e) {
@@ -126,7 +126,7 @@
     <div bind:this={winControls} id="win-controls" style="display:none;margin-left:12px;gap:1px;align-items:center;">
       <button bind:this={winMin}   class="win-ctrl" id="win-min"   title="Minimize" onclick={e => { e.stopPropagation(); _win?.minimize(); }}>─</button>
       <button bind:this={winMax}   class="win-ctrl" id="win-max"   title="Maximize" onclick={e => { e.stopPropagation(); _win?.toggleMaximize(); }}>□</button>
-      <button bind:this={winClose} class="win-ctrl win-close" id="win-close" title="Close"    onclick={e => { e.stopPropagation(); _win?.close(); }}>✕</button>
+      <button bind:this={winClose} class="win-ctrl win-close" id="win-close" title="Close"    onclick={e => { e.stopPropagation(); if (_win) { _win.close(); } else { window.__TAURI__?.core?.invoke('plugin:process|exit', { code: 0 }); } }}>✕</button>
     </div>
   </div>
 </div>

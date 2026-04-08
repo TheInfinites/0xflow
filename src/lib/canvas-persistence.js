@@ -8,7 +8,7 @@
 import { get } from 'svelte/store';
 import { elementsStore, strokesStore, relationsStore } from '../stores/elements.js';
 import { scaleStore, pxStore, pyStore, setScale, setPx, setPy } from '../stores/canvas.js';
-import { dbSaveCanvasState, dbLoadCanvasState } from './db.js';
+import { dbSaveCanvasState, dbLoadCanvasState, waitForDB } from './db.js';
 import { registerBlobURLs } from './media-service.js';
 import { store } from './kv-store.js';
 
@@ -40,6 +40,7 @@ export async function saveCanvasV2(projectId) {
   }
 
   if (IS_TAURI) {
+    await waitForDB();
     await dbSaveCanvasState(projectId, json);
   } else {
     try { localStorage.setItem('freeflow_canvas_v2_' + projectId, json); } catch {}
@@ -66,6 +67,7 @@ export async function loadCanvasV2(projectId) {
 
   // Then SQLite
   if (!raw && IS_TAURI) {
+    await waitForDB();
     raw = await dbLoadCanvasState(projectId);
   }
 
