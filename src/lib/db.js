@@ -9,8 +9,9 @@ const _dbReady = new Promise(resolve => { _dbResolve = resolve; });
 export function waitForDB() { return _dbReady; }
 
 export async function initDB() {
-  const Database = window.__TAURI__?.sql?.Database;
-  if (!Database) { _dbResolve(); return; } // browser mode
+  const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
+  if (!IS_TAURI) { _dbResolve(); return; } // browser mode
+  const { default: Database } = await import('@tauri-apps/plugin-sql');
   _db = await Database.load('sqlite:0xflow.db');
 
   await _db.execute(`CREATE TABLE IF NOT EXISTS meta (

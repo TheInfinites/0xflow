@@ -5,7 +5,7 @@
   import { IS_TAURI } from './media-service.js';
   import { alwaysOnTopStore, projectDirStore } from '../stores/ui.js';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { invoke } from '@tauri-apps/api/core';
+
 
   let { onback = () => {} } = $props();
 
@@ -127,7 +127,7 @@
     <div bind:this={winControls} id="win-controls" style="display:none;margin-left:12px;gap:1px;align-items:center;">
       <button bind:this={winMin}   class="win-ctrl" id="win-min"   title="Minimize" onclick={e => { e.stopPropagation(); _win?.minimize(); }}>─</button>
       <button bind:this={winMax}   class="win-ctrl" id="win-max"   title="Maximize" onclick={e => { e.stopPropagation(); _win?.toggleMaximize(); }}>□</button>
-      <button bind:this={winClose} class="win-ctrl win-close" id="win-close" title="Close"    onclick={e => { e.stopPropagation(); invoke('plugin:window|destroy', { label: 'main' }); }}>✕</button>
+      <button bind:this={winClose} class="win-ctrl win-close" id="win-close" title="Close"    onclick={e => { e.stopPropagation(); _win?.close(); }}>✕</button>
     </div>
   </div>
 </div>
