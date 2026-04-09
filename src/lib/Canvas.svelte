@@ -76,6 +76,7 @@
 
   // Context menu state
   let ctxMenu = $state(null); // { x, y, elId } or null
+  let ctxFrameNameInput = $state(''); // live-bound name input for group frame
 
   // Radial drag menu state (right-drag on empty canvas)
   let radialMenu = $state(null); // { x, y } origin or null
@@ -123,6 +124,13 @@
   // Element color palette
   const EL_COLORS = [null, '#1e1e1e', '#2a2a1e', '#1e2a1e', '#1e1e2e', '#2e1e1e', '#1e2a2a', '#2a1e2a'];
   const EL_COLORS_LIGHT = [null, '#fff8e7', '#fffde7', '#f1f8e9', '#e8f0fe', '#fce4ec', '#e0f2f1', '#f3e5f5'];
+  // Frame fill colors — index matches FRAME_COLORS in buildElBackground (index 0 = none)
+  const FRAME_COLOR_SWATCHES = [
+    null,
+    'rgba(180,60,60,0.35)', 'rgba(60,120,180,0.35)', 'rgba(60,160,80,0.35)',
+    'rgba(160,120,30,0.35)', 'rgba(120,60,180,0.35)', 'rgba(60,160,160,0.35)',
+    'rgba(180,100,60,0.35)', 'rgba(80,80,80,0.35)',
+  ];
 
   // ── Coordinate helpers ───────────────────────
   function c2w(clientX, clientY) {
@@ -217,6 +225,10 @@
     drawDotGrid();
     positionDomOverlays();
     updateRelations();
+    // Refresh frame labels so font size stays constant on screen at any zoom level
+    for (const el of $elementsStore) {
+      if (el.type === 'frame' && el.content?.frameLabel) updateElContainer(el);
+    }
   }
 
   function drawDotGrid() {
@@ -343,6 +355,10 @@
 
     c.position.set(el.x - WORLD_OFFSET, el.y - WORLD_OFFSET);
 
+    // Explicit hit area so transparent/low-alpha frames still receive pointer events
+    const visH = el.collapsed ? 32 : (el.height || 180);
+    c.hitArea = { contains: (hx, hy) => hx >= 0 && hx <= (el.width || 240) && hy >= 0 && hy <= visH };
+
     // Interaction
     c.on('pointerdown', e => onElPointerDown(e, el.id));
     c.on('pointertap', e => {
@@ -440,11 +456,18 @@
         'rgba(160,120,30,0.08)', 'rgba(120,60,180,0.08)', 'rgba(60,160,160,0.08)',
         'rgba(180,100,60,0.08)', 'rgba(80,80,80,0.08)',
       ];
+      const FRAME_BORDER_COLORS = [
+        null,
+        'rgba(180,60,60,1)', 'rgba(60,120,180,1)', 'rgba(60,160,80,1)',
+        'rgba(160,120,30,1)', 'rgba(120,60,180,1)', 'rgba(60,160,160,1)',
+        'rgba(180,100,60,1)', 'rgba(80,80,80,1)',
+      ];
       const fc = el.content?.frameColor || 0;
       const fillHex = fc > 0 ? parseRgba(FRAME_COLORS[fc]) : { color: 0xffffff, alpha: 0.03 };
       g.roundRect(0, 0, w, h, 6).fill(fillHex);
-      const borderColor = isSelected ? 0xe8440a : 0x555555;
-      g.roundRect(0, 0, w, h, 6).stroke({ color: borderColor, width: isSelected ? 0.75 : 1, alpha: isSelected ? 0.8 : 0.4 });
+      const borderColor = isSelected ? 0xe8440a : (fc > 0 ? parseRgba(FRAME_BORDER_COLORS[fc]).color : 0x555555);
+      const borderAlpha = isSelected ? 0.8 : (fc > 0 ? 0.5 : 0.4);
+      g.roundRect(0, 0, w, h, 6).stroke({ color: borderColor, width: isSelected ? 0.75 : 1, alpha: borderAlpha });
     } else if (el.type === 'label') {
       // transparent — just text
     } else {
@@ -536,10 +559,22 @@
   function buildFrameLabel(el) {
     const label = el.content?.frameLabel;
     if (!label) return null;
+    const FRAME_LABEL_COLORS = [
+      0x888888,
+      0xc06060, 0x6090c0, 0x50b060,
+      0xb09030, 0x9050c0, 0x40b0b0,
+      0xc07040, 0x888888,
+    ];
+    const fc = el.content?.frameColor || 0;
+    const fill = FRAME_LABEL_COLORS[fc] ?? 0x888888;
+    // Keep label a fixed screen size (13px) regardless of zoom level
+    const screenSize = 13;
+    const worldSize = Math.round(screenSize / scale);
+    const worldOffset = Math.round(6 / scale);
     return new Text({
       text: label,
-      style: new TextStyle({ fontSize: 11, fill: 0x888888, fontFamily: 'DM Mono, monospace' }),
-      x: 10, y: -18,
+      style: new TextStyle({ fontSize: worldSize, fill, fontFamily: 'DM Mono, monospace' }),
+      x: worldOffset, y: -(worldSize + worldOffset),
     });
   }
 
@@ -1157,8 +1192,9 @@
     const minY = Math.min(start.y, end.y), maxY = Math.max(start.y, end.y);
     const newSel = new Set();
     for (const el of $elementsStore) {
-      const cx = el.x + el.width/2, cy = el.y + el.height/2;
-      if (cx >= minX && cx <= maxX && cy >= minY && cy <= maxY) newSel.add(el.id);
+      // Select if element rect intersects marquee rect (any overlap)
+      if (el.x < maxX && el.x + el.width > minX &&
+          el.y < maxY && el.y + el.height > minY) newSel.add(el.id);
     }
     selected = newSel;
     setSelected(new Set(selected));
@@ -1378,7 +1414,7 @@
       if (e.key === 'a') { e.preventDefault(); selectAll(); return; }
       if (e.key === 'd') { e.preventDefault(); duplicateSelected(); return; }
       if (e.key === 'c') { e.preventDefault(); copySelected(); return; }
-      if (e.key === 'v') { e.preventDefault(); pasteClipboard(); return; }
+      if (e.key === 'v') { /* let native paste event fire — MediaDropHandler handles images, paste event fallback calls pasteClipboard */ return; }
       if (e.key === 'g') { e.preventDefault(); groupSelected(); return; }
     }
 
@@ -1483,15 +1519,14 @@
       // Use the dominant axis delta to drive uniform scaling
       const isCorner = h.length === 2;
       if (isCorner) {
-        const absDx = Math.abs(dx), absDy = Math.abs(dy);
-        const useDx = absDx > absDy;
-        if (h.includes('e')) {
-          w = Math.max(MIN_W, resizeOrigin.w + (useDx ? dx : dy * aspect));
-        } else {
-          const nw = Math.max(MIN_W, resizeOrigin.w - (useDx ? dx : dy * aspect));
-          x = resizeOrigin.x + (resizeOrigin.w - nw);
-          w = nw;
-        }
+        // Compute signed expansion in each axis, normalized to width units
+        const expX = h.includes('e') ? dx : -dx;
+        const expY = h.includes('s') ? (dy * aspect) : -(dy * aspect);
+        // Pick dominant axis by magnitude and use that expansion value
+        const expansion = Math.abs(expX) >= Math.abs(expY) ? expX : expY;
+        const nw = Math.max(MIN_W, resizeOrigin.w + expansion);
+        if (h.includes('w')) x = resizeOrigin.x + (resizeOrigin.w - nw);
+        w = nw;
         ht = w / aspect;
         if (h.includes('n')) y = resizeOrigin.y + (resizeOrigin.h - ht);
       } else if (h === 'e' || h === 'w') {
@@ -1640,9 +1675,30 @@
   function openCtxMenu(e, elId) {
     e.preventDefault?.(); e.stopPropagation?.();
     ctxMenu = { x: e.clientX, y: e.clientY, elId };
+    const el = $elementsStore.find(x => x.id === elId);
+    ctxFrameNameInput = (el?.type === 'frame' && el.content?.groupIds?.length)
+      ? (el.content?.frameLabel ?? '') : '';
   }
 
   function closeCtxMenu() { ctxMenu = null; clearRelDragLine(); }
+
+  function ctxSetFrameColor(elId, colorIdx) {
+    snapshot();
+    elementsStore.update(els => {
+      const el = els.find(e => e.id === elId);
+      if (el) el.content = { ...(el.content ?? {}), frameColor: colorIdx };
+      return els;
+    });
+    snapshot();
+  }
+
+  function ctxSetFrameName(elId, name) {
+    elementsStore.update(els => {
+      const el = els.find(e => e.id === elId);
+      if (el) el.content = { ...(el.content ?? {}), frameLabel: name };
+      return els;
+    });
+  }
 
   function ctxSetColor(elId, color) {
     snapshot();
@@ -1728,7 +1784,14 @@
 
   function ungroupSelected() {
     if (!selected.size) return;
-    const frames = $elementsStore.filter(e => selected.has(e.id) && e.type === 'frame' && e.content?.groupIds?.length);
+    // Directly selected frames
+    let frames = $elementsStore.filter(e => selected.has(e.id) && e.type === 'frame' && e.content?.groupIds?.length);
+    // Also find frames whose children are selected (e.g. right-click child → ungroup)
+    if (!frames.length) {
+      frames = $elementsStore.filter(e =>
+        e.type === 'frame' && e.content?.groupIds?.some(id => selected.has(id))
+      );
+    }
     if (!frames.length) return;
     snapshot();
     const frameIds = new Set(frames.map(f => f.id));
@@ -2053,6 +2116,9 @@
   <!-- Element context menu -->
   {#if ctxMenu}
     {@const ctxEl = $elementsStore.find(e => e.id === ctxMenu.elId)}
+    {@const ctxIsGroupFrame = ctxEl?.type === 'frame' && ctxEl?.content?.groupIds?.length}
+    {@const ctxParentFrame = !ctxIsGroupFrame && $elementsStore.find(e => e.type === 'frame' && e.content?.groupIds?.includes(ctxMenu.elId))}
+    {@const ctxCanUngroup = ctxIsGroupFrame || !!ctxParentFrame}
     <!-- Click outside to close -->
     <div
       style="position:fixed;inset:0;z-index:1999;"
@@ -2066,17 +2132,44 @@
       style="left:{ctxMenu.x}px;top:{ctxMenu.y}px;"
       role="menu"
     >
-      <div class="ctx-color-row">
-        {#each ($isLightStore ? EL_COLORS_LIGHT : EL_COLORS) as c}
-          <button
-            class="ctx-color-swatch"
-            class:active={ctxEl?.color === c}
-            style="background:{c ?? 'transparent'};{!c ? 'border:1px solid rgba(255,255,255,0.15)' : ''}"
-            onclick={() => ctxSetColor(ctxMenu.elId, c)}
-            aria-label={c ?? 'default color'}
-          ></button>
-        {/each}
-      </div>
+      {#if ctxIsGroupFrame}
+        <!-- Group frame: name input + frame color swatches -->
+        <div class="ctx-frame-name-row">
+          <input
+            class="ctx-frame-name-input"
+            type="text"
+            placeholder="group name…"
+            bind:value={ctxFrameNameInput}
+            oninput={() => ctxSetFrameName(ctxMenu.elId, ctxFrameNameInput)}
+            onkeydown={e => { if (e.key === 'Enter' || e.key === 'Escape') { snapshot(); closeCtxMenu(); } e.stopPropagation(); }}
+            onclick={e => e.stopPropagation()}
+          />
+        </div>
+        <div class="ctx-color-row">
+          {#each FRAME_COLOR_SWATCHES as fc, i}
+            <button
+              class="ctx-color-swatch"
+              class:active={(ctxEl?.content?.frameColor ?? 0) === i}
+              style="background:{fc ?? 'transparent'};{i === 0 ? 'border:1px solid rgba(255,255,255,0.15)' : ''}"
+              onclick={() => ctxSetFrameColor(ctxMenu.elId, i)}
+              aria-label={fc ?? 'no color'}
+            ></button>
+          {/each}
+        </div>
+      {:else}
+        <!-- Regular element: element color swatches -->
+        <div class="ctx-color-row">
+          {#each ($isLightStore ? EL_COLORS_LIGHT : EL_COLORS) as c}
+            <button
+              class="ctx-color-swatch"
+              class:active={ctxEl?.color === c}
+              style="background:{c ?? 'transparent'};{!c ? 'border:1px solid rgba(255,255,255,0.15)' : ''}"
+              onclick={() => ctxSetColor(ctxMenu.elId, c)}
+              aria-label={c ?? 'default color'}
+            ></button>
+          {/each}
+        </div>
+      {/if}
       <div class="ctx-sep"></div>
       {#if ctxEl?.type === 'note' || ctxEl?.type === 'ai-note'}
         <button class="ctx-item" onclick={() => ctxToggleCollapse(ctxMenu.elId)}>
@@ -2092,6 +2185,12 @@
         <span class="ctx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2l7 7-3 1-2-2-3 3-1-1 3-3-2-2z"/></svg></span>
         {ctxEl?.pinned ? 'unpin' : 'pin'}
       </button>
+      {#if ctxCanUngroup}
+        <button class="ctx-item" onclick={() => { selected = new Set([ctxMenu.elId]); setSelected(new Set([ctxMenu.elId])); ungroupSelected(); closeCtxMenu(); }}>
+          <span class="ctx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><rect x="1" y="1" width="5" height="5" rx="0.5" opacity="0.4"/><rect x="8" y="1" width="5" height="5" rx="0.5" opacity="0.4"/><rect x="1" y="8" width="5" height="5" rx="0.5" opacity="0.4"/><rect x="8" y="8" width="5" height="5" rx="0.5" opacity="0.4"/><line x1="1" y1="13" x2="13" y2="1" stroke-width="1.4" stroke-linecap="round"/></svg></span>
+          ungroup
+        </button>
+      {/if}
       <div class="ctx-sep"></div>
       <button class="ctx-item danger" onclick={() => ctxDelete(ctxMenu.elId)}>
         <span class="ctx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="1,3.5 13,3.5"/><path d="M3,3.5l.8,8.5h6.4L11,3.5"/><line x1="5" y1="1.5" x2="9" y2="1.5"/></svg></span>
@@ -2271,6 +2370,20 @@
   }
   .ctx-color-swatch.active { outline: 2px solid rgba(255,255,255,0.6); outline-offset: 1px; }
   .ctx-sep { height: 1px; background: rgba(255,255,255,0.06); margin: 3px 5px; }
+  .ctx-frame-name-row { padding: 6px 8px 2px; }
+  .ctx-frame-name-input {
+    width: 100%; box-sizing: border-box;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 5px;
+    color: rgba(255,255,255,0.85);
+    font-size: 11px; font-family: 'DM Mono', monospace;
+    padding: 5px 8px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .ctx-frame-name-input::placeholder { color: rgba(255,255,255,0.25); }
+  .ctx-frame-name-input:focus { border-color: rgba(232,68,10,0.5); }
   .ctx-item {
     display: flex; align-items: center; gap: 10px;
     width: 100%; padding: 7px 10px;

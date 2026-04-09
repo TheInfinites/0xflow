@@ -67,7 +67,42 @@
   }
 
   // Group/ungroup visibility
-  let hasFrame = $derived(selEls.some(e => e.type === 'frame' && e.content?.groupIds?.length));
+  // Show ungroup if: any selected el is a group-frame, OR any selected el is a child of a group-frame
+  let hasFrame = $derived(
+    selEls.some(e => e.type === 'frame' && e.content?.groupIds?.length) ||
+    (() => { const selIds = new Set(selEls.map(e => e.id)); return els.some(e => e.type === 'frame' && e.content?.groupIds?.some(id => selIds.has(id))); })()
+  );
+
+  // Group frame editing — shown when exactly one group frame is selected
+  let singleGroupFrame = $derived(
+    singleEl?.type === 'frame' && singleEl?.content?.groupIds?.length ? singleEl : null
+  );
+
+  const FRAME_COLOR_SWATCHES = [
+    null,
+    'rgba(180,60,60,0.7)', 'rgba(60,120,180,0.7)', 'rgba(60,160,80,0.7)',
+    'rgba(160,120,30,0.7)', 'rgba(120,60,180,0.7)', 'rgba(60,160,160,0.7)',
+    'rgba(180,100,60,0.7)', 'rgba(100,100,100,0.7)',
+  ];
+
+  let frameNameValue = $state('');
+  $effect(() => {
+    if (singleGroupFrame) frameNameValue = singleGroupFrame.content?.frameLabel ?? '';
+  });
+
+  function setFrameName(name) {
+    if (!singleGroupFrame) return;
+    const id = singleGroupFrame.id;
+    elementsStore.update(all => all.map(e => e.id === id ? { ...e, content: { ...e.content, frameLabel: name } } : e));
+  }
+
+  function setFrameColor(idx) {
+    if (!singleGroupFrame) return;
+    const id = singleGroupFrame.id;
+    snapshot();
+    elementsStore.update(all => all.map(e => e.id === id ? { ...e, content: { ...e.content, frameColor: idx } } : e));
+    snapshot();
+  }
 
   // Position near selected elements
   let scale = $derived($scaleStore);
@@ -102,16 +137,39 @@
       <svg viewBox="0 0 12 12"><rect x="1" y="3" width="7" height="7" rx="1"/><path d="M4 3V2a1 1 0 011-1h5a1 1 0 011 1v5a1 1 0 01-1 1H9"/></svg>dup
     </button>
 
-    {#if multiSelect}
-      {#if hasFrame}
-        <button class="sel-btn" title="ungroup" onclick={ungroupSelected}>
-          <svg viewBox="0 0 12 12"><rect x="1" y="1" width="4" height="4" rx="0.5" opacity="0.4"/><rect x="7" y="1" width="4" height="4" rx="0.5" opacity="0.4"/><rect x="1" y="7" width="4" height="4" rx="0.5" opacity="0.4"/><rect x="7" y="7" width="4" height="4" rx="0.5" opacity="0.4"/><line x1="1" y1="11" x2="11" y2="1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>ungroup
-        </button>
-      {:else}
-        <button class="sel-btn" title="group  Ctrl+G" onclick={groupSelected}>
-          <svg viewBox="0 0 12 12"><rect x="1" y="1" width="4" height="4" rx="0.5"/><rect x="7" y="1" width="4" height="4" rx="0.5"/><rect x="1" y="7" width="4" height="4" rx="0.5"/><rect x="7" y="7" width="4" height="4" rx="0.5"/></svg>group
-        </button>
-      {/if}
+    {#if singleGroupFrame}
+      <div class="sel-divider"></div>
+      <input
+        class="sel-frame-name"
+        type="text"
+        placeholder="group name…"
+        bind:value={frameNameValue}
+        oninput={() => setFrameName(frameNameValue)}
+        onkeydown={e => { if (e.key === 'Enter' || e.key === 'Escape') e.target.blur(); e.stopPropagation(); }}
+        onclick={e => e.stopPropagation()}
+      />
+      <div class="sel-frame-colors">
+        {#each FRAME_COLOR_SWATCHES as c, i}
+          <button
+            class="sel-frame-swatch"
+            class:active={(singleGroupFrame.content?.frameColor ?? 0) === i}
+            style="background:{c ?? 'transparent'};{i === 0 ? 'border:1px solid rgba(255,255,255,0.2)' : ''}"
+            onclick={() => setFrameColor(i)}
+            aria-label={c ?? 'none'}
+          ></button>
+        {/each}
+      </div>
+      <div class="sel-divider"></div>
+    {/if}
+
+    {#if hasFrame}
+      <button class="sel-btn" title="ungroup" onclick={ungroupSelected}>
+        <svg viewBox="0 0 12 12"><rect x="1" y="1" width="4" height="4" rx="0.5" opacity="0.4"/><rect x="7" y="1" width="4" height="4" rx="0.5" opacity="0.4"/><rect x="1" y="7" width="4" height="4" rx="0.5" opacity="0.4"/><rect x="7" y="7" width="4" height="4" rx="0.5" opacity="0.4"/><line x1="1" y1="11" x2="11" y2="1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>ungroup
+      </button>
+    {:else if multiSelect}
+      <button class="sel-btn" title="group  Ctrl+G" onclick={groupSelected}>
+        <svg viewBox="0 0 12 12"><rect x="1" y="1" width="4" height="4" rx="0.5"/><rect x="7" y="1" width="4" height="4" rx="0.5"/><rect x="1" y="7" width="4" height="4" rx="0.5"/><rect x="7" y="7" width="4" height="4" rx="0.5"/></svg>group
+      </button>
     {/if}
 
     <div class="sel-divider"></div>
@@ -211,4 +269,23 @@
   .sel-font-input::-webkit-inner-spin-button,
   .sel-font-input::-webkit-outer-spin-button { -webkit-appearance: none; appearance: none; margin: 0; }
   .sel-font-input:focus { color: rgba(255,255,255,0.9); background: rgba(255,255,255,0.06); border-radius: 3px; }
+  .sel-frame-name {
+    font-family: 'DM Mono', monospace; font-size: 9px;
+    color: rgba(255,255,255,0.6);
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 4px; outline: none;
+    padding: 0 7px; height: 20px; width: 90px;
+    letter-spacing: 0.04em;
+  }
+  .sel-frame-name::placeholder { color: rgba(255,255,255,0.2); }
+  .sel-frame-name:focus { border-color: rgba(232,68,10,0.45); color: rgba(255,255,255,0.9); }
+  .sel-frame-colors { display: flex; align-items: center; gap: 4px; padding: 0 6px; }
+  .sel-frame-swatch {
+    width: 11px; height: 11px; border-radius: 50%;
+    border: 1px solid transparent; padding: 0; cursor: pointer; flex-shrink: 0;
+    transition: transform 0.1s;
+  }
+  .sel-frame-swatch:hover { transform: scale(1.25); }
+  .sel-frame-swatch.active { outline: 2px solid rgba(255,255,255,0.55); outline-offset: 1px; }
 </style>

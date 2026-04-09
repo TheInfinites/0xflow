@@ -33,6 +33,24 @@
   const videoMime = { mp4:'video/mp4', webm:'video/webm', mov:'video/quicktime', avi:'video/x-msvideo', mkv:'video/x-matroska', ogv:'video/ogg' };
   const audioMime = { mp3:'audio/mpeg', wav:'audio/wav', ogg:'audio/ogg', flac:'audio/flac', aac:'audio/aac', m4a:'audio/mp4', opus:'audio/opus' };
 
+  // ── fetch image URL (CORS-safe: routes through Rust in Tauri) ────────────
+  async function _fetchAndPlaceImageUrl(url) {
+    try {
+      if (IS_TAURI) {
+        const { invoke } = window.__TAURI__.core;
+        const dataUrl = await invoke('fetch_image_url', { url });
+        const res = await fetch(dataUrl);
+        const blob = await res.blob();
+        if (blob.type.startsWith('image/')) await placeImageBlob(blob);
+      } else {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(resp.status);
+        const blob = await resp.blob();
+        if (blob.type.startsWith('image/')) await placeImageBlob(blob);
+      }
+    } catch (err) { console.warn('Paste image fetch failed:', err); }
+  }
+
   // ── clipboard paste ───────────────────────────────────────────────────────
   async function onPaste(e) {
     if (!_getStore(isOnCanvasStore)) return;
@@ -56,12 +74,7 @@
       htmlItem.getAsString(async html => {
         const m = html.match(/<img[^>]+src=["']([^"']+)["']/i);
         if (!m || !m[1]) return;
-        try {
-          const resp = await fetch(m[1]);
-          if (!resp.ok) throw new Error(resp.status);
-          const blob = await resp.blob();
-          if (blob.type.startsWith('image/')) await placeImageBlob(blob);
-        } catch (err) { console.warn('Paste image fetch failed:', err); }
+        await _fetchAndPlaceImageUrl(m[1]);
       });
       return;
     }
@@ -69,19 +82,20 @@
     // 3. Plain-text image URL
     const textItem = items.find(i => i.type === 'text/plain');
     if (textItem) {
-      e.preventDefault();
       textItem.getAsString(async text => {
         text = text.trim();
-        if (!/^https?:\/\/.+\.(png|jpe?g|gif|webp|bmp|svg|avif|tiff)(\?.*)?$/i.test(text)) return;
-        try {
-          const resp = await fetch(text);
-          if (!resp.ok) throw new Error(resp.status);
-          const blob = await resp.blob();
-          if (blob.type.startsWith('image/')) await placeImageBlob(blob);
-        } catch (err) { console.warn('Paste image URL fetch failed:', err); }
+        if (/^https?:\/\//i.test(text)) {
+          e.preventDefault();
+          await _fetchAndPlaceImageUrl(text);
+        }
+        // else: not a URL — let canvas pasteClipboard handle it
       });
       return;
     }
+
+    // 4. No image data — delegate to canvas internal clipboard (copy/paste of elements)
+    e.preventDefault();
+    window._pixiCanvas?.pasteClipboard();
   }
 
   // ── Tauri drag-drop ───────────────────────────────────────────────────────
