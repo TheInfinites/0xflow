@@ -71,8 +71,8 @@
   let resizeEl = null;       // element id being resized
   let resizeOrigin = null;   // { el snapshot, startClientX, startClientY }
 
-  // Selected relation
-  let selectedRelId = $state(null);
+  // Selected relations (supports multi-select via marquee)
+  let selectedRelIds = $state(new Set());
 
   // Context menu state
   let ctxMenu = $state(null); // { x, y, elId } or null
@@ -703,7 +703,15 @@
         g.on('pointerdown', (e) => {
           if (e.button !== 0) return;
           e.stopPropagation();
-          selectedRelId = selectedRelId === relId ? null : relId;
+          if (e.shiftKey) {
+            // Shift-click: toggle this relation in/out of selection
+            const next = new Set(selectedRelIds);
+            if (next.has(relId)) next.delete(relId); else next.add(relId);
+            selectedRelIds = next;
+          } else {
+            // Plain click: toggle single selection
+            selectedRelIds = selectedRelIds.has(relId) && selectedRelIds.size === 1 ? new Set() : new Set([relId]);
+          }
           selected = new Set(); setSelected(new Set());
         });
         relLayer.addChild(g);
@@ -718,7 +726,7 @@
       const c1x = ax + dx*0.25 + nx*bulge, c1y = ay + dy*0.25 + ny*bulge;
       const c2x = ax + dx*0.75 - nx*bulge, c2y = ay + dy*0.75 - ny*bulge;
       const isLight = $isLightStore;
-      const isSel = rel.id === selectedRelId;
+      const isSel = selectedRelIds.has(rel.id);
       const color = isSel ? 0xE8440A : (isLight ? 0x000000 : 0xffffff);
       const alpha = isSel ? 0.85 : 0.35;
       const width = isSel ? 2.5 : 1.5;
@@ -807,7 +815,7 @@
     }
     if (curTool === 'select') {
       // Marquee start on empty canvas — clear relation selection
-      selectedRelId = null;
+      selectedRelIds = new Set();
       marqueeActive = true;
       marqueeStart = wp;
     }
@@ -991,7 +999,7 @@
     if (curTool !== 'select') return;
     dragMoved = false;
 
-    selectedRelId = null;
+    selectedRelIds = new Set();
 
     if (e.shiftKey) {
       // Shift: toggle this element in/out of selection
@@ -1155,6 +1163,34 @@
     selected = newSel;
     setSelected(new Set(selected));
     elementsStore.update(els => { renderElements(els); return els; });
+
+    // Also select relation lines whose midpoint falls within the marquee
+    const newRelSel = new Set();
+    for (const rel of $relationsStore) {
+      const elA = $elementsStore.find(e => e.id === rel.elAId);
+      const elB = $elementsStore.find(e => e.id === rel.elBId);
+      if (!elA || !elB) continue;
+      const ax = elA.x + elA.width/2, ay = elA.y + elA.height/2;
+      const bx = elB.x + elB.width/2, by = elB.y + elB.height/2;
+      // Sample points along the cubic bezier (matches rendering curve)
+      const dx = bx - ax, dy = by - ay;
+      const len = Math.sqrt(dx*dx + dy*dy);
+      const bulge = Math.min(len * 0.4, 120);
+      const nx = -dy/(len||1), ny = dx/(len||1);
+      const c1x = ax + dx*0.25 + nx*bulge, c1y = ay + dy*0.25 + ny*bulge;
+      const c2x = ax + dx*0.75 - nx*bulge, c2y = ay + dy*0.75 - ny*bulge;
+      // Check 5 sample points along the curve (t = 0, 0.25, 0.5, 0.75, 1)
+      for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+        const u = 1 - t;
+        const px = u*u*u*ax + 3*u*u*t*c1x + 3*u*t*t*c2x + t*t*t*bx;
+        const py = u*u*u*ay + 3*u*u*t*c1y + 3*u*t*t*c2y + t*t*t*by;
+        if (px >= minX && px <= maxX && py >= minY && py <= maxY) {
+          newRelSel.add(rel.id);
+          break;
+        }
+      }
+    }
+    selectedRelIds = newRelSel;
   }
 
   // ── Arrow tool ───────────────────────────────
@@ -1346,10 +1382,10 @@
       if (e.key === 'g') { e.preventDefault(); groupSelected(); return; }
     }
 
-    if (e.key === 'Escape')   { clearSelection(); selectedRelId = null; return; }
+    if (e.key === 'Escape')   { clearSelection(); selectedRelIds = new Set(); return; }
     if (e.key === 'z' && !e.ctrlKey && !e.metaKey) { if (selected.size) zoomToSelection(); else zoomToFit(); return; }
     if (e.key === 'Delete' || e.key === 'Backspace') {
-      if (selectedRelId) { snapshot(); relationsStore.update(rs => rs.filter(r => r.id !== selectedRelId)); selectedRelId = null; return; }
+      if (selectedRelIds.size) { snapshot(); relationsStore.update(rs => rs.filter(r => !selectedRelIds.has(r.id))); selectedRelIds = new Set(); return; }
       deleteSelected(); return;
     }
     if (e.key === '0')        { zoomToFit(); return; }

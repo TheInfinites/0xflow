@@ -196,7 +196,8 @@ async function openProject(id, e) {
         applyCanvasState(migrated);
         // Persist as v2 so we never need to migrate again
         await saveCanvasV2(id);
-        showToast('canvas migrated to new format');
+        // Remove v1 key so migration doesn't re-trigger
+        try { localStorage.removeItem('freeflow_canvas_' + id); } catch {}
       }
       // No canvas data — blank canvas, nothing to show
     }
