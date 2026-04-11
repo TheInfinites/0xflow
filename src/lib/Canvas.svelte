@@ -79,6 +79,58 @@
   let ctxMenu = $state(null); // { x, y, elId } or null
   let ctxFrameNameInput = $state(''); // live-bound name input for group frame
 
+  // Floating tag picker (Shift+right-click on an element)
+  let tagPicker = $state(null); // { x, y, elementIds: Set<string> } or null
+  let tagPickerNewName = $state('');
+  function _closeTagPicker() { tagPicker = null; tagPickerNewName = ''; }
+  function _tagPickerCount(tagId) {
+    if (!tagPicker) return 0;
+    const ids = tagPicker.elementIds;
+    let n = 0;
+    for (const el of $elementsStore) {
+      if (!ids.has(el.id)) continue;
+      if (Array.isArray(el.tags) && el.tags.includes(tagId)) n++;
+    }
+    return n;
+  }
+  function _tagPickerToggle(tagId) {
+    if (!tagPicker) return;
+    const ids = tagPicker.elementIds;
+    const selCount = ids.size;
+    const has = _tagPickerCount(tagId);
+    const addToAll = has < selCount;
+    snapshot();
+    elementsStore.update(els => els.map(e => {
+      if (!ids.has(e.id)) return e;
+      const cur = Array.isArray(e.tags) ? e.tags : [];
+      const hasIt = cur.includes(tagId);
+      if (addToAll && !hasIt) return { ...e, tags: [...cur, tagId] };
+      if (!addToAll && hasIt) return { ...e, tags: cur.filter(t => t !== tagId) };
+      return e;
+    }));
+  }
+  async function _tagPickerCreate() {
+    const name = tagPickerNewName.trim();
+    if (!name) return;
+    const tag = await window.createProjectTag?.(get(activeProjectIdStore), name);
+    if (tag?.id) _tagPickerToggle(tag.id);
+    tagPickerNewName = '';
+  }
+  function _tagLabelForPicker(tag) {
+    if (tag.kind === 'task') {
+      const t = $projectTasksStore.find(t => t.tagId === tag.id);
+      if (t) return t.title;
+    }
+    return tag.name;
+  }
+  function _tagColorForPicker(tag) {
+    if (tag.color) return tag.color;
+    const str = tag.id || tag.name || '';
+    let h = 0;
+    for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
+    return `hsl(${Math.abs(h) % 360}, 55%, 55%)`;
+  }
+
   // Radial drag menu state (right-drag on empty canvas)
   let radialMenu = $state(null); // { x, y } origin or null
   let _radialMouseDown = false;
@@ -373,6 +425,22 @@
     c.on('rightdown', e => {
       e.stopPropagation();
       const native = e.nativeEvent ?? e;
+      // Shift+right-click on an element → open floating tag picker
+      if (native.shiftKey) {
+        // If the element isn't selected, select just it first so the picker
+        // applies to something sensible.
+        if (!selected.has(el.id)) {
+          selected = new Set([el.id]);
+          setSelected(new Set(selected));
+          elementsStore.update(els => { renderElements(get(visibleElementsStore)); return els; });
+        }
+        tagPicker = {
+          x: native.clientX,
+          y: native.clientY,
+          elementIds: new Set(selected),
+        };
+        return;
+      }
       const elData = $elementsStore.find(x => x.id === el.id);
       const isMedia = elData?.type === 'image' || elData?.type === 'video' || elData?.type === 'audio';
       const startX = native.clientX, startY = native.clientY;
@@ -1457,6 +1525,8 @@
 
   // ── Keyboard shortcuts ───────────────────────
   function onKeydown(e) {
+    // Tag picker: Escape closes, otherwise let it handle its own keys.
+    if (tagPicker && e.key === 'Escape') { _closeTagPicker(); return; }
     // Don't steal from inputs/editors
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' ||
         e.target.isContentEditable) return;
@@ -2085,6 +2155,52 @@
     {/each}
   {/if}
 
+  <!-- Floating tag picker (Shift+right-click on an element) -->
+  {#if tagPicker}
+    <div
+      class="tag-picker-backdrop"
+      onpointerdown={e => { if (e.target === e.currentTarget) _closeTagPicker(); }}
+      oncontextmenu={e => e.preventDefault()}
+      role="none"
+    ></div>
+    <div
+      class="tag-picker-pop"
+      style="left:{Math.min(tagPicker.x, window.innerWidth - 240)}px;top:{Math.min(tagPicker.y, window.innerHeight - 320)}px;"
+      onpointerdown={e => e.stopPropagation()}
+      oncontextmenu={e => e.preventDefault()}
+      role="menu"
+      tabindex="-1"
+    >
+      <div class="tag-picker-header">
+        tag {tagPicker.elementIds.size} item{tagPicker.elementIds.size === 1 ? '' : 's'}
+      </div>
+      {#if $projectTagsStore.length === 0}
+        <div class="tag-picker-empty">no tags yet</div>
+      {:else}
+        {#each $projectTagsStore as tag (tag.id)}
+          {@const count = _tagPickerCount(tag.id)}
+          {@const state = count === 0 ? 'none' : count === tagPicker.elementIds.size ? 'all' : 'some'}
+          <button class="tag-picker-row" onclick={() => _tagPickerToggle(tag.id)}>
+            <span class="tag-picker-check" data-state={state}>{state === 'all' ? '✓' : state === 'some' ? '–' : ''}</span>
+            <span class="tag-picker-dot" style="background:{_tagColorForPicker(tag)};"></span>
+            <span class="tag-picker-name">{_tagLabelForPicker(tag)}</span>
+            <span class="tag-picker-kind">{tag.kind}</span>
+          </button>
+        {/each}
+      {/if}
+      <div class="tag-picker-new">
+        <input
+          type="text"
+          placeholder="new tag…"
+          bind:value={tagPickerNewName}
+          onkeydown={e => { if (e.key === 'Enter') _tagPickerCreate(); if (e.key === 'Escape') _closeTagPicker(); e.stopPropagation(); }}
+        />
+        <button onclick={_tagPickerCreate}>+</button>
+      </div>
+      <div class="tag-picker-footer">esc to close</div>
+    </div>
+  {/if}
+
   <!-- Radial drag menu -->
   {#if radialMenu}
     <!-- backdrop to capture pointer release anywhere -->
@@ -2463,4 +2579,127 @@
   .ctx-item:hover .ctx-icon { color: #E8440A; }
   .ctx-item.danger .ctx-icon { color: rgba(232,68,10,0.5); }
   .ctx-chevron { margin-left: auto; color: rgba(255,255,255,0.2); font-size: 14px; }
+
+  /* Floating tag picker (Shift+right-click on an element) */
+  .tag-picker-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 9100;
+    background: transparent;
+  }
+  .tag-picker-pop {
+    position: fixed;
+    z-index: 9101;
+    min-width: 220px;
+    max-width: 260px;
+    max-height: 320px;
+    overflow-y: auto;
+    background: rgba(16,16,18,0.98);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px;
+    padding: 4px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.55);
+    color: #e5e5e7;
+  }
+  .tag-picker-header {
+    font-family: 'Geist Mono', monospace;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: rgba(255,255,255,0.4);
+    padding: 8px 10px 4px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    margin-bottom: 3px;
+  }
+  .tag-picker-empty {
+    font-family: 'Geist Mono', monospace;
+    font-size: 9px;
+    color: rgba(255,255,255,0.3);
+    padding: 10px 8px;
+    text-align: center;
+  }
+  .tag-picker-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 8px;
+    background: transparent;
+    border: none;
+    color: rgba(255,255,255,0.8);
+    font-family: 'Geist', sans-serif;
+    font-size: 11px;
+    cursor: pointer;
+    border-radius: 4px;
+    text-align: left;
+  }
+  .tag-picker-row:hover { background: rgba(255,255,255,0.06); }
+  .tag-picker-check {
+    width: 14px; height: 14px;
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 3px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    color: rgba(255,255,255,0.9);
+    flex-shrink: 0;
+  }
+  .tag-picker-check[data-state="all"]  { background: rgba(74,158,255,0.35); border-color: rgba(74,158,255,0.6); }
+  .tag-picker-check[data-state="some"] { background: rgba(255,255,255,0.1); }
+  .tag-picker-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .tag-picker-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tag-picker-kind {
+    font-family: 'Geist Mono', monospace;
+    font-size: 8px;
+    color: rgba(255,255,255,0.3);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .tag-picker-new {
+    display: flex;
+    gap: 4px;
+    padding: 6px 4px 2px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    margin-top: 4px;
+  }
+  .tag-picker-new input {
+    flex: 1;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 4px;
+    color: rgba(255,255,255,0.9);
+    padding: 4px 8px;
+    font-family: 'Geist', sans-serif;
+    font-size: 11px;
+    outline: none;
+  }
+  .tag-picker-new input:focus { border-color: rgba(74,158,255,0.5); }
+  .tag-picker-new button {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: rgba(255,255,255,0.9);
+    padding: 4px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+  }
+  .tag-picker-new button:hover { background: rgba(255,255,255,0.14); }
+  .tag-picker-footer {
+    font-family: 'Geist Mono', monospace;
+    font-size: 8px;
+    color: rgba(255,255,255,0.25);
+    padding: 4px 8px 2px;
+    text-align: right;
+  }
 </style>

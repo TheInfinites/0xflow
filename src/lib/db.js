@@ -163,6 +163,7 @@ export async function dbLoadTasks(projectId) {
       order: r.order_idx || 0,
       taskTagIds: extra.taskTagIds || [],
       comments: extra.comments || [],
+      description: extra.description || '',
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     };
@@ -174,6 +175,7 @@ export async function dbSaveTask(t) {
   const data = JSON.stringify({
     taskTagIds: t.taskTagIds || [],
     comments: t.comments || [],
+    description: t.description || '',
   });
   await _db.execute(
     `INSERT INTO project_tasks (id, project_id, parent_task_id, title, tag_id,
