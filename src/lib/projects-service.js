@@ -8,16 +8,30 @@
 // ════════════════════════════════════════════
 import { get } from 'svelte/store';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { initDB, dbGetAllSettings, dbLoadProjects, dbLoadFolders, dbSaveProject, dbDeleteProject, dbSaveFolder, dbDeleteFolder } from './db.js';
+import {
+  initDB, dbGetAllSettings, dbLoadProjects, dbLoadFolders,
+  dbSaveProject, dbDeleteProject, dbSaveFolder, dbDeleteFolder,
+  dbLoadTasks, dbSaveTask, dbDeleteTask,
+  dbLoadTags, dbSaveTag, dbDeleteTag,
+} from './db.js';
 import {
   projectsStore, foldersStore,
   setProjects, setFolders,
   setActiveProjectId, getActiveProjectId,
   setCurrentFolderId, getCurrentFolderId,
+  projectTasksStore, projectTagsStore,
+  setProjectTasks, setProjectTags,
+  getProjectTasks, getProjectTags,
+  activeCanvasKeyStore, setActiveCanvasKey,
+  makeCanvasKey,
 } from '../stores/projects.js';
 import { elementsStore } from '../stores/elements.js';
-import { toastMsgStore, toastVisibleStore, isOnCanvasStore } from '../stores/ui.js';
-import { saveCanvasV2, loadCanvasV2, applyCanvasState, clearCanvasState, migrateV1ToV2 } from './canvas-persistence.js';
+import { toastMsgStore, toastVisibleStore, isOnCanvasStore, activeViewStore, setActiveView } from '../stores/ui.js';
+import {
+  saveCanvasV2, loadCanvasV2, saveCanvasV3, loadCanvasV3,
+  applyCanvasState, clearCanvasState, migrateV1ToV2,
+  stashCurrentViewport, restoreViewport,
+} from './canvas-persistence.js';
 import { store, markDbReady, setStorageFullCallback, isDbReady } from './kv-store.js';
 export { store };
 
@@ -83,10 +97,16 @@ function createProject(name) {
     noteCount: 0,
     accent: ACCENT_COLORS[Math.floor(Math.random() * ACCENT_COLORS.length)],
     folderId: fid,
+    schemaVersion: 3,   // new projects are v3 (Tasks hub + tags)
   };
   const projects = loadProjects();
   projects.unshift(p);
   saveProjects(projects);
+
+  // Seed the builtin 'final' tag for v3 projects so task final canvases can filter on it.
+  const finalTag = _makeTag(id, 'final', 'builtin', null, '#e0b84a');
+  _persistTag(finalTag);
+
   return p;
 }
 
@@ -124,6 +144,214 @@ function deleteProject(id) {
   if (p) showToast(`"${p.name}" deleted`);
 }
 
+// ── v3: Tasks & Tags CRUD ─────────────────────
+// Tasks and tags live alongside canvas state. Both persist to SQLite (Tauri) or
+// localStorage (browser). Task CRUD auto-creates a matching tag on the fly so
+// the task canvas can filter by that tag. Renaming a task updates the tag's
+// display name but keeps its id/slug stable so element associations survive.
+
+const TASKS_KEY = (pid) => `freeflow_tasks_${pid}`;
+const TAGS_KEY  = (pid) => `freeflow_tags_${pid}`;
+
+function _slugify(s) {
+  return (s || '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'tag';
+}
+
+function _newId(prefix) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function _makeTag(projectId, name, kind = 'project', ownerTaskId = null, color = null) {
+  return {
+    id: _newId('tag'),
+    projectId,
+    name,
+    slug: _slugify(name),
+    kind,              // 'project' | 'task' | 'builtin'
+    ownerTaskId,
+    color,
+    createdAt: Date.now(),
+  };
+}
+
+function _persistTag(tag) {
+  // Update in-memory store (if this tag's project is the active one)
+  if (getActiveProjectId() === tag.projectId || get(projectTagsStore).some(t => t.projectId === tag.projectId)) {
+    const all = get(projectTagsStore);
+    const idx = all.findIndex(t => t.id === tag.id);
+    if (idx >= 0) {
+      all[idx] = tag;
+      projectTagsStore.set([...all]);
+    } else {
+      projectTagsStore.set([...all, tag]);
+    }
+  }
+  // Persist
+  if (IS_TAURI_STORAGE && isDbReady()) {
+    dbSaveTag(tag).catch(e => console.warn('[store] dbSaveTag:', e));
+  } else {
+    try {
+      const raw = store.get(TAGS_KEY(tag.projectId));
+      const arr = raw ? JSON.parse(raw) : [];
+      const idx = arr.findIndex(t => t.id === tag.id);
+      if (idx >= 0) arr[idx] = tag; else arr.push(tag);
+      store.set(TAGS_KEY(tag.projectId), JSON.stringify(arr));
+    } catch {}
+  }
+}
+
+function _persistTask(task) {
+  if (getActiveProjectId() === task.projectId || get(projectTasksStore).some(t => t.projectId === task.projectId)) {
+    const all = get(projectTasksStore);
+    const idx = all.findIndex(t => t.id === task.id);
+    if (idx >= 0) {
+      all[idx] = task;
+      projectTasksStore.set([...all]);
+    } else {
+      projectTasksStore.set([...all, task]);
+    }
+  }
+  if (IS_TAURI_STORAGE && isDbReady()) {
+    dbSaveTask(task).catch(e => console.warn('[store] dbSaveTask:', e));
+  } else {
+    try {
+      const raw = store.get(TASKS_KEY(task.projectId));
+      const arr = raw ? JSON.parse(raw) : [];
+      const idx = arr.findIndex(t => t.id === task.id);
+      if (idx >= 0) arr[idx] = task; else arr.push(task);
+      store.set(TASKS_KEY(task.projectId), JSON.stringify(arr));
+    } catch {}
+  }
+}
+
+async function _loadTasksAndTagsFor(projectId) {
+  if (IS_TAURI_STORAGE && isDbReady()) {
+    const [tasks, tags] = await Promise.all([
+      dbLoadTasks(projectId),
+      dbLoadTags(projectId),
+    ]);
+    setProjectTasks(tasks);
+    setProjectTags(tags);
+  } else {
+    try {
+      const tRaw = store.get(TASKS_KEY(projectId));
+      setProjectTasks(tRaw ? JSON.parse(tRaw) : []);
+    } catch { setProjectTasks([]); }
+    try {
+      const gRaw = store.get(TAGS_KEY(projectId));
+      setProjectTags(gRaw ? JSON.parse(gRaw) : []);
+    } catch { setProjectTags([]); }
+  }
+  // If no 'final' builtin tag exists (e.g. project created before this ran), seed one.
+  if (!get(projectTagsStore).some(t => t.kind === 'builtin' && t.slug === 'final')) {
+    _persistTag(_makeTag(projectId, 'final', 'builtin', null, '#e0b84a'));
+  }
+}
+
+/**
+ * Create a task under an optional parent. Auto-creates a task-scoped tag whose
+ * id is attached to the task; that tag is what filters the task's canvas view.
+ */
+function createTask({ projectId, parentTaskId = null, title = 'new task' }) {
+  const tag = _makeTag(projectId, title, 'task', null, null);
+  const task = {
+    id: _newId('task'),
+    projectId,
+    parentTaskId,
+    title,
+    tagId: tag.id,
+    startDate: null,
+    endDate: null,
+    status: 'todo',
+    order: get(projectTasksStore).filter(t => t.parentTaskId === parentTaskId).length,
+    taskTagIds: [],
+    comments: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  // Back-link the tag to the task before persisting.
+  tag.ownerTaskId = task.id;
+  _persistTag(tag);
+  _persistTask(task);
+  return task;
+}
+
+function updateTask(taskId, patch) {
+  const all = get(projectTasksStore);
+  const task = all.find(t => t.id === taskId);
+  if (!task) return null;
+  const updated = { ...task, ...patch, updatedAt: Date.now() };
+  _persistTask(updated);
+  // If title changed, keep the associated tag's name in sync (slug/id stay stable).
+  if (patch.title && patch.title !== task.title && task.tagId) {
+    const tag = get(projectTagsStore).find(t => t.id === task.tagId);
+    if (tag) _persistTag({ ...tag, name: patch.title });
+  }
+  return updated;
+}
+
+/**
+ * Delete a task. `mode === 'untag'` also strips the task's tag from every element.
+ * `mode === 'keep'` leaves tags in place (orphaned but harmless).
+ * Sub-tasks cascade with the same mode.
+ */
+function deleteTask(taskId, mode = 'keep') {
+  const all = get(projectTasksStore);
+  const task = all.find(t => t.id === taskId);
+  if (!task) return;
+
+  // Cascade sub-tasks first
+  const subs = all.filter(t => t.parentTaskId === taskId);
+  for (const s of subs) deleteTask(s.id, mode);
+
+  // Strip the task's tag from elements if requested
+  if (mode === 'untag' && task.tagId) {
+    const els = get(elementsStore).map(e => {
+      if (!Array.isArray(e.tags) || !e.tags.includes(task.tagId)) return e;
+      return { ...e, tags: e.tags.filter(t => t !== task.tagId) };
+    });
+    elementsStore.set(els);
+  }
+
+  // Remove task's tag
+  if (task.tagId) {
+    const tag = get(projectTagsStore).find(t => t.id === task.tagId);
+    if (tag) {
+      projectTagsStore.set(get(projectTagsStore).filter(t => t.id !== task.tagId));
+      if (IS_TAURI_STORAGE && isDbReady()) {
+        dbDeleteTag(task.tagId).catch(() => {});
+      } else {
+        try {
+          const raw = store.get(TAGS_KEY(task.projectId));
+          const arr = raw ? JSON.parse(raw) : [];
+          store.set(TAGS_KEY(task.projectId), JSON.stringify(arr.filter(t => t.id !== task.tagId)));
+        } catch {}
+      }
+    }
+  }
+
+  // Remove the task
+  projectTasksStore.set(get(projectTasksStore).filter(t => t.id !== taskId));
+  if (IS_TAURI_STORAGE && isDbReady()) {
+    dbDeleteTask(taskId).catch(() => {});
+  } else {
+    try {
+      const raw = store.get(TASKS_KEY(task.projectId));
+      const arr = raw ? JSON.parse(raw) : [];
+      store.set(TASKS_KEY(task.projectId), JSON.stringify(arr.filter(t => t.id !== taskId)));
+    } catch {}
+  }
+}
+
+/** Create a free-form project tag (not owned by any task). */
+function createProjectTag(projectId, name, color = null) {
+  const tag = _makeTag(projectId, name, 'project', null, color);
+  _persistTag(tag);
+  return tag;
+}
+
 // ── Canvas save (v2) ──────────────────────────
 
 let _loadingCanvas = false;
@@ -132,11 +360,15 @@ let _debounceSaveTimer = null;
 async function _saveCurrentCanvas() {
   const id = getActiveProjectId();
   if (!id) return;
-  await saveCanvasV2(id);
-  // Update note count from elements store
-  const els = get(elementsStore);
   const projects = loadProjects();
   const p = projects.find(x => x.id === id);
+  if (p && p.schemaVersion === 3) {
+    await saveCanvasV3(id);
+  } else {
+    await saveCanvasV2(id);
+  }
+  // Update note count from elements store
+  const els = get(elementsStore);
   if (p) {
     p.noteCount = els.filter(e => e.type === 'note' || e.type === 'ai-note').length;
     p.updatedAt = Date.now();
@@ -176,17 +408,32 @@ async function openProject(id, e) {
   saveProjects(projects);
   setActiveProjectId(id);
 
-  document.body.classList.add('on-canvas');
-  isOnCanvasStore.set(true);
-
   clearTimeout(_debounceSaveTimer);
   _debounceSaveTimer = null;
 
-  // Load canvas state — try v2 first, then attempt v1→v2 migration, else DOM restore
   _loadingCanvas = true;
   clearCanvasState();
+
+  // v3 projects: load tasks/tags first, then canvas state
+  if (p.schemaVersion === 3) {
+    await _loadTasksAndTagsFor(id);
+  } else {
+    setProjectTasks([]);
+    setProjectTags([]);
+  }
+
+  // Always start v3 projects on the project canvas view key (so filters pass-through
+  // to all elements until the user explicitly navigates to a task canvas).
+  setActiveCanvasKey('__project__');
+
   try {
-    const state = await loadCanvasV2(id);
+    // Prefer v3 load for v3 projects, fall back to v2 for safety
+    let state = null;
+    if (p.schemaVersion === 3) {
+      state = await loadCanvasV3(id);
+    }
+    if (!state) state = await loadCanvasV2(id);
+
     if (state) {
       applyCanvasState(state);
     } else {
@@ -196,17 +443,66 @@ async function openProject(id, e) {
         applyCanvasState(migrated);
         // Persist as v2 so we never need to migrate again
         await saveCanvasV2(id);
-        // Remove v1 key so migration doesn't re-trigger
         try { localStorage.removeItem('freeflow_canvas_' + id); } catch {}
       }
-      // No canvas data — blank canvas, nothing to show
     }
   } finally {
     _loadingCanvas = false;
   }
 
+  // Routing: v3 projects land on the Tasks hub; v2 projects go straight to canvas.
+  if (p.schemaVersion === 3) {
+    setActiveView('tasks');
+    // Tasks view has its own layout — hide the dashboard + canvas via body class.
+    document.body.classList.remove('on-canvas');
+    document.body.classList.add('on-tasks');
+  } else {
+    document.body.classList.remove('on-tasks');
+    document.body.classList.add('on-canvas');
+    setActiveView('canvas');
+  }
+
   // Restore project directory button (was previously done in legacy loadCanvasState)
   window.loadProjectDir?.();
+}
+
+/**
+ * Switch the active canvas view key. Stashes the current viewport under the
+ * previous key, applies the new key, then restores that key's saved viewport
+ * (if any). Assumes we're already rendering the canvas — does not toggle views.
+ */
+function setCanvasView(newKey) {
+  const prev = get(activeCanvasKeyStore);
+  if (prev === newKey) return;
+  stashCurrentViewport(prev);
+  setActiveCanvasKey(newKey);
+  restoreViewport(newKey);
+}
+
+/**
+ * Navigate from the Tasks hub into a canvas view. If taskId is null, opens the
+ * project canvas. If kind === 'final', opens the parent task's Final canvas.
+ */
+function openCanvasView(taskId = null, kind = 'task') {
+  const key = taskId ? makeCanvasKey(kind, taskId) : '__project__';
+  setCanvasView(key);
+  document.body.classList.remove('on-tasks');
+  document.body.classList.add('on-canvas');
+  setActiveView('canvas');
+}
+
+/** Return from canvas back to Tasks hub (v3 projects only). */
+function backToTasks() {
+  const id = getActiveProjectId();
+  const projects = loadProjects();
+  const p = projects.find(x => x.id === id);
+  if (!p || p.schemaVersion !== 3) return;
+  // Save current viewport + canvas state before leaving.
+  stashCurrentViewport(get(activeCanvasKeyStore));
+  _saveCurrentCanvas();
+  document.body.classList.remove('on-canvas');
+  document.body.classList.add('on-tasks');
+  setActiveView('tasks');
 }
 
 async function goToDashboard() {
@@ -214,7 +510,12 @@ async function goToDashboard() {
   _debounceSaveTimer = null;
   await _saveCurrentCanvas();
   document.body.classList.remove('on-canvas');
-  isOnCanvasStore.set(false);
+  document.body.classList.remove('on-tasks');
+  setActiveView('dashboard');
+  // Clear v3 stores so the dashboard doesn't show stale task/tag data.
+  setProjectTasks([]);
+  setProjectTags([]);
+  setActiveCanvasKey('__project__');
   dashRender();
 }
 
@@ -318,7 +619,7 @@ function initProjectsService() {
     }
   }
 
-  // Auto-save canvas every 30s when on canvas (v2 format)
+  // Auto-save canvas every 30s when on canvas (version-aware)
   setInterval(() => {
     if (get(isOnCanvasStore)) {
       _saveCurrentCanvas();
@@ -335,8 +636,7 @@ function initProjectsService() {
   // Save on page unload (browser)
   window.addEventListener('beforeunload', () => {
     if (get(isOnCanvasStore)) {
-      const id = getActiveProjectId();
-      if (id) saveCanvasV2(id).catch(() => {});
+      _saveCurrentCanvas().catch(() => {});
     }
   });
 
@@ -348,8 +648,7 @@ function initProjectsService() {
         tauriWindow.onCloseRequested(async (event) => {
           event.preventDefault();
           if (get(isOnCanvasStore)) {
-            const id = getActiveProjectId();
-            if (id) await saveCanvasV2(id).catch(() => {});
+            await _saveCurrentCanvas().catch(() => {});
           }
           tauriWindow.destroy();
         });
@@ -418,6 +717,14 @@ export function mountProjectsBridge() {
     openProject,
     goToDashboard,
     toggleDashboard,
+    // v3 tasks/tags
+    createTask,
+    updateTask,
+    deleteTask,
+    createProjectTag,
+    setCanvasView,
+    openCanvasView,
+    backToTasks,
     saveProjects,
     saveFolders,
     loadProjects,

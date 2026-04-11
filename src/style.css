@@ -111,10 +111,23 @@ html, body {
   transform-origin: top center;
   overflow: hidden;
 }
-body.on-canvas #view-dashboard {
+body.on-canvas #view-dashboard,
+body.on-tasks #view-dashboard {
   opacity: 0;
   pointer-events: none;
   transform: translateX(-50%) scale(0.97) translateY(-8px);
+}
+/* Tasks view hides canvas chrome (top bar, canvas itself, toolbar, status bar, etc.) */
+body.on-tasks #bar,
+body.on-tasks #cv,
+body.on-tasks #pixi-canvas-mount,
+body.on-tasks #toolbar,
+body.on-tasks #svelte-toolbar-mount,
+body.on-tasks #svelte-status-bar-mount,
+body.on-tasks #svelte-canvas-bar-mount,
+body.on-tasks #svelte-selection-bar-mount,
+body.on-tasks #svelte-minimap-mount {
+  display: none !important;
 }
 
 /* ════════════════════════════════════════════

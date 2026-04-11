@@ -1,6 +1,9 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { activeProjectIdStore, projectsStore } from '../stores/projects.js';
+  import {
+    activeProjectIdStore, projectsStore,
+    activeCanvasKeyStore, projectTasksStore, parseCanvasKey,
+  } from '../stores/projects.js';
   import { canUndo, canRedo, undo, redo } from '../stores/elements.js';
   import { IS_TAURI } from './media-service.js';
   import { alwaysOnTopStore, projectDirStore } from '../stores/ui.js';
@@ -12,6 +15,24 @@
   let projects   = $derived($projectsStore);
   let activeId   = $derived($activeProjectIdStore);
   let project    = $derived(projects.find(p => p.id === activeId) ?? null);
+
+  // v3 breadcrumb state
+  let isV3         = $derived(project?.schemaVersion === 3);
+  let canvasParsed = $derived(parseCanvasKey($activeCanvasKeyStore));
+  let currentTask  = $derived(
+    canvasParsed.kind !== 'project'
+      ? $projectTasksStore.find(t => t.id === canvasParsed.taskId) || null
+      : null
+  );
+  let parentTask = $derived(
+    currentTask?.parentTaskId
+      ? $projectTasksStore.find(t => t.id === currentTask.parentTaskId) || null
+      : null
+  );
+
+  function goProjectCanvas() { window.openCanvasView?.(null, 'task'); }
+  function goTaskCanvas(id)  { window.openCanvasView?.(id, 'task'); }
+  function goBackToTasks()   { window.backToTasks?.(); }
 
   let isRenaming = $state(false);
   let renameVal  = $state('');
@@ -67,6 +88,9 @@
     <button id="back-btn" title="dashboard  ⌘\\" onclick={onback}>
       <svg viewBox="0 0 13 13"><rect x="1" y="1" width="5" height="5" rx="1"/><rect x="7" y="1" width="5" height="5" rx="1"/><rect x="1" y="7" width="5" height="5" rx="1"/><rect x="7" y="7" width="5" height="5" rx="1"/></svg>
     </button>
+    {#if isV3}
+      <button class="bar-btn bar-to-tasks" onclick={goBackToTasks} title="back to tasks">☰ tasks</button>
+    {/if}
     {#if isRenaming}
       <input
         class="bar-rename-input"
@@ -75,6 +99,16 @@
         onblur={commitRename}
         onkeydown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') isRenaming = false; }}
       />
+    {:else if isV3 && currentTask}
+      <span class="crumbs">
+        <button class="crumb" onclick={goProjectCanvas}>{project?.name ?? 'untitled'}</button>
+        {#if parentTask}
+          <span class="crumb-sep">›</span>
+          <button class="crumb" onclick={() => goTaskCanvas(parentTask.id)}>{parentTask.title}</button>
+        {/if}
+        <span class="crumb-sep">›</span>
+        <span class="crumb crumb-current">{currentTask.title}{canvasParsed.kind === 'final' ? ' · final' : ''}</span>
+      </span>
     {:else}
       <span id="project-title" title="double-click to rename" role="button" tabindex="0"
         ondblclick={startRename}

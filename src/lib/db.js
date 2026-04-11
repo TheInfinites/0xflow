@@ -32,6 +32,40 @@ export async function initDB() {
     key TEXT PRIMARY KEY, value TEXT
   )`);
 
+  // ── v3 schema additions (additive, non-destructive) ─────
+  // Adds schema_version column to projects and creates project_tasks/project_tags tables.
+  // schema_version defaults to 2 for all existing rows; new projects created after this
+  // feature ships set it to 3 and get the Tasks hub + tags.
+  try {
+    await _db.execute('ALTER TABLE projects ADD COLUMN schema_version INTEGER DEFAULT 2');
+  } catch (e) {
+    // Column already exists — ignore
+  }
+  await _db.execute(`CREATE TABLE IF NOT EXISTS project_tasks (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    parent_task_id TEXT,
+    title TEXT,
+    tag_id TEXT,
+    start_date TEXT,
+    end_date TEXT,
+    status TEXT,
+    order_idx INTEGER,
+    data TEXT,
+    created_at INTEGER,
+    updated_at INTEGER
+  )`);
+  await _db.execute(`CREATE TABLE IF NOT EXISTS project_tags (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    name TEXT,
+    slug TEXT,
+    kind TEXT,
+    owner_task_id TEXT,
+    color TEXT,
+    created_at INTEGER
+  )`);
+
   // One-time migration from localStorage
   const migrated = await _db.select("SELECT value FROM meta WHERE key='migrated'");
   if (migrated.length === 0) {
@@ -81,19 +115,20 @@ export async function dbLoadProjects() {
     noteCount: r.note_count || 0,
     accent: r.accent || null,
     folderId: r.folder_id || null,
+    schemaVersion: r.schema_version || 2,
   }));
 }
 
 export async function dbSaveProject(p) {
   if (!_db) return;
   await _db.execute(
-    `INSERT INTO projects (id, name, created_at, updated_at, note_count, accent, folder_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO projects (id, name, created_at, updated_at, note_count, accent, folder_id, schema_version)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        name=excluded.name, updated_at=excluded.updated_at,
        note_count=excluded.note_count, accent=excluded.accent,
-       folder_id=excluded.folder_id`,
-    [p.id, p.name, p.createdAt, p.updatedAt, p.noteCount || 0, p.accent || null, p.folderId || null]
+       folder_id=excluded.folder_id, schema_version=excluded.schema_version`,
+    [p.id, p.name, p.createdAt, p.updatedAt, p.noteCount || 0, p.accent || null, p.folderId || null, p.schemaVersion || 2]
   );
 }
 
@@ -101,6 +136,111 @@ export async function dbDeleteProject(id) {
   if (!_db) return;
   await _db.execute('DELETE FROM projects WHERE id=?', [id]);
   await _db.execute('DELETE FROM canvas_states WHERE project_id=?', [id]);
+  await _db.execute('DELETE FROM project_tasks WHERE project_id=?', [id]);
+  await _db.execute('DELETE FROM project_tags WHERE project_id=?', [id]);
+}
+
+// ── Project tasks CRUD ───────────────────────
+
+export async function dbLoadTasks(projectId) {
+  if (!_db) return [];
+  const rows = await _db.select(
+    'SELECT * FROM project_tasks WHERE project_id=? ORDER BY order_idx ASC',
+    [projectId]
+  );
+  return rows.map(r => {
+    let extra = {};
+    try { extra = r.data ? JSON.parse(r.data) : {}; } catch {}
+    return {
+      id: r.id,
+      projectId: r.project_id,
+      parentTaskId: r.parent_task_id || null,
+      title: r.title || '',
+      tagId: r.tag_id || null,
+      startDate: r.start_date || null,
+      endDate: r.end_date || null,
+      status: r.status || 'todo',
+      order: r.order_idx || 0,
+      taskTagIds: extra.taskTagIds || [],
+      comments: extra.comments || [],
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    };
+  });
+}
+
+export async function dbSaveTask(t) {
+  if (!_db) return;
+  const data = JSON.stringify({
+    taskTagIds: t.taskTagIds || [],
+    comments: t.comments || [],
+  });
+  await _db.execute(
+    `INSERT INTO project_tasks (id, project_id, parent_task_id, title, tag_id,
+       start_date, end_date, status, order_idx, data, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       parent_task_id=excluded.parent_task_id,
+       title=excluded.title,
+       tag_id=excluded.tag_id,
+       start_date=excluded.start_date,
+       end_date=excluded.end_date,
+       status=excluded.status,
+       order_idx=excluded.order_idx,
+       data=excluded.data,
+       updated_at=excluded.updated_at`,
+    [
+      t.id, t.projectId, t.parentTaskId || null, t.title || '',
+      t.tagId || null, t.startDate || null, t.endDate || null,
+      t.status || 'todo', t.order || 0, data,
+      t.createdAt, t.updatedAt,
+    ]
+  );
+}
+
+export async function dbDeleteTask(id) {
+  if (!_db) return;
+  await _db.execute('DELETE FROM project_tasks WHERE id=?', [id]);
+}
+
+// ── Project tags CRUD ────────────────────────
+
+export async function dbLoadTags(projectId) {
+  if (!_db) return [];
+  const rows = await _db.select(
+    'SELECT * FROM project_tags WHERE project_id=?',
+    [projectId]
+  );
+  return rows.map(r => ({
+    id: r.id,
+    projectId: r.project_id,
+    name: r.name || '',
+    slug: r.slug || '',
+    kind: r.kind || 'project',
+    ownerTaskId: r.owner_task_id || null,
+    color: r.color || null,
+    createdAt: r.created_at,
+  }));
+}
+
+export async function dbSaveTag(tag) {
+  if (!_db) return;
+  await _db.execute(
+    `INSERT INTO project_tags (id, project_id, name, slug, kind, owner_task_id, color, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       name=excluded.name, slug=excluded.slug, kind=excluded.kind,
+       owner_task_id=excluded.owner_task_id, color=excluded.color`,
+    [
+      tag.id, tag.projectId, tag.name, tag.slug, tag.kind,
+      tag.ownerTaskId || null, tag.color || null, tag.createdAt,
+    ]
+  );
+}
+
+export async function dbDeleteTag(id) {
+  if (!_db) return;
+  await _db.execute('DELETE FROM project_tags WHERE id=?', [id]);
 }
 
 // ── Folders CRUD ────────────────────────────

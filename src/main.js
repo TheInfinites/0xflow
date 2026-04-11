@@ -56,6 +56,14 @@ if (dashTarget) {
   mount(Dashboard, { target: dashTarget });
 }
 
+// ── Tasks hub (v3 projects) ─────────────────
+// Self-gated on activeViewStore === 'tasks' — renders nothing when inactive.
+import TasksView from './lib/TasksView.svelte';
+const tasksMount = document.createElement('div');
+tasksMount.id = 'view-tasks';
+document.body.appendChild(tasksMount);
+mount(TasksView, { target: tasksMount });
+
 // ── Canvas view components ────────────────────
 import Canvas          from './lib/Canvas.svelte';
 import Toolbar         from './lib/Toolbar.svelte';

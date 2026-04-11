@@ -2,7 +2,8 @@
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { Application, Graphics, Text, TextStyle, Container, Sprite, Texture, Assets } from 'pixi.js';
-  import { elementsStore, strokesStore, relationsStore, snapshot, undo, redo, canUndo, canRedo } from '../stores/elements.js';
+  import { elementsStore, visibleElementsStore, strokesStore, relationsStore, snapshot, undo, redo, canUndo, canRedo } from '../stores/elements.js';
+  import { activeCanvasKeyStore, projectTasksStore, projectTagsStore, parseCanvasKey } from '../stores/projects.js';
   import { scaleStore, pxStore, pyStore, setCurTool, getCurTool, setSelected, setScale, setPx, setPy, activeEditorIdStore, setActiveEditorId, snapEnabledStore, isLightStore } from '../stores/canvas.js';
   import { activeProjectIdStore } from '../stores/projects.js';
   import { brainstormOpenStore } from '../stores/ui.js';
@@ -195,17 +196,19 @@
     };
 
     // Subscribe to store changes — unsubs collected for top-level onDestroy
-    _unsubEl    = elementsStore.subscribe(renderElements);
+    // v3: render from visibleElementsStore (filtered by activeCanvasKey).
+    // For v2 projects this passthroughs to the full elementsStore.
+    _unsubEl    = visibleElementsStore.subscribe(renderElements);
     _unsubSt    = strokesStore.subscribe(renderStrokes);
     _unsubTheme = isLightStore.subscribe((isLight) => {
       if (app) app.renderer.background.color = isLight ? 0xf0ede8 : 0x0e0e0f;
       drawDotGrid();
-      renderElements($elementsStore);
+      renderElements($visibleElementsStore);
       renderStrokes($strokesStore);
     });
 
     // Initial render from any loaded state
-    renderElements($elementsStore);
+    renderElements($visibleElementsStore);
     renderStrokes($strokesStore);
   });
 
@@ -1074,7 +1077,7 @@
   function clearSelection() {
     selected = new Set();
     setSelected(new Set());
-    elementsStore.update(els => { renderElements(els); return els; });
+    elementsStore.update(els => { renderElements(get(visibleElementsStore)); return els; });
   }
 
   function toggleSelect(id) {
@@ -1082,13 +1085,13 @@
     else selected.add(id);
     selected = new Set(selected);
     setSelected(new Set(selected));
-    elementsStore.update(els => { renderElements(els); return els; });
+    elementsStore.update(els => { renderElements(get(visibleElementsStore)); return els; });
   }
 
   function selectAll() {
     selected = new Set($elementsStore.map(e => e.id));
     setSelected(new Set(selected));
-    elementsStore.update(els => { renderElements(els); return els; });
+    elementsStore.update(els => { renderElements(get(visibleElementsStore)); return els; });
   }
 
   // ── Marquee ──────────────────────────────────
@@ -1198,7 +1201,7 @@
     }
     selected = newSel;
     setSelected(new Set(selected));
-    elementsStore.update(els => { renderElements(els); return els; });
+    elementsStore.update(els => { renderElements(get(visibleElementsStore)); return els; });
 
     // Also select relation lines whose midpoint falls within the marquee
     const newRelSel = new Set();
@@ -1320,11 +1323,33 @@
       width: w, height: h, zIndex: 0,
       pinned: false, locked: false, votes: 0, reactions: [],
       color: null, content: { frameColor: 0, frameLabel: '' },
+      tags: _autoTags(),
     }]);
     setCurTool('select'); curTool = 'select';
   }
 
   // ── Element creation ─────────────────────────
+
+  /**
+   * Return the tag IDs a newly created element should inherit based on the
+   * active canvas view. On the project canvas, returns []. On a task canvas,
+   * returns that task's tagId. On a final canvas, also returns the builtin
+   * 'final' tag id so the element immediately shows in the final view.
+   */
+  function _autoTags() {
+    const key = $activeCanvasKeyStore;
+    const parsed = parseCanvasKey(key);
+    if (parsed.kind === 'project') return [];
+    const task = $projectTasksStore.find(t => t.id === parsed.taskId);
+    if (!task || !task.tagId) return [];
+    const out = [task.tagId];
+    if (parsed.kind === 'final') {
+      const finalTag = $projectTagsStore.find(t => t.kind === 'builtin' && t.slug === 'final');
+      if (finalTag) out.push(finalTag.id);
+    }
+    return out;
+  }
+
   function makeNote(wx, wy) {
     snapshot();
     const id = 'note_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
@@ -1334,6 +1359,7 @@
       x, y, width: 240, height: 180, zIndex: Date.now(),
       pinned: false, locked: false, votes: 0, reactions: [],
       color: null, content: { blocks: [], fontSize: 14 },
+      tags: _autoTags(),
     }]);
     return id;
   }
@@ -1347,6 +1373,7 @@
       x, y, width: 320, height: 260, zIndex: Date.now(),
       pinned: false, locked: false, votes: 0, reactions: [],
       color: null, content: { blocks: [], aiHistory: [], aiModel: 'claude' },
+      tags: _autoTags(),
     }]);
     return id;
   }
@@ -1360,6 +1387,7 @@
       x: wx, y: wy, width: 160, height: 32, zIndex: Date.now(),
       pinned: false, locked: false, votes: 0, reactions: [],
       color: null, content: { text: '', fontSize: 14 },
+      tags: _autoTags(),
     }]);
     return id;
   }
@@ -1373,6 +1401,7 @@
       x, y, width: 400, height: 300, zIndex: Date.now(),
       pinned: false, locked: false, votes: 0, reactions: [],
       color: null, content: { strokes: [] },
+      tags: _autoTags(),
     }]);
     return id;
   }
@@ -1386,19 +1415,43 @@
       x, y, width: 220, height: 200, zIndex: Date.now(),
       pinned: false, locked: false, votes: 0, reactions: [],
       color: null, content: { todoTitle: '', todoItems: [] },
+      tags: _autoTags(),
     }]);
     setActiveEditorId(id);
     return id;
   }
 
   // ── Delete selected ──────────────────────────
-  function deleteSelected() {
+  // v3: on a task canvas view, Backspace only *untags* elements (removes the
+  // active task's tag) so the element vanishes from this view but survives in
+  // the project pool. Shift+Backspace (fullDelete=true) always fully removes.
+  // On the project canvas and for v2 projects, behavior is always fullDelete.
+  function deleteSelected(fullDelete = false) {
     if (!selected.size) return;
+    const key = $activeCanvasKeyStore;
+    const parsed = parseCanvasKey(key);
+
+    // Project canvas or explicit full delete → remove elements entirely.
+    if (fullDelete || parsed.kind === 'project') {
+      snapshot();
+      const ids = new Set(selected);
+      elementsStore.update(els => els.filter(e => !ids.has(e.id)));
+      relationsStore.update(rs => rs.filter(r => !ids.has(r.elAId) && !ids.has(r.elBId)));
+      clearSelection();
+      return;
+    }
+
+    // Task canvas → strip the active task's tag from selected elements.
+    const task = $projectTasksStore.find(t => t.id === parsed.taskId);
+    if (!task || !task.tagId) return;
+    const tagId = task.tagId;
     snapshot();
     const ids = new Set(selected);
-    elementsStore.update(els => els.filter(e => !ids.has(e.id)));
-    // Also delete strokes whose source element was deleted (for relations)
-    relationsStore.update(rs => rs.filter(r => !ids.has(r.elAId) && !ids.has(r.elBId)));
+    elementsStore.update(els => els.map(e => {
+      if (!ids.has(e.id)) return e;
+      if (!Array.isArray(e.tags)) return e;
+      return { ...e, tags: e.tags.filter(t => t !== tagId) };
+    }));
     clearSelection();
   }
 
@@ -1422,7 +1475,9 @@
     if (e.key === 'z' && !e.ctrlKey && !e.metaKey) { if (selected.size) zoomToSelection(); else zoomToFit(); return; }
     if (e.key === 'Delete' || e.key === 'Backspace') {
       if (selectedRelIds.size) { snapshot(); relationsStore.update(rs => rs.filter(r => !selectedRelIds.has(r.id))); selectedRelIds = new Set(); return; }
-      deleteSelected(); return;
+      // Shift+Backspace (or Delete key) = full delete even in task views.
+      deleteSelected(e.shiftKey || e.key === 'Delete');
+      return;
     }
     if (e.key === '0')        { zoomToFit(); return; }
     if (e.key === '+' || e.key === '=') { doZoom(1/0.92, app.screen.width/2, app.screen.height/2); return; }

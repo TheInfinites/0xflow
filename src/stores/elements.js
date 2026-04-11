@@ -1,7 +1,8 @@
 // ════════════════════════════════════════════
 // elements store — single source of truth for canvas elements
 // ════════════════════════════════════════════
-import { writable, get } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
+import { activeCanvasKeyStore, projectTasksStore, projectTagsStore, parseCanvasKey } from './projects.js';
 
 /**
  * Each element record:
@@ -35,7 +36,8 @@ import { writable, get } from 'svelte/store';
  *     frameLabel: string,
  *     // label
  *     text: string,
- *   }
+ *   },
+ *   tags: string[]               // v3: array of tag IDs (from projectTagsStore)
  * }
  *
  * Strokes record:
@@ -54,6 +56,40 @@ import { writable, get } from 'svelte/store';
 export const elementsStore = writable([]);
 export const strokesStore  = writable([]);   // pen strokes, arrows, shapes
 export const relationsStore = writable([]);  // relation lines between elements
+
+// ── v3: visible elements derived store ───────
+// Filters elementsStore based on activeCanvasKeyStore.
+//   project view → all elements
+//   task view    → elements tagged with the task's tagId
+//   final view   → elements tagged with (parent task tagId) AND (builtin 'final' tag)
+// v2 projects never set a non-project canvas key, so this behaves as a passthrough.
+export const visibleElementsStore = derived(
+  [elementsStore, activeCanvasKeyStore, projectTasksStore, projectTagsStore],
+  ([$els, $key, $tasks, $tags]) => {
+    const parsed = parseCanvasKey($key);
+    if (parsed.kind === 'project') return $els;
+
+    const task = $tasks.find(t => t.id === parsed.taskId);
+    if (!task) return $els; // fallback — unknown task, show all
+    const taskTagId = task.tagId;
+
+    if (parsed.kind === 'task') {
+      return $els.filter(e => Array.isArray(e.tags) && e.tags.includes(taskTagId));
+    }
+
+    if (parsed.kind === 'final') {
+      const finalTag = $tags.find(t => t.kind === 'builtin' && t.slug === 'final');
+      if (!finalTag) return [];
+      return $els.filter(e =>
+        Array.isArray(e.tags) &&
+        e.tags.includes(taskTagId) &&
+        e.tags.includes(finalTag.id)
+      );
+    }
+
+    return $els;
+  }
+);
 
 // Undo/redo stacks (kept outside store — not reactive)
 let _undoStack = [];
