@@ -5,6 +5,24 @@ import { get as _getStore } from 'svelte/store';
 import { elementsStore, snapshot } from '../stores/elements.js';
 import { scaleStore, pxStore, pyStore } from '../stores/canvas.js';
 import { projectDirStore } from '../stores/ui.js';
+import { activeCanvasKeyStore, projectTasksStore, projectTagsStore, parseCanvasKey } from '../stores/projects.js';
+
+/** Auto-tags for newly created elements based on the active canvas view. */
+function _autoTags() {
+  const key = _getStore(activeCanvasKeyStore);
+  const parsed = parseCanvasKey(key);
+  if (parsed.kind === 'project') return [];
+  const tasks = _getStore(projectTasksStore);
+  const task = tasks.find(t => t.id === parsed.taskId);
+  if (!task || !task.tagId) return [];
+  const out = [task.tagId];
+  if (parsed.kind === 'final') {
+    const tags = _getStore(projectTagsStore);
+    const finalTag = tags.find(t => t.kind === 'builtin' && t.slug === 'final');
+    if (finalTag) out.push(finalTag.id);
+  }
+  return out;
+}
 
 export const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 
@@ -326,6 +344,7 @@ export function makeImgCard(id, url, x, y, w, h, nw, nh) {
     pinned:  false, locked: false, votes: 0, reactions: [],
     color:   null,
     content: { imgId: id, sourcePath: null, nativeW: nw || 0, nativeH: nh || 0 },
+    tags: _autoTags(),
   };
   elementsStore.update(els => [...els, el]);
   const proxy = { dataset: { imgId: id, nw, nh }, _elId: el.id };
@@ -351,6 +370,7 @@ export function makeVideoCard(id, url, x, y, w) {
     pinned:  false, locked: false, votes: 0, reactions: [],
     color:   null,
     content: { imgId: id, sourcePath: null, nativeW: 0, nativeH: 0 },
+    tags: _autoTags(),
   };
   elementsStore.update(els => [...els, el]);
   const proxy = { dataset: { imgId: id, mediaType: 'video' }, _elId: el.id };
@@ -373,6 +393,7 @@ export function makeAudioCard(id, url, x, y, filename) {
     pinned:  false, locked: false, votes: 0, reactions: [],
     color:   null,
     content: { imgId: id, sourcePath: filename || null, nativeW: 0, nativeH: 0 },
+    tags: _autoTags(),
   };
   elementsStore.update(els => [...els, el]);
   const proxy = { dataset: { imgId: id, mediaType: 'audio' }, _elId: el.id };

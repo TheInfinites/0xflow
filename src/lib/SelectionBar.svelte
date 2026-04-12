@@ -1,6 +1,6 @@
 <script>
   import { selectedStore, scaleStore, pxStore, pyStore } from '../stores/canvas.js';
-  import { elementsStore, snapshot } from '../stores/elements.js';
+  import { elementsStore, visibleElementsStore, snapshot } from '../stores/elements.js';
   import {
     projectTagsStore, projectTasksStore,
     activeProjectIdStore, projectsStore,
@@ -49,7 +49,7 @@
     });
   }
 
-  let els = $derived($elementsStore);
+  let els = $derived($visibleElementsStore);
   let selEls = $derived(els.filter(e => selected.has(e.id)));
   let allLocked = $derived(selEls.length > 0 && selEls.every(e => e.locked));
   let allPinned = $derived(selEls.length > 0 && selEls.every(e => e.pinned));

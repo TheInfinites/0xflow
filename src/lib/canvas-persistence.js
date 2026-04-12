@@ -89,10 +89,11 @@ export async function saveCanvasV3(projectId) {
   const activeKey = get(activeCanvasKeyStore) || '__project__';
   stashCurrentViewport(activeKey);
 
-  // Ensure every element has a tags array (defensive — auto-tag logic should set it).
+  // Ensure every element has a tags array and viewPositions map.
   const elements = get(elementsStore).map(e => ({
     ...e,
     tags: Array.isArray(e.tags) ? e.tags : [],
+    viewPositions: e.viewPositions || {},
   }));
 
   const state = {
@@ -200,10 +201,11 @@ export async function loadCanvasV3(projectId) {
 export function applyCanvasState(state) {
   if (!state) return false;
   if (Array.isArray(state.elements)) {
-    // Ensure every element has a tags array so v3 derived filters don't choke.
+    // Ensure every element has a tags array and viewPositions map.
     const els = state.elements.map(e => ({
       ...e,
       tags: Array.isArray(e.tags) ? e.tags : [],
+      viewPositions: e.viewPositions || {},
     }));
     elementsStore.set(els);
   }

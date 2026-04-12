@@ -3,7 +3,7 @@
   import { get } from 'svelte/store';
   import { Application, Graphics, Text, TextStyle, Container, Sprite, Texture, Assets } from 'pixi.js';
   import { elementsStore, visibleElementsStore, strokesStore, relationsStore, snapshot, undo, redo, canUndo, canRedo } from '../stores/elements.js';
-  import { activeCanvasKeyStore, projectTasksStore, projectTagsStore, parseCanvasKey } from '../stores/projects.js';
+  import { activeCanvasKeyStore, projectTasksStore, projectTagsStore, projectsStore, parseCanvasKey } from '../stores/projects.js';
   import { scaleStore, pxStore, pyStore, setCurTool, getCurTool, setSelected, setScale, setPx, setPy, activeEditorIdStore, setActiveEditorId, snapEnabledStore, isLightStore } from '../stores/canvas.js';
   import { activeProjectIdStore } from '../stores/projects.js';
   import { brainstormOpenStore, canvasTagPickerOpenStore } from '../stores/ui.js';
@@ -139,6 +139,32 @@
     return `hsl(${Math.abs(h) % 360}, 55%, 55%)`;
   }
 
+  // ── Per-view position helpers ──────────────
+  // On task/final canvases, position changes write to viewPositions[canvasKey]
+  // instead of the base x/y, keeping positions independent per view.
+  function _isPerViewCanvas() {
+    const key = get(activeCanvasKeyStore);
+    return key && key !== '__project__';
+  }
+  function _activeKey() {
+    return get(activeCanvasKeyStore) || '__project__';
+  }
+  /** Update element position, routing to viewPositions when on a task canvas. */
+  function _setElPos(el, nx, ny) {
+    if (!_isPerViewCanvas()) return { ...el, x: nx, y: ny };
+    const key = _activeKey();
+    const vp = { ...(el.viewPositions || {}), [key]: { x: nx, y: ny } };
+    return { ...el, viewPositions: vp };
+  }
+  /** Read the effective position for an element on the current canvas. */
+  function _getElPos(el) {
+    if (_isPerViewCanvas()) {
+      const vp = el.viewPositions?.[_activeKey()];
+      if (vp) return { x: vp.x, y: vp.y };
+    }
+    return { x: el.x, y: el.y };
+  }
+
   // Radial drag menu state (right-drag on empty canvas)
   let radialMenu = $state(null); // { x, y } origin or null
   let _radialMouseDown = false;
@@ -165,13 +191,28 @@
   function _closeRadialMenu() { radialMenu = null; _radialHovered = -1; _radialMouseDown = false; _radialSubmenuLocked = false; }
   const RADIAL_RADIUS = 82;
   const RADIAL_DRAG_THRESHOLD = 6;
-  const RADIAL_ITEMS = [
+  const _RADIAL_BASE = [
     { label: 'Note',      icon: '<rect x="2" y="2" width="11" height="11" rx="1.5"/><line x1="4.5" y1="5.5" x2="10.5" y2="5.5"/><line x1="4.5" y1="7.5" x2="10.5" y2="7.5"/><line x1="4.5" y1="9.5" x2="8" y2="9.5"/>',   angleDeg: -90 },
     { label: 'Draw',      icon: '<path d="M3 12 Q5 8 8 7 Q11 6 12 3"/><circle cx="3" cy="12" r="1" fill="currentColor" stroke="none"/>',                                                                                         angleDeg: -35 },
     { label: 'Import',    icon: '<path d="M7.5 2v8M4 7l3.5 3.5L11 7"/><rect x="2" y="11" width="11" height="2" rx="0.8"/>',                                                                                                      angleDeg:  35 },
     { label: 'Dashboard', icon: '<rect x="1" y="1" width="5" height="5" rx="0.8"/><rect x="9" y="1" width="5" height="5" rx="0.8"/><rect x="1" y="9" width="5" height="5" rx="0.8"/><rect x="9" y="9" width="5" height="5" rx="0.8"/>', angleDeg: 145 },
     { label: 'Bookmark',  icon: '<path d="M3 2h9v11l-4.5-3L3 13z"/>',                                                                                                                                                            angleDeg: 215 },
   ];
+  const _ICON_TASKS = '<path d="M2 3h11M2 7.5h11M2 12h11"/><circle cx="13" cy="3" r="1.2" fill="currentColor" stroke="none"/><circle cx="13" cy="7.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="13" cy="12" r="1.2" fill="currentColor" stroke="none"/>';
+
+  // Dynamic radial items — v3 projects replace Dashboard with Tasks, keep Bookmark
+  let RADIAL_ITEMS = $derived.by(() => {
+    const proj = $projectsStore.find(p => p.id === $activeProjectIdStore);
+    if (!proj || proj.schemaVersion !== 3) return _RADIAL_BASE;
+
+    return [
+      _RADIAL_BASE[0], // Note
+      _RADIAL_BASE[1], // Draw
+      _RADIAL_BASE[2], // Import
+      { label: '☰ Tasks', action: 'tasks', icon: _ICON_TASKS, angleDeg: 145 },
+      _RADIAL_BASE[4], // Bookmark
+    ];
+  });
 
   // Last known mouse position (client coords) for placing new nodes
   let lastMouseClient = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
@@ -348,7 +389,7 @@
   }
 
   function zoomToFit() {
-    const els = $elementsStore;
+    const els = get(visibleElementsStore);
     if (!els.length) { scale = 1; px = 0; py = 0; applyViewport(); return; }
     const xs = els.map(e => e.x - WORLD_OFFSET);
     const ys = els.map(e => e.y - WORLD_OFFSET);
@@ -804,10 +845,11 @@
       const elB = $elementsStore.find(e => e.id === rel.elBId);
       if (!elA || !elB) continue;
 
-      const ax = elA.x + elA.width/2 - WORLD_OFFSET;
-      const ay = elA.y + elA.height/2 - WORLD_OFFSET;
-      const bx = elB.x + elB.width/2 - WORLD_OFFSET;
-      const by = elB.y + elB.height/2 - WORLD_OFFSET;
+      const posA = _getElPos(elA), posB = _getElPos(elB);
+      const ax = posA.x + elA.width/2 - WORLD_OFFSET;
+      const ay = posA.y + elA.height/2 - WORLD_OFFSET;
+      const bx = posB.x + elB.width/2 - WORLD_OFFSET;
+      const by = posB.y + elB.height/2 - WORLD_OFFSET;
 
       let g = relGraphics.get(rel.id);
       if (!g) {
@@ -989,7 +1031,7 @@
           const o = dragOrigins.find(o => o.id === el.id);
           if (!o) return el;
           const { x: sx, y: sy } = snapXY(o.origX + dx, o.origY + dy);
-          return { ...el, x: sx, y: sy };
+          return _setElPos(el, sx, sy);
         });
       });
       return;
@@ -1144,7 +1186,8 @@
         .filter(sid => !els.find(e => e.id === sid)?.pinned)
         .map(sid => {
           const el = els.find(e => e.id === sid);
-          return { id: sid, origX: el?.x || 0, origY: el?.y || 0, startClientX: e.clientX, startClientY: e.clientY };
+          const pos = el ? _getElPos(el) : { x: 0, y: 0 };
+          return { id: sid, origX: pos.x, origY: pos.y, startClientX: e.clientX, startClientY: e.clientY };
         });
       dragOrigins.forEach(o => { o.startClientX = e.clientX; o.startClientY = e.clientY; });
     }
@@ -1199,8 +1242,9 @@
     relDragSourceId = sourceId;
     relDragActive = true;
     _relDragConnected = false;
-    const cx = (src.x + src.width/2 - WORLD_OFFSET) * scale + px;
-    const cy = (src.y + src.height/2 - WORLD_OFFSET) * scale + py;
+    const pos = _getElPos(src);
+    const cx = (pos.x + src.width/2 - WORLD_OFFSET) * scale + px;
+    const cy = (pos.y + src.height/2 - WORLD_OFFSET) * scale + py;
     const cur = _toOverlay(clientX, clientY);
     relDragLine = { x1: cx, y1: cy, x2: cur.x, y2: cur.y };
   }
@@ -1209,8 +1253,9 @@
     if (!relDragActive || !relDragSourceId) return;
     const src = $elementsStore.find(e => e.id === relDragSourceId);
     if (!src) return;
-    const cx = (src.x + src.width/2 - WORLD_OFFSET) * scale + px;
-    const cy = (src.y + src.height/2 - WORLD_OFFSET) * scale + py;
+    const pos = _getElPos(src);
+    const cx = (pos.x + src.width/2 - WORLD_OFFSET) * scale + px;
+    const cy = (pos.y + src.height/2 - WORLD_OFFSET) * scale + py;
     const cur = _toOverlay(clientX, clientY);
     relDragLine = { x1: cx, y1: cy, x2: cur.x, y2: cur.y };
   }
@@ -1271,7 +1316,8 @@
     const minX = Math.min(start.x, end.x), maxX = Math.max(start.x, end.x);
     const minY = Math.min(start.y, end.y), maxY = Math.max(start.y, end.y);
     const newSel = new Set();
-    for (const el of $elementsStore) {
+    const visEls = get(visibleElementsStore);
+    for (const el of visEls) {
       // Select if element rect intersects marquee rect (any overlap)
       if (el.x < maxX && el.x + el.width > minX &&
           el.y < maxY && el.y + el.height > minY) newSel.add(el.id);
@@ -1286,8 +1332,9 @@
       const elA = $elementsStore.find(e => e.id === rel.elAId);
       const elB = $elementsStore.find(e => e.id === rel.elBId);
       if (!elA || !elB) continue;
-      const ax = elA.x + elA.width/2, ay = elA.y + elA.height/2;
-      const bx = elB.x + elB.width/2, by = elB.y + elB.height/2;
+      const posA = _getElPos(elA), posB = _getElPos(elB);
+      const ax = posA.x + elA.width/2, ay = posA.y + elA.height/2;
+      const bx = posB.x + elB.width/2, by = posB.y + elB.height/2;
       // Sample points along the cubic bezier (matches rendering curve)
       const dx = bx - ax, dy = by - ay;
       const len = Math.sqrt(dx*dx + dy*dy);
@@ -1630,8 +1677,9 @@
     resizing = true;
     resizeHandle = handle;
     resizeEl = id;
+    const pos = _getElPos(el);
     resizeOrigin = {
-      x: el.x, y: el.y, w: el.width, h: el.height,
+      x: pos.x, y: pos.y, w: el.width, h: el.height,
       startX: e.clientX, startY: e.clientY,
     };
     window.addEventListener('pointermove', onResizeMove);
@@ -1682,7 +1730,7 @@
     if (snapEnabled) { w = snap(w); ht = snap(ht); x = snap(x); y = snap(y); }
 
     elementsStore.update(els =>
-      els.map(el => el.id === resizeEl ? { ...el, x, y, width: w, height: ht } : el)
+      els.map(el => el.id === resizeEl ? { ..._setElPos(el, x, y), width: w, height: ht } : el)
     );
   }
 
@@ -1730,7 +1778,9 @@
     const newEls = _clipboard.map((el, i) => {
       const newId = el.id.split('_')[0] + '_' + (now + i) + '_' + Math.random().toString(36).slice(2,6);
       newIds.add(newId);
-      return { ...structuredClone(el), id: newId, x: el.x + 20, y: el.y + 20, zIndex: now + i };
+      const pos = _getElPos(el);
+      const cloned = { ...structuredClone(el), id: newId, zIndex: now + i };
+      return _setElPos(cloned, pos.x + 20, pos.y + 20);
     });
     elementsStore.update(els => [...els, ...newEls]);
     selected = newIds;
@@ -1745,29 +1795,33 @@
     snapshot();
     const els = get(elementsStore).filter(e => selected.has(e.id));
     if (!els.length) return;
-    const minX = Math.min(...els.map(e => e.x));
-    const maxX = Math.max(...els.map(e => e.x + (e.width  || 0)));
-    const minY = Math.min(...els.map(e => e.y));
-    const maxY = Math.max(...els.map(e => e.y + (e.height || 0)));
+    const positions = els.map(e => ({ ...e, ..._getElPos(e) }));
+    const minX = Math.min(...positions.map(e => e.x));
+    const maxX = Math.max(...positions.map(e => e.x + (e.width  || 0)));
+    const minY = Math.min(...positions.map(e => e.y));
+    const maxY = Math.max(...positions.map(e => e.y + (e.height || 0)));
     const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
 
     elementsStore.update(all => all.map(el => {
       if (!selected.has(el.id)) return el;
-      let nx = el.x, ny = el.y;
+      const pos = _getElPos(el);
+      let nx = pos.x, ny = pos.y;
       if (dir === 'left')    nx = minX;
       if (dir === 'right')   nx = maxX - (el.width  || 0);
       if (dir === 'centerH') nx = cx   - (el.width  || 0) / 2;
       if (dir === 'top')     ny = minY;
       if (dir === 'bottom')  ny = maxY - (el.height || 0);
       if (dir === 'centerV') ny = cy   - (el.height || 0) / 2;
-      return { ...el, x: nx, y: ny };
+      return _setElPos(el, nx, ny);
     }));
   }
 
   function distributeSelected(axis) {
     if (selected.size < 3) return;
     snapshot();
-    const sorted = [...get(elementsStore).filter(e => selected.has(e.id))];
+    const raw = get(elementsStore).filter(e => selected.has(e.id));
+    // Build with effective positions for calculations
+    const sorted = raw.map(e => ({ ...e, ..._getElPos(e) }));
     const newPositions = new Map();
     if (axis === 'H') {
       sorted.sort((a, b) => a.x - b.x);
@@ -1776,7 +1830,8 @@
       const gap = (total - sumW) / (sorted.length - 1);
       let cx = sorted[0].x + (sorted[0].width||0);
       for (let i = 1; i < sorted.length - 1; i++) {
-        newPositions.set(sorted[i].id, { x: cx + gap });
+        const pos = _getElPos(sorted[i]);
+        newPositions.set(sorted[i].id, { x: cx + gap, y: pos.y });
         cx += gap + (sorted[i].width||0);
       }
     } else {
@@ -1786,13 +1841,14 @@
       const gap = (total - sumH) / (sorted.length - 1);
       let cy = sorted[0].y + (sorted[0].height||0);
       for (let i = 1; i < sorted.length - 1; i++) {
-        newPositions.set(sorted[i].id, { y: cy + gap });
+        const pos = _getElPos(sorted[i]);
+        newPositions.set(sorted[i].id, { x: pos.x, y: cy + gap });
         cy += gap + (sorted[i].height||0);
       }
     }
     elementsStore.update(all => all.map(el => {
       const np = newPositions.get(el.id);
-      return np ? { ...el, ...np } : el;
+      return np ? _setElPos(el, np.x, np.y) : el;
     }));
   }
 
@@ -1802,6 +1858,8 @@
     else if (item.label === 'Draw')      { curTool = 'pen'; setCurTool('pen'); }
     else if (item.label === 'Dashboard') { onBack(); }
     else if (item.label === 'Bookmark')  { _addBookmark(); }
+    // v3 canvas navigation
+    else if (item.action === 'tasks')          { window.backToTasks?.(); }
   }
 
   // ── Context menu ─────────────────────────────
@@ -1941,7 +1999,7 @@
 
   function zoomToSelection() {
     if (!selected.size) return;
-    const els = $elementsStore.filter(e => selected.has(e.id));
+    const els = get(visibleElementsStore).filter(e => selected.has(e.id));
     if (!els.length) return;
     const minX = Math.min(...els.map(e => e.x - WORLD_OFFSET));
     const minY = Math.min(...els.map(e => e.y - WORLD_OFFSET));
@@ -1956,7 +2014,7 @@
   }
 
   function zoomToElement(id) {
-    const el = $elementsStore.find(e => e.id === id);
+    const el = get(visibleElementsStore).find(e => e.id === id);
     if (!el) return;
     const fw = app?.screen.width || 1200, fh = app?.screen.height || 800;
     const ex = el.x - WORLD_OFFSET, ey = el.y - WORLD_OFFSET;
@@ -1988,12 +2046,13 @@
     const widths = [...targets].map(e => e.width || 240).sort((a, b) => a - b);
     const COL_W = widths[Math.floor(widths.length / 2)];
 
-    // Anchor at top-left of current bounding box
-    const anchorX = Math.min(...targets.map(e => e.x));
-    const anchorY = Math.min(...targets.map(e => e.y));
+    // Anchor at top-left of current bounding box (use per-view positions)
+    const withPos = targets.map(e => ({ ...e, ..._getElPos(e) }));
+    const anchorX = Math.min(...withPos.map(e => e.x));
+    const anchorY = Math.min(...withPos.map(e => e.y));
 
     // Sort reading order: top-to-bottom, left-to-right
-    const sorted = [...targets].sort((a, b) => {
+    const sorted = [...withPos].sort((a, b) => {
       const rowA = Math.round(a.y / 40), rowB = Math.round(b.y / 40);
       return rowA !== rowB ? rowA - rowB : a.x - b.x;
     });
@@ -2014,7 +2073,7 @@
 
     elementsStore.update(els => els.map(el => {
       const u = updates.find(u => u.id === el.id);
-      return u ? { ...el, x: u.x, y: u.y, width: u.width, height: u.height } : el;
+      return u ? { ..._setElPos(el, u.x, u.y), width: u.width, height: u.height } : el;
     }));
 
     snapshot();
@@ -2245,6 +2304,48 @@
       {/each}
       <div class="radial-center"></div>
     </div>
+    {#if _radialHovered >= 0 && RADIAL_ITEMS[_radialHovered]?.action === 'tasks'}
+      {@const tasksRect = _bmItemElAll[_radialHovered]?.getBoundingClientRect()}
+      {@const parsed = parseCanvasKey($activeCanvasKeyStore)}
+      {@const parentTasks = $projectTasksStore.filter(t => !t.parentTaskId).sort((a, b) => (a.order || 0) - (b.order || 0))}
+      <div
+        class="radial-bm-submenu radial-tasks-submenu"
+        style="left:{tasksRect ? tasksRect.left - 8 : 0}px; top:{tasksRect ? tasksRect.top - 4 : 0}px; transform: translateX(-100%);"
+        onclick={e => e.stopPropagation()}
+        onpointerenter={e => { e.stopPropagation(); _radialSubmenuLocked = true; }}
+        onpointerleave={e => { if (!e.currentTarget.contains(/** @type {Node} */(e.relatedTarget))) { _radialSubmenuLocked = false; } }}
+        role="none"
+      >
+        <button
+          class="radial-bm-jump radial-nav-item"
+          class:active={parsed.kind === 'project'}
+          onclick={e => { e.stopPropagation(); _closeRadialMenu(); window.openCanvasView?.(null, 'task'); }}
+        >⬡ Project canvas</button>
+        {#if parentTasks.length > 0}
+          <div class="radial-import-sep"></div>
+          {#each parentTasks as pt (pt.id)}
+            {@const subs = $projectTasksStore.filter(t => t.parentTaskId === pt.id).sort((a, b) => (a.order || 0) - (b.order || 0))}
+            <button
+              class="radial-bm-jump radial-nav-item"
+              class:active={parsed.taskId === pt.id && parsed.kind === 'task'}
+              onclick={e => { e.stopPropagation(); _closeRadialMenu(); window.openCanvasView?.(pt.id, 'task'); }}
+            >{pt.title}</button>
+            {#each subs as sub (sub.id)}
+              <button
+                class="radial-bm-jump radial-nav-item radial-nav-sub"
+                class:active={parsed.taskId === sub.id}
+                onclick={e => { e.stopPropagation(); _closeRadialMenu(); window.openCanvasView?.(sub.id, 'task'); }}
+              >{sub.title}</button>
+            {/each}
+          {/each}
+        {/if}
+        <div class="radial-import-sep"></div>
+        <button
+          class="radial-bm-jump radial-nav-item radial-nav-hub"
+          onclick={e => { e.stopPropagation(); _closeRadialMenu(); window.backToTasks?.(); }}
+        >☰ Tasks hub</button>
+      </div>
+    {/if}
     {#if _radialHovered === 2}
       {@const impRect = _bmItemElAll[2]?.getBoundingClientRect()}
       <div
@@ -2501,6 +2602,11 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .radial-bm-jump:hover { background: rgba(255,255,255,0.06); color: #fff; }
+  .radial-nav-item { padding: 5px 12px; }
+  .radial-nav-item.active { color: #ff6b2b; font-weight: 600; }
+  .radial-nav-sub { padding-left: 24px; font-size: 10px; }
+  .radial-nav-hub { color: rgba(255,255,255,0.5); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .radial-tasks-submenu { min-width: 180px; max-height: 320px; overflow-y: auto; }
   .radial-bm-del {
     background: none; border: none; cursor: pointer;
     color: rgba(255,255,255,0.2); font-size: 9px; padding: 4px 6px;

@@ -38,6 +38,9 @@ import { activeCanvasKeyStore, projectTasksStore, projectTagsStore, parseCanvasK
  *     text: string,
  *   },
  *   tags: string[]               // v3: array of tag IDs (from projectTagsStore)
+ *   viewPositions: {             // v3: per-view position overrides
+ *     [canvasKey: string]: { x: number, y: number }
+ *   }
  * }
  *
  * Strokes record:
@@ -63,6 +66,16 @@ export const relationsStore = writable([]);  // relation lines between elements
 //   task view    → elements tagged with the task's tagId
 //   final view   → elements tagged with (parent task tagId) AND (builtin 'final' tag)
 // v2 projects never set a non-project canvas key, so this behaves as a passthrough.
+/** Apply per-view position overrides if they exist for the given canvas key. */
+function _applyViewPos(els, canvasKey) {
+  if (!canvasKey || canvasKey === '__project__') return els;
+  return els.map(e => {
+    const vp = e.viewPositions?.[canvasKey];
+    if (!vp) return e;
+    return { ...e, x: vp.x, y: vp.y };
+  });
+}
+
 export const visibleElementsStore = derived(
   [elementsStore, activeCanvasKeyStore, projectTasksStore, projectTagsStore],
   ([$els, $key, $tasks, $tags]) => {
@@ -74,17 +87,19 @@ export const visibleElementsStore = derived(
     const taskTagId = task.tagId;
 
     if (parsed.kind === 'task') {
-      return $els.filter(e => Array.isArray(e.tags) && e.tags.includes(taskTagId));
+      const filtered = $els.filter(e => Array.isArray(e.tags) && e.tags.includes(taskTagId));
+      return _applyViewPos(filtered, $key);
     }
 
     if (parsed.kind === 'final') {
       const finalTag = $tags.find(t => t.kind === 'builtin' && t.slug === 'final');
       if (!finalTag) return [];
-      return $els.filter(e =>
+      const filtered = $els.filter(e =>
         Array.isArray(e.tags) &&
         e.tags.includes(taskTagId) &&
         e.tags.includes(finalTag.id)
       );
+      return _applyViewPos(filtered, $key);
     }
 
     return $els;
