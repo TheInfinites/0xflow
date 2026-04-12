@@ -7,8 +7,8 @@
   // ══════════════════════════════════════════════
   import { projectTasksStore, projectTagsStore, activeProjectIdStore } from '../stores/projects.js';
 
-  /** @type {{ task: any, subTasks?: any[], depth?: number }} */
-  let { task, subTasks = [], depth = 0 } = $props();
+  /** @type {{ task: any, subTasks?: any[], depth?: number, onDragStart?: Function, onDragOver?: Function, onDrop?: Function, isDragOver?: boolean }} */
+  let { task, subTasks = [], depth = 0, onDragStart, onDragOver, onDrop, isDragOver = false } = $props();
 
   function _svc(name, ...args) { return window[name]?.(...args); }
 
@@ -150,8 +150,21 @@
   }
 </script>
 
-<div class="task-row" style="--depth: {depth}" class:done={task.status === 'done'}>
+<div
+  class="task-row"
+  class:done={task.status === 'done'}
+  class:drag-over={isDragOver}
+  style="--depth: {depth}"
+  role="listitem"
+  draggable={!!onDragStart}
+  ondragstart={e => onDragStart?.(e, task)}
+  ondragover={e => { e.preventDefault(); onDragOver?.(e, task); }}
+  ondrop={e => { e.preventDefault(); onDrop?.(e, task); }}
+>
   <div class="col col-name">
+    {#if onDragStart}
+      <span class="drag-handle" title="drag to reorder">⠿</span>
+    {/if}
     {#if subTasks.length || depth === 0}
       <button class="caret" class:open={expanded} onclick={() => expanded = !expanded}>▶</button>
     {:else}
@@ -167,7 +180,7 @@
         autofocus
       />
     {:else}
-      <button class="title-btn" onclick={openTaskCanvas} ondblclick={beginEdit}>
+      <button class="title-btn" onclick={beginEdit}>
         {task.title}
       </button>
     {/if}
@@ -319,6 +332,18 @@
   .task-row:hover {
     background: rgba(255,255,255,0.03);
   }
+  .task-row.drag-over {
+    border-top: 2px solid rgba(74,158,255,0.6);
+  }
+  .drag-handle {
+    cursor: grab;
+    color: rgba(255,255,255,0.2);
+    font-size: 11px;
+    user-select: none;
+    line-height: 1;
+  }
+  .drag-handle:hover { color: rgba(255,255,255,0.5); }
+  .task-row:hover .drag-handle { color: rgba(255,255,255,0.35); }
   .task-row.done .title-btn {
     text-decoration: line-through;
     opacity: 0.5;
@@ -702,6 +727,10 @@
     border-bottom-color: rgba(0,0,0,0.06);
   }
   :global(body.dash-light) .task-row:hover { background: rgba(0,0,0,0.03); }
+  :global(body.dash-light) .task-row.drag-over { border-top-color: rgba(40,100,200,0.5); }
+  :global(body.dash-light) .drag-handle { color: rgba(0,0,0,0.15); }
+  :global(body.dash-light) .drag-handle:hover { color: rgba(0,0,0,0.4); }
+  :global(body.dash-light) .task-row:hover .drag-handle { color: rgba(0,0,0,0.3); }
   :global(body.dash-light) .caret { color: rgba(0,0,0,0.4); }
   :global(body.dash-light) .status-dot { border-color: rgba(0,0,0,0.3); }
   :global(body.dash-light) .title-btn:hover { color: #2060c0; }

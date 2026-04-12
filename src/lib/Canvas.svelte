@@ -6,7 +6,7 @@
   import { activeCanvasKeyStore, projectTasksStore, projectTagsStore, parseCanvasKey } from '../stores/projects.js';
   import { scaleStore, pxStore, pyStore, setCurTool, getCurTool, setSelected, setScale, setPx, setPy, activeEditorIdStore, setActiveEditorId, snapEnabledStore, isLightStore } from '../stores/canvas.js';
   import { activeProjectIdStore } from '../stores/projects.js';
-  import { brainstormOpenStore } from '../stores/ui.js';
+  import { brainstormOpenStore, canvasTagPickerOpenStore } from '../stores/ui.js';
   import { store } from './projects-service.js';
   import NoteOverlay   from './NoteOverlay.svelte';
   import MediaOverlay  from './MediaOverlay.svelte';
@@ -82,7 +82,15 @@
   // Floating tag picker (Shift+right-click on an element)
   let tagPicker = $state(null); // { x, y, elementIds: Set<string> } or null
   let tagPickerNewName = $state('');
-  function _closeTagPicker() { tagPicker = null; tagPickerNewName = ''; }
+  function _closeTagPicker() {
+    tagPicker = null;
+    tagPickerNewName = '';
+    canvasTagPickerOpenStore.set(false);
+    // Clear selection so SelectionBar doesn't reappear
+    selected = new Set();
+    setSelected(new Set());
+    elementsStore.update(els => { renderElements(get(visibleElementsStore)); return els; });
+  }
   function _tagPickerCount(tagId) {
     if (!tagPicker) return 0;
     const ids = tagPicker.elementIds;
@@ -439,6 +447,7 @@
           y: native.clientY,
           elementIds: new Set(selected),
         };
+        canvasTagPickerOpenStore.set(true);
         return;
       }
       const elData = $elementsStore.find(x => x.id === el.id);

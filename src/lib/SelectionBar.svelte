@@ -5,11 +5,13 @@
     projectTagsStore, projectTasksStore,
     activeProjectIdStore, projectsStore,
   } from '../stores/projects.js';
+  import { canvasTagPickerOpenStore } from '../stores/ui.js';
 
   const WORLD_OFFSET = 3000;
 
   let selected = $derived($selectedStore);
-  let hasSelection = $derived(selected.size > 0);
+  let tagPickerOpen = $derived($canvasTagPickerOpenStore);
+  let hasSelection = $derived(selected.size > 0 && !tagPickerOpen);
 
   function deleteSelected()    { window._pixiCanvas?.deleteSelected?.(); }
   function duplicateSelected() { window._pixiCanvas?.duplicateSelected?.(); }

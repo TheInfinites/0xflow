@@ -37,6 +37,42 @@
       .sort((a, b) => (a.order || 0) - (b.order || 0));
   }
 
+  // ── Drag-reorder state ────────────────
+  let dragTaskId = $state(null);
+  let dropTargetId = $state(null);
+
+  function onRowDragStart(e, task) {
+    dragTaskId = task.id;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', task.id);
+  }
+
+  function onRowDragOver(e, task) {
+    if (!dragTaskId || task.id === dragTaskId) {
+      dropTargetId = null;
+      return;
+    }
+    dropTargetId = task.id;
+  }
+
+  function onRowDrop(e, targetTask) {
+    if (!dragTaskId || dragTaskId === targetTask.id) { dragTaskId = null; dropTargetId = null; return; }
+    // Reorder: move dragged task before the target
+    const list = parentTasks.map(t => t.id);
+    const fromIdx = list.indexOf(dragTaskId);
+    let toIdx = list.indexOf(targetTask.id);
+    if (fromIdx === -1 || toIdx === -1) { dragTaskId = null; dropTargetId = null; return; }
+    list.splice(fromIdx, 1);
+    toIdx = list.indexOf(targetTask.id);
+    list.splice(toIdx, 0, dragTaskId);
+    // Persist new order
+    for (let i = 0; i < list.length; i++) {
+      _svc('updateTask', list[i], { order: i });
+    }
+    dragTaskId = null;
+    dropTargetId = null;
+  }
+
   function addParentTask() {
     if (!activeId) return;
     _svc('createTask', { projectId: activeId, title: 'new task' });
@@ -64,7 +100,8 @@
   </header>
 
   <main class="tasks-main">
-    <div class="tasks-table">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="tasks-table" ondragend={() => { dragTaskId = null; dropTargetId = null; }}>
       <div class="table-header">
         <div class="col col-name">Name</div>
         <div class="col col-tags">Tags</div>
@@ -79,6 +116,10 @@
           {task}
           subTasks={subTasksOf(task.id)}
           depth={0}
+          onDragStart={onRowDragStart}
+          onDragOver={onRowDragOver}
+          onDrop={onRowDrop}
+          isDragOver={dropTargetId === task.id}
         />
       {/each}
 

@@ -44,3 +44,6 @@ export function getAlwaysOnTop()        { return get(alwaysOnTopStore); }
 export function setAlwaysOnTop(v)       { alwaysOnTopStore.set(v); }
 export function getActiveView()         { return get(activeViewStore); }
 export function setActiveView(v)        { activeViewStore.set(v); }
+
+// When the canvas tag picker is open, the SelectionBar should hide.
+export const canvasTagPickerOpenStore = writable(false);
