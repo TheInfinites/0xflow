@@ -47,3 +47,11 @@ export function setActiveView(v)        { activeViewStore.set(v); }
 
 // When the canvas tag picker is open, the SelectionBar should hide.
 export const canvasTagPickerOpenStore = writable(false);
+
+// ── Split view mode ──────────────────────────
+// When true, v3 projects show Tasks + Canvas side by side.
+// 'left' = tasks expanded (full), 'right' = canvas expanded (full),
+// 'split' = both visible 50/50, false = not in split layout
+export const splitModeStore = writable('split');
+export function getSplitMode() { return get(splitModeStore); }
+export function setSplitMode(v) { splitModeStore.set(v); }

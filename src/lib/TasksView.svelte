@@ -7,14 +7,27 @@
   // projects-service.js). Task CRUD is delegated to window.createTask /
   // window.updateTask / window.deleteTask which update stores reactively.
   // ══════════════════════════════════════════════
+  import { onMount } from 'svelte';
   import {
     projectsStore, activeProjectIdStore,
     projectTasksStore,
   } from '../stores/projects.js';
-  import { activeViewStore } from '../stores/ui.js';
+  import { activeViewStore, splitModeStore } from '../stores/ui.js';
   import TaskRow from './TaskRow.svelte';
 
-  let visible = $derived($activeViewStore === 'tasks');
+  let splitMode = $derived($splitModeStore);
+
+  // Window controls (Tauri)
+  const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__?.__isMock;
+  let _win = $state(null);
+  onMount(async () => {
+    if (!IS_TAURI) return;
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      _win = getCurrentWindow();
+    } catch {}
+  });
+  let visible = $derived($activeViewStore === 'tasks' || (splitMode && splitMode !== 'right'));
 
   function _svc(name, ...args) { return window[name]?.(...args); }
 
@@ -85,6 +98,16 @@
   function backToDashboard() {
     _svc('goToDashboard');
   }
+
+  function expandTasks() {
+    _svc('setSplitPanel', 'left');
+  }
+  function restoreSplit() {
+    _svc('setSplitPanel', 'split');
+  }
+  function expandCanvas() {
+    _svc('setSplitPanel', 'right');
+  }
 </script>
 
 {#if visible}
@@ -93,9 +116,26 @@
     <button class="icon-btn" onclick={backToDashboard} title="back to dashboard">←</button>
     <h1 class="project-title">{project?.name || 'untitled'}</h1>
     <div class="header-actions">
+      {#if splitMode}
+        {#if splitMode === 'left'}
+          <button class="icon-btn" onclick={restoreSplit} title="restore split view">⬜⬜</button>
+        {:else}
+          <button class="icon-btn" onclick={expandTasks} title="expand tasks">⬛</button>
+        {/if}
+        {#if splitMode !== 'right'}
+          <button class="icon-btn" onclick={expandCanvas} title="expand canvas">▶</button>
+        {/if}
+      {/if}
       <button class="btn primary" onclick={openProjectCanvas}>
         open canvas
       </button>
+      {#if IS_TAURI && _win}
+        <div class="win-controls">
+          <button class="win-ctrl" title="Minimize" onclick={() => _win.minimize()}>─</button>
+          <button class="win-ctrl" title="Maximize" onclick={() => _win.toggleMaximize()}>□</button>
+          <button class="win-ctrl win-close" title="Close" onclick={() => _win.close()}>✕</button>
+        </div>
+      {/if}
     </div>
   </header>
 
@@ -141,6 +181,20 @@
     flex-direction: column;
     font-family: 'Geist', -apple-system, sans-serif;
     z-index: 9500;
+  }
+  /* In split mode, tasks view takes left half */
+  :global(body.on-split) .tasks-view {
+    right: 50%;
+    border-right: 1px solid rgba(255,255,255,0.08);
+  }
+  /* Tasks expanded full screen in split mode */
+  :global(body.on-split.split-left) .tasks-view {
+    right: 0;
+    border-right: none;
+  }
+  /* Canvas expanded — hide tasks */
+  :global(body.on-split.split-right) .tasks-view {
+    display: none;
   }
 
   .tasks-header {
@@ -220,6 +274,29 @@
     font-size: 13px;
   }
   .add-row-btn:hover { color: rgba(255,255,255,0.8); }
+
+  .win-controls {
+    display: flex;
+    align-items: center;
+    gap: 1px;
+    margin-left: 8px;
+    -webkit-app-region: no-drag;
+  }
+  .win-ctrl {
+    width: 36px;
+    height: 28px;
+    border: none;
+    background: transparent;
+    color: rgba(255,255,255,0.5);
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Geist Mono', monospace;
+  }
+  .win-ctrl:hover { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.9); }
+  .win-close:hover { background: #e81123; color: #fff; }
 
   /* Light mode */
   :global(body.dash-light) .tasks-view {

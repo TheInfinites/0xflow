@@ -112,7 +112,8 @@ html, body {
   overflow: hidden;
 }
 body.on-canvas #view-dashboard,
-body.on-tasks #view-dashboard {
+body.on-tasks #view-dashboard,
+body.on-split #view-dashboard {
   opacity: 0;
   pointer-events: none;
   transform: translateX(-50%) scale(0.97) translateY(-8px);
@@ -128,6 +129,88 @@ body.on-tasks #svelte-canvas-bar-mount,
 body.on-tasks #svelte-selection-bar-mount,
 body.on-tasks #svelte-minimap-mount {
   display: none !important;
+}
+
+/* ── Split view: Tasks left + Canvas right ─── */
+body.on-split #view-canvas {
+  position: fixed;
+  left: 50%; top: 0; right: 0; bottom: 0;
+  width: 50%; height: 100%;
+}
+body.on-split #pixi-canvas-mount {
+  position: absolute !important;
+  inset: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+}
+body.on-split #svelte-canvas-bar-mount {
+  left: 50% !important;
+  right: 0 !important;
+  width: 50% !important;
+}
+body.on-split #bar {
+  left: 50% !important;
+  right: 0 !important;
+  width: auto !important;
+}
+body.on-split #win-controls {
+  display: none !important;
+}
+body.on-split #svelte-toolbar-mount {
+  left: 50% !important;
+}
+body.on-split #toolbar {
+  left: 75% !important;
+}
+body.on-split #svelte-selection-bar-mount {
+  left: 50% !important;
+}
+body.on-split #svelte-status-bar-mount {
+  left: 50% !important;
+}
+body.on-split #svelte-minimap-mount {
+  right: 0 !important;
+}
+/* Split — tasks expanded (full screen tasks, hide canvas) */
+body.on-split.split-left #view-canvas,
+body.on-split.split-left #pixi-canvas-mount,
+body.on-split.split-left #svelte-canvas-bar-mount,
+body.on-split.split-left #svelte-toolbar-mount,
+body.on-split.split-left #svelte-selection-bar-mount,
+body.on-split.split-left #svelte-status-bar-mount,
+body.on-split.split-left #svelte-minimap-mount {
+  display: none !important;
+}
+/* Split — canvas expanded (full screen canvas, tasks hidden via component) */
+body.on-split.split-right #view-canvas {
+  left: 0; width: 100%;
+}
+body.on-split.split-right #pixi-canvas-mount {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100% !important;
+}
+body.on-split.split-right #svelte-canvas-bar-mount {
+  left: 0 !important;
+  width: 100% !important;
+}
+body.on-split.split-right #bar {
+  left: 0 !important;
+}
+body.on-split.split-right #win-controls {
+  display: flex !important;
+}
+body.on-split.split-right #svelte-toolbar-mount {
+  left: 0 !important;
+}
+body.on-split.split-right #toolbar {
+  left: 50% !important;
+}
+body.on-split.split-right #svelte-selection-bar-mount {
+  left: 0 !important;
+}
+body.on-split.split-right #svelte-status-bar-mount {
+  left: 0 !important;
 }
 
 /* ════════════════════════════════════════════
@@ -450,7 +533,9 @@ input.card-name {
   background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
   opacity: 1; pointer-events: all; transition: opacity 0.2s;
 }
-body.on-canvas #dash-backdrop { opacity: 0; pointer-events: none; }
+body.on-canvas #dash-backdrop,
+body.on-tasks #dash-backdrop,
+body.on-split #dash-backdrop { opacity: 0; pointer-events: none; }
 
 /* dashboard light mode */
 body.dash-light #view-dashboard { background: #F0EDE8; }

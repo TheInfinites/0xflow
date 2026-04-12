@@ -6,7 +6,7 @@
   } from '../stores/projects.js';
   import { canUndo, canRedo, undo, redo } from '../stores/elements.js';
   import { IS_TAURI } from './media-service.js';
-  import { alwaysOnTopStore, projectDirStore } from '../stores/ui.js';
+  import { alwaysOnTopStore, projectDirStore, splitModeStore } from '../stores/ui.js';
   import { getCurrentWindow } from '@tauri-apps/api/window';
 
 
@@ -30,9 +30,15 @@
       : null
   );
 
+  let splitMode = $derived($splitModeStore);
+
   function goProjectCanvas() { window.openCanvasView?.(null, 'task'); }
   function goTaskCanvas(id)  { window.openCanvasView?.(id, 'task'); }
   function goBackToTasks()   { window.backToTasks?.(); }
+
+  function expandCanvas()  { window.setSplitPanel?.('right'); }
+  function restoreSplit()  { window.setSplitPanel?.('split'); }
+  function showTasks()     { window.setSplitPanel?.('left'); }
 
   let isRenaming = $state(false);
   let renameVal  = $state('');
@@ -88,7 +94,14 @@
     <button id="back-btn" title="dashboard  ⌘\\" onclick={onback}>
       <svg viewBox="0 0 13 13"><rect x="1" y="1" width="5" height="5" rx="1"/><rect x="7" y="1" width="5" height="5" rx="1"/><rect x="1" y="7" width="5" height="5" rx="1"/><rect x="7" y="7" width="5" height="5" rx="1"/></svg>
     </button>
-    {#if isV3}
+    {#if isV3 && splitMode}
+      <button class="bar-btn bar-to-tasks" onclick={showTasks} title="show tasks panel">◀</button>
+      {#if splitMode === 'right'}
+        <button class="bar-btn" onclick={restoreSplit} title="restore split view">⬜⬜</button>
+      {:else}
+        <button class="bar-btn" onclick={expandCanvas} title="expand canvas">⬛</button>
+      {/if}
+    {:else if isV3}
       <button class="bar-btn bar-to-tasks" onclick={goBackToTasks} title="back to tasks">☰ tasks</button>
     {/if}
     {#if isRenaming}

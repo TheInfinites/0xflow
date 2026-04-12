@@ -26,7 +26,7 @@ import {
   makeCanvasKey,
 } from '../stores/projects.js';
 import { elementsStore } from '../stores/elements.js';
-import { toastMsgStore, toastVisibleStore, isOnCanvasStore, activeViewStore, setActiveView } from '../stores/ui.js';
+import { toastMsgStore, toastVisibleStore, isOnCanvasStore, activeViewStore, setActiveView, splitModeStore, setSplitMode } from '../stores/ui.js';
 import {
   saveCanvasV2, loadCanvasV2, saveCanvasV3, loadCanvasV3,
   applyCanvasState, clearCanvasState, migrateV1ToV2,
@@ -450,12 +450,13 @@ async function openProject(id, e) {
     _loadingCanvas = false;
   }
 
-  // Routing: v3 projects land on the Tasks hub; v2 projects go straight to canvas.
+  // Routing: v3 projects land on split view (tasks + canvas); v2 projects go straight to canvas.
   if (p.schemaVersion === 3) {
-    setActiveView('tasks');
-    // Tasks view has its own layout — hide the dashboard + canvas via body class.
-    document.body.classList.remove('on-canvas');
-    document.body.classList.add('on-tasks');
+    setActiveView('canvas');
+    setSplitMode('split');
+    document.body.classList.remove('on-canvas', 'on-tasks', 'split-left', 'split-right');
+    document.body.classList.add('on-split');
+    requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
   } else {
     document.body.classList.remove('on-tasks');
     document.body.classList.add('on-canvas');
@@ -486,9 +487,19 @@ function setCanvasView(newKey) {
 function openCanvasView(taskId = null, kind = 'task') {
   const key = taskId ? makeCanvasKey(kind, taskId) : '__project__';
   setCanvasView(key);
-  document.body.classList.remove('on-tasks');
-  document.body.classList.add('on-canvas');
-  setActiveView('canvas');
+  const sm = get(splitModeStore);
+  if (sm) {
+    // In split mode, canvas is already visible — just switch the key.
+    // If tasks are fullscreen (split-left), switch to split to show canvas.
+    if (sm === 'left') {
+      setSplitPanel('split');
+    }
+    setActiveView('canvas');
+  } else {
+    document.body.classList.remove('on-tasks');
+    document.body.classList.add('on-canvas');
+    setActiveView('canvas');
+  }
 }
 
 /** Return from canvas back to Tasks hub (v3 projects only). */
@@ -500,17 +511,34 @@ function backToTasks() {
   // Save current viewport + canvas state before leaving.
   stashCurrentViewport(get(activeCanvasKeyStore));
   _saveCurrentCanvas();
-  document.body.classList.remove('on-canvas');
-  document.body.classList.add('on-tasks');
-  setActiveView('tasks');
+  const sm = get(splitModeStore);
+  if (sm) {
+    // In split mode, expand tasks to full screen
+    setSplitPanel('left');
+    setActiveView('tasks');
+  } else {
+    document.body.classList.remove('on-canvas');
+    document.body.classList.add('on-tasks');
+    setActiveView('tasks');
+  }
+}
+
+/** Toggle split mode panels: 'left' = tasks full, 'right' = canvas full, 'split' = 50/50 */
+function setSplitPanel(mode) {
+  setSplitMode(mode);
+  document.body.classList.remove('split-left', 'split-right');
+  if (mode === 'left')  document.body.classList.add('split-left');
+  if (mode === 'right') document.body.classList.add('split-right');
+  // Trigger Pixi resize after layout change
+  requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
 }
 
 async function goToDashboard() {
   clearTimeout(_debounceSaveTimer);
   _debounceSaveTimer = null;
   await _saveCurrentCanvas();
-  document.body.classList.remove('on-canvas');
-  document.body.classList.remove('on-tasks');
+  document.body.classList.remove('on-canvas', 'on-tasks', 'on-split', 'split-left', 'split-right');
+  setSplitMode(false);
   setActiveView('dashboard');
   // Clear v3 stores so the dashboard doesn't show stale task/tag data.
   setProjectTasks([]);
@@ -725,6 +753,7 @@ export function mountProjectsBridge() {
     setCanvasView,
     openCanvasView,
     backToTasks,
+    setSplitPanel,
     saveProjects,
     saveFolders,
     loadProjects,
