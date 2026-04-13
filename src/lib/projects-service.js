@@ -133,6 +133,40 @@ function renameProject(id, name) {
   saveProjects(projects);
 }
 
+async function setProjectCover(id, file) {
+  const { saveImgBlob, deleteImgBlob } = await import('./media-service.js');
+  const projects = loadProjects();
+  const p = projects.find(x => x.id === id); if (!p) return;
+  if (p.coverImageId) { try { await deleteImgBlob(p.coverImageId); } catch {} }
+  const newId = file ? await saveImgBlob(file) : null;
+  p.coverImageId = newId;
+  p.updatedAt = Date.now();
+  saveProjects(projects);
+  showToast(file ? 'cover set' : 'cover cleared');
+}
+
+async function setFolderCover(id, file) {
+  const { saveImgBlob, deleteImgBlob } = await import('./media-service.js');
+  const folders = loadFolders();
+  const f = folders.find(x => x.id === id); if (!f) return;
+  if (f.coverImageId) { try { await deleteImgBlob(f.coverImageId); } catch {} }
+  const newId = file ? await saveImgBlob(file) : null;
+  f.coverImageId = newId;
+  saveFolders(folders);
+  showToast(file ? 'cover set' : 'cover cleared');
+}
+
+// File picker helper — triggers a hidden input and resolves the selected File
+function pickCoverImage() {
+  return new Promise(resolve => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = () => resolve(input.files?.[0] || null);
+    input.click();
+  });
+}
+
 function deleteProject(id) {
   let projects = loadProjects();
   const p = projects.find(x => x.id === id);
@@ -740,6 +774,9 @@ export function mountProjectsBridge() {
     },
     createProject,
     renameProject,
+    setProjectCover,
+    setFolderCover,
+    pickCoverImage,
     dupProject,
     deleteProject,
     openProject,
