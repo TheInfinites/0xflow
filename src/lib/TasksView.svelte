@@ -22,7 +22,10 @@
       _win = getCurrentWindow();
     } catch {}
   });
-  let visible = $derived($activeViewStore === 'tasks' || (splitMode && splitMode !== 'right'));
+  let visible = $derived(
+    $activeViewStore !== 'dashboard' &&
+    ($activeViewStore === 'tasks' || (splitMode && splitMode !== 'right'))
+  );
 
   function _svc(name, ...args) { return window[name]?.(...args); }
 

@@ -114,13 +114,28 @@
       />
     {:else if isV3 && currentTask}
       <span class="crumbs">
-        <button class="crumb" onclick={goProjectCanvas}>{project?.name ?? 'untitled'}</button>
+        <button class="crumb" onclick={goProjectCanvas} title="project canvas">
+          <svg viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="1" width="8" height="8" rx="1"/></svg>
+          <span class="crumb-label">{project?.name ?? 'untitled'}</span>
+        </button>
         {#if parentTask}
-          <span class="crumb-sep">›</span>
-          <button class="crumb" onclick={() => goTaskCanvas(parentTask.id)}>{parentTask.title}</button>
+          <span class="crumb-sep" aria-hidden="true">
+            <svg viewBox="0 0 6 10"><polyline points="1,1 5,5 1,9"/></svg>
+          </span>
+          <button class="crumb" onclick={() => goTaskCanvas(parentTask.id)} title={parentTask.title}>
+            <span class="crumb-label">{parentTask.title}</span>
+          </button>
         {/if}
-        <span class="crumb-sep">›</span>
-        <span class="crumb crumb-current">{currentTask.title}{canvasParsed.kind === 'final' ? ' · final' : ''}</span>
+        <span class="crumb-sep" aria-hidden="true">
+          <svg viewBox="0 0 6 10"><polyline points="1,1 5,5 1,9"/></svg>
+        </span>
+        <span class="crumb crumb-current" title={currentTask.title}>
+          <span class="crumb-dot"></span>
+          <span class="crumb-label">{currentTask.title}</span>
+          {#if canvasParsed.kind === 'final'}
+            <span class="crumb-tag">final</span>
+          {/if}
+        </span>
       </span>
     {:else}
       <span id="project-title" title="double-click to rename" role="button" tabindex="0"
