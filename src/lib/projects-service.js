@@ -833,7 +833,8 @@ async function setSecondaryCanvas(key) {
 
   setSecondaryCanvasKey(key);
   document.body.classList.add('dual-canvas');
-  requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+  // Two rAF passes: first lets CSS apply, second lets PixiJS measure new bounds
+  requestAnimationFrame(() => requestAnimationFrame(() => window.dispatchEvent(new Event('resize'))));
 }
 
 // ── showNewModal — creates project, then triggers inline rename via ProjectGrid.svelte ──

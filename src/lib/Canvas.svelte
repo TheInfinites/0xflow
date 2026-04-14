@@ -2173,14 +2173,14 @@
 <div
   class="pixi-canvas-wrap"
   role="application"
-  aria-label={isSecondary ? 'Secondary canvas (read-only)' : 'Infinite canvas'}
-  onpointerdown={isPrimary ? onPointerDown : undefined}
-  onpointermove={isPrimary ? onPointerMove : undefined}
-  onpointerup={isPrimary ? onPointerUp : undefined}
-  ondblclick={isPrimary ? onDblClick : undefined}
+  aria-label="Infinite canvas"
+  onpointerdown={onPointerDown}
+  onpointermove={onPointerMove}
+  onpointerup={onPointerUp}
+  ondblclick={onDblClick}
   onwheel={onWheel}
-  oncontextmenu={e => { e.preventDefault(); if (isPrimary && ctxMenu) closeCtxMenu(); }}
-  style="position:relative;width:100%;height:100%;overflow:hidden;{isSecondary ? 'pointer-events:none;' : ''}"
+  oncontextmenu={e => { e.preventDefault(); if (ctxMenu) closeCtxMenu(); }}
+  style="position:relative;width:100%;height:100%;overflow:hidden;"
 >
   <canvas bind:this={canvasEl} style="display:block;width:100%;height:100%;"></canvas>
 

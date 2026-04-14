@@ -220,22 +220,20 @@ body.on-split.split-right #svelte-status-bar-mount {
 
 /* ── Dual-canvas split (two canvases side by side) ── */
 /* Default: secondary panel hidden */
-#pixi-canvas-mount-secondary { display: none; position: fixed; top: 76px; bottom: 28px; z-index: 2; }
+#pixi-canvas-mount-secondary { display: none; position: fixed; top: 76px; bottom: 28px; z-index: 3; }
 
 /* Split mode + dual canvas: Tasks(0-50%) | Canvas A(50-75%) | Canvas B(75-100%) */
-body.on-split.dual-canvas #pixi-canvas-mount           { width: 50% !important; }
-body.on-split.dual-canvas #pixi-canvas-mount-secondary { display: block; left: 75%; width: 25%; }
+body.on-split.dual-canvas #pixi-canvas-mount           { right: 50% !important; width: auto !important; }
+body.on-split.dual-canvas #pixi-canvas-mount-secondary { display: block !important; left: 75%; right: 0; width: auto; }
 body.on-split.dual-canvas #view-canvas                 { width: 50% !important; }
 
 /* Canvas-only dual canvas (no tasks panel): Canvas A(0-50%) | Canvas B(50-100%) */
-body.dual-canvas:not(.on-split) #pixi-canvas-mount           { left: 0; width: 50%; }
-body.dual-canvas:not(.on-split) #pixi-canvas-mount-secondary { display: block; left: 50%; width: 50%; }
-body.dual-canvas:not(.on-split) #canvas-tabs                 { width: 50%; }
-body.dual-canvas:not(.on-split) #bar                         { width: 50%; }
+body.dual-canvas:not(.on-split) #pixi-canvas-mount           { left: 0 !important; right: 50% !important; width: auto !important; }
+body.dual-canvas:not(.on-split) #pixi-canvas-mount-secondary { display: block !important; left: 50%; right: 0; width: auto; }
 
 /* Split-right + dual canvas: Canvas A(0-50%) | Canvas B(50-100%) */
-body.on-split.split-right.dual-canvas #pixi-canvas-mount           { width: 50% !important; }
-body.on-split.split-right.dual-canvas #pixi-canvas-mount-secondary { display: block; left: 50%; width: 50%; }
+body.on-split.split-right.dual-canvas #pixi-canvas-mount           { right: 50% !important; width: auto !important; }
+body.on-split.split-right.dual-canvas #pixi-canvas-mount-secondary { display: block !important; left: 50%; right: 0; width: auto; }
 
 /* ════════════════════════════════════════════
    DASHBOARD — Dark Editorial
