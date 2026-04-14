@@ -76,6 +76,10 @@ import CommandPalette  from './lib/CommandPalette.svelte';
 const pixiMount = document.getElementById('pixi-canvas-mount');
 if (pixiMount) mount(Canvas, { target: pixiMount, props: { onBack: () => window.goToDashboard?.() } });
 
+// Secondary canvas — read-only panel for dual-canvas split view
+const pixiMountSecondary = document.getElementById('pixi-canvas-mount-secondary');
+if (pixiMountSecondary) mount(Canvas, { target: pixiMountSecondary, props: { slot: 'secondary', onBack: () => {} } });
+
 const toolbarMount = document.getElementById('svelte-toolbar-mount');
 if (toolbarMount) mount(Toolbar, { target: toolbarMount });
 
@@ -146,6 +150,11 @@ import ExportPanel from './lib/ExportPanel.svelte';
 const exportPanelMount = document.createElement('div');
 document.body.appendChild(exportPanelMount);
 mount(ExportPanel, { target: exportPanelMount });
+
+import CanvasImportPicker from './lib/CanvasImportPicker.svelte';
+const canvasImportMount = document.createElement('div');
+document.body.appendChild(canvasImportMount);
+mount(CanvasImportPicker, { target: canvasImportMount });
 
 import Toast from './lib/Toast.svelte';
 const toastMount = document.createElement('div');

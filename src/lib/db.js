@@ -66,6 +66,18 @@ export async function initDB() {
     created_at INTEGER
   )`);
 
+  // ── v4 schema additions (additive, non-destructive) ─────
+  // Adds project_canvases table for named canvases per project.
+  // canvas_states rows for named canvases use the canvas id as the primary key.
+  await _db.execute(`CREATE TABLE IF NOT EXISTS project_canvases (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    order_idx INTEGER DEFAULT 0,
+    created_at INTEGER,
+    updated_at INTEGER
+  )`);
+
   // One-time migration from localStorage
   const migrated = await _db.select("SELECT value FROM meta WHERE key='migrated'");
   if (migrated.length === 0) {
@@ -138,6 +150,12 @@ export async function dbDeleteProject(id) {
   await _db.execute('DELETE FROM canvas_states WHERE project_id=?', [id]);
   await _db.execute('DELETE FROM project_tasks WHERE project_id=?', [id]);
   await _db.execute('DELETE FROM project_tags WHERE project_id=?', [id]);
+  // Delete named canvas records and their canvas_states rows
+  const canvases = await _db.select('SELECT id FROM project_canvases WHERE project_id=?', [id]);
+  for (const c of canvases) {
+    await _db.execute('DELETE FROM canvas_states WHERE project_id=?', [c.id]);
+  }
+  await _db.execute('DELETE FROM project_canvases WHERE project_id=?', [id]);
 }
 
 // ── Project tasks CRUD ───────────────────────
@@ -269,6 +287,41 @@ export async function dbSaveFolder(f) {
 export async function dbDeleteFolder(id) {
   if (!_db) return;
   await _db.execute('DELETE FROM folders WHERE id=?', [id]);
+}
+
+// ── Named canvases CRUD ──────────────────────
+
+export async function dbLoadProjectCanvases(projectId) {
+  if (!_db) return [];
+  const rows = await _db.select(
+    'SELECT * FROM project_canvases WHERE project_id=? ORDER BY order_idx ASC',
+    [projectId]
+  );
+  return rows.map(r => ({
+    id: r.id,
+    projectId: r.project_id,
+    name: r.name,
+    order: r.order_idx || 0,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }));
+}
+
+export async function dbSaveProjectCanvas(canvas) {
+  if (!_db) return;
+  await _db.execute(
+    `INSERT INTO project_canvases (id, project_id, name, order_idx, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       name=excluded.name, order_idx=excluded.order_idx, updated_at=excluded.updated_at`,
+    [canvas.id, canvas.projectId, canvas.name, canvas.order || 0, canvas.createdAt, canvas.updatedAt]
+  );
+}
+
+export async function dbDeleteProjectCanvas(id) {
+  if (!_db) return;
+  await _db.execute('DELETE FROM project_canvases WHERE id=?', [id]);
+  await _db.execute('DELETE FROM canvas_states WHERE project_id=?', [id]);
 }
 
 // ── Canvas state CRUD ────────────────────────

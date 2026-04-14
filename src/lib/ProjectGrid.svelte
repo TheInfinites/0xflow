@@ -1,6 +1,7 @@
 <script>
   import { onMount, createEventDispatcher } from 'svelte';
   import { getBlobURL } from './media-service.js';
+  import { projectCanvasesStore } from '../stores/projects.js';
   const dispatch = createEventDispatcher();
 
   let { filtered, folders, currentFolderId, dashView, searchQuery } = $props();
@@ -159,6 +160,18 @@
         {:else}
           <div class="card-name">{p.name}</div>
         {/if}
+        <!-- Canvas count badge + quick add (shown on hover) -->
+        {@const cardCanvases = $projectCanvasesStore.filter(c => c.projectId === p.id)}
+        <div class="card-canvas-row">
+          {#if cardCanvases.length > 0}
+            <span class="card-canvas-count">{cardCanvases.length} canvas{cardCanvases.length === 1 ? '' : 'es'}</span>
+          {/if}
+          <button
+            class="card-canvas-add"
+            title="Add a new canvas to this project"
+            onclick={e => { e.stopPropagation(); window.createNamedCanvas?.(p.id, 'untitled canvas'); window.showToast?.('Canvas added'); }}
+          >+ canvas</button>
+        </div>
       {/if}
     </div>
   {/each}

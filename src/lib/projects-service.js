@@ -13,6 +13,7 @@ import {
   dbSaveProject, dbDeleteProject, dbSaveFolder, dbDeleteFolder,
   dbLoadTasks, dbSaveTask, dbDeleteTask,
   dbLoadTags, dbSaveTag, dbDeleteTag,
+  dbLoadProjectCanvases, dbSaveProjectCanvas, dbDeleteProjectCanvas,
 } from './db.js';
 import {
   projectsStore, foldersStore,
@@ -23,12 +24,14 @@ import {
   setProjectTasks, setProjectTags,
   getProjectTasks, getProjectTags,
   activeCanvasKeyStore, setActiveCanvasKey,
-  makeCanvasKey,
+  makeCanvasKey, parseCanvasKey,
+  projectCanvasesStore, setProjectCanvases, getProjectCanvases,
 } from '../stores/projects.js';
 import { elementsStore } from '../stores/elements.js';
-import { toastMsgStore, toastVisibleStore, isOnCanvasStore, activeViewStore, setActiveView, splitModeStore, setSplitMode } from '../stores/ui.js';
+import { toastMsgStore, toastVisibleStore, isOnCanvasStore, activeViewStore, setActiveView, splitModeStore, setSplitMode, secondaryCanvasKeyStore, setSecondaryCanvasKey } from '../stores/ui.js';
 import {
   saveCanvasV2, loadCanvasV2, saveCanvasV3, loadCanvasV3,
+  saveNamedCanvas, loadNamedCanvas,
   applyCanvasState, clearCanvasState, migrateV1ToV2,
   stashCurrentViewport, restoreViewport,
 } from './canvas-persistence.js';
@@ -394,6 +397,16 @@ let _debounceSaveTimer = null;
 async function _saveCurrentCanvas() {
   const id = getActiveProjectId();
   if (!id) return;
+
+  const activeKey = get(activeCanvasKeyStore);
+  const parsed = parseCanvasKey(activeKey);
+
+  // If on a named canvas, save the named canvas state (isolated)
+  if (parsed.kind === 'named') {
+    await saveNamedCanvas(parsed.canvasId);
+    return;
+  }
+
   const projects = loadProjects();
   const p = projects.find(x => x.id === id);
   if (p && p.schemaVersion === 3) {
@@ -456,6 +469,18 @@ async function openProject(id, e) {
     setProjectTags([]);
   }
 
+  // Load named canvases for this project (all schema versions)
+  if (IS_TAURI_STORAGE && isDbReady()) {
+    const canvases = await dbLoadProjectCanvases(id);
+    setProjectCanvases(canvases);
+  } else {
+    // Browser: load from localStorage index
+    try {
+      const raw = localStorage.getItem('freeflow_canvases_' + id);
+      setProjectCanvases(raw ? JSON.parse(raw) : []);
+    } catch { setProjectCanvases([]); }
+  }
+
   // Always start v3 projects on the project canvas view key (so filters pass-through
   // to all elements until the user explicitly navigates to a task canvas).
   setActiveCanvasKey('__project__');
@@ -488,8 +513,8 @@ async function openProject(id, e) {
   if (p.schemaVersion === 3) {
     setActiveView('canvas');
     setSplitMode('split');
-    document.body.classList.remove('on-canvas', 'on-tasks', 'split-left', 'split-right');
-    document.body.classList.add('on-split');
+    document.body.classList.remove('on-tasks', 'split-left', 'split-right');
+    document.body.classList.add('on-canvas', 'on-split');
     requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
   } else {
     document.body.classList.remove('on-tasks');
@@ -570,14 +595,17 @@ function setSplitPanel(mode) {
 async function goToDashboard() {
   clearTimeout(_debounceSaveTimer);
   _debounceSaveTimer = null;
+  _clearSecondaryUnsubs();
   await _saveCurrentCanvas();
-  document.body.classList.remove('on-canvas', 'on-tasks', 'on-split', 'split-left', 'split-right');
+  document.body.classList.remove('on-canvas', 'on-tasks', 'on-split', 'split-left', 'split-right', 'dual-canvas');
   setSplitMode(false);
   setActiveView('dashboard');
-  // Clear v3 stores so the dashboard doesn't show stale task/tag data.
+  // Clear stores so the dashboard doesn't show stale task/tag/canvas data.
   setProjectTasks([]);
   setProjectTags([]);
+  setProjectCanvases([]);
   setActiveCanvasKey('__project__');
+  setSecondaryCanvasKey(null);
   dashRender();
 }
 
@@ -631,6 +659,181 @@ function deleteFolderById(fid) {
   saveProjects(projects);
   if (ids.includes(getCurrentFolderId())) setFolder(null);
   if (f) showToast(`"${f.name}" deleted, canvases moved to unfiled`);
+}
+
+// ── Named canvas CRUD ─────────────────────────
+
+function _canvasesLocalKey(projectId) { return `freeflow_canvases_${projectId}`; }
+
+function _saveProjectCanvasesList(projectId, canvases) {
+  setProjectCanvases(canvases);
+  if (IS_TAURI_STORAGE && isDbReady()) {
+    canvases.forEach(c => dbSaveProjectCanvas(c).catch(e => console.warn('[store] dbSaveProjectCanvas:', e)));
+  } else {
+    try { localStorage.setItem(_canvasesLocalKey(projectId), JSON.stringify(canvases)); } catch {}
+  }
+}
+
+async function createNamedCanvas(projectId, name) {
+  if (!projectId) return null;
+  const id = 'cnv_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+  const canvas = {
+    id,
+    projectId,
+    name: (name || '').trim() || 'untitled canvas',
+    order: get(projectCanvasesStore).length,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  const updated = [...get(projectCanvasesStore), canvas];
+  _saveProjectCanvasesList(projectId, updated);
+  return canvas;
+}
+
+async function renameNamedCanvas(canvasId, name) {
+  const projectId = getActiveProjectId();
+  if (!projectId) return;
+  const canvases = get(projectCanvasesStore).map(c =>
+    c.id === canvasId ? { ...c, name: (name || '').trim() || 'untitled canvas', updatedAt: Date.now() } : c
+  );
+  _saveProjectCanvasesList(projectId, canvases);
+}
+
+async function deleteNamedCanvas(canvasId) {
+  const projectId = getActiveProjectId();
+  if (!projectId) return;
+  // If we're on this canvas, switch to project canvas first
+  if (get(activeCanvasKeyStore) === 'canvas:' + canvasId) {
+    await switchToCanvas('__project__');
+  }
+  // If secondary is showing this canvas, close it
+  if (get(secondaryCanvasKeyStore) === 'canvas:' + canvasId) {
+    setSecondaryCanvas(null);
+  }
+  // Remove from store and DB
+  const canvases = get(projectCanvasesStore).filter(c => c.id !== canvasId);
+  setProjectCanvases(canvases);
+  if (IS_TAURI_STORAGE && isDbReady()) {
+    dbDeleteProjectCanvas(canvasId).catch(e => console.warn('[store] dbDeleteProjectCanvas:', e));
+  } else {
+    try {
+      localStorage.removeItem('freeflow_canvas_named_' + canvasId);
+      const projectId2 = getActiveProjectId();
+      if (projectId2) localStorage.setItem(_canvasesLocalKey(projectId2), JSON.stringify(canvases));
+    } catch {}
+  }
+}
+
+/**
+ * Switch the active canvas to a new key. Handles both named canvases (isolated
+ * element stores) and task/project canvases (tag-filtered shared pool).
+ */
+async function switchToCanvas(newKey) {
+  const prevKey = get(activeCanvasKeyStore);
+  if (prevKey === newKey) return;
+
+  const projectId = getActiveProjectId();
+  const projects = loadProjects();
+  const p = projects.find(x => x.id === projectId);
+  if (!projectId || !p) return;
+
+  // 1. Save current canvas before switching
+  const prevParsed = parseCanvasKey(prevKey);
+  if (prevParsed.kind === 'named') {
+    await saveNamedCanvas(prevParsed.canvasId);
+  } else {
+    // Save the project pool (tasks/project canvas)
+    if (p.schemaVersion === 3) {
+      stashCurrentViewport(prevKey);
+      await saveCanvasV3(projectId);
+    } else {
+      await saveCanvasV2(projectId);
+    }
+  }
+
+  // 2. Stash viewport for the previous key
+  stashCurrentViewport(prevKey);
+
+  // 3. Load the target canvas
+  const newParsed = parseCanvasKey(newKey);
+  if (newParsed.kind === 'named') {
+    // Named canvas: load its isolated element pool
+    const state = await loadNamedCanvas(newParsed.canvasId);
+    if (state) {
+      applyCanvasState(state);
+    } else {
+      // Brand new canvas — start empty
+      clearCanvasState();
+    }
+  } else if (prevParsed.kind === 'named') {
+    // Switching from named → task/project: reload the project pool
+    let state = p.schemaVersion === 3 ? await loadCanvasV3(projectId) : null;
+    if (!state) state = await loadCanvasV2(projectId);
+    if (state) applyCanvasState(state);
+    else clearCanvasState();
+  }
+  // task ↔ project switches: no reload needed, visibleElementsStore handles filtering
+
+  // 4. Switch the key and restore viewport
+  setActiveCanvasKey(newKey);
+  restoreViewport(newKey);
+
+  // 5. Ensure canvas is visible
+  const sm = get(splitModeStore);
+  if (sm) {
+    if (sm === 'left') setSplitPanel('split');
+    setActiveView('canvas');
+  } else {
+    document.body.classList.remove('on-tasks');
+    document.body.classList.add('on-canvas');
+    setActiveView('canvas');
+  }
+}
+
+/**
+ * Open a canvas in the secondary (right) panel for dual-canvas split view.
+ * Pass null to close the secondary panel.
+ */
+// Live-sync unsub for project/task secondary canvases
+let _secondaryUnsubs = [];
+function _clearSecondaryUnsubs() {
+  _secondaryUnsubs.forEach(u => u());
+  _secondaryUnsubs = [];
+}
+
+async function setSecondaryCanvas(key) {
+  const { setSecondaryElements, setSecondaryStrokes, setSecondaryRelations } = await import('../stores/secondary-canvas.js');
+  _clearSecondaryUnsubs();
+
+  if (!key) {
+    setSecondaryCanvasKey(null);
+    setSecondaryElements([]);
+    setSecondaryStrokes([]);
+    setSecondaryRelations([]);
+    document.body.classList.remove('dual-canvas');
+    requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+    return;
+  }
+
+  const parsed = parseCanvasKey(key);
+
+  if (parsed.kind === 'named') {
+    // Named canvas: load snapshot once (isolated store — no live sync needed)
+    const state = await loadNamedCanvas(parsed.canvasId);
+    setSecondaryElements(state?.elements || []);
+    setSecondaryStrokes(state?.strokes || []);
+    setSecondaryRelations(state?.relations || []);
+  } else {
+    // Project / task canvas: live-mirror the primary pool so edits appear in real time
+    const { elementsStore: els, strokesStore: stk, relationsStore: rel } = await import('../stores/elements.js');
+    _secondaryUnsubs.push(els.subscribe(v => setSecondaryElements(v)));
+    _secondaryUnsubs.push(stk.subscribe(v => setSecondaryStrokes(v)));
+    _secondaryUnsubs.push(rel.subscribe(v => setSecondaryRelations(v)));
+  }
+
+  setSecondaryCanvasKey(key);
+  document.body.classList.add('dual-canvas');
+  requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
 }
 
 // ── showNewModal — creates project, then triggers inline rename via ProjectGrid.svelte ──
@@ -791,6 +994,12 @@ export function mountProjectsBridge() {
     openCanvasView,
     backToTasks,
     setSplitPanel,
+    // named canvases
+    createNamedCanvas,
+    renameNamedCanvas,
+    deleteNamedCanvas,
+    switchToCanvas,
+    setSecondaryCanvas,
     saveProjects,
     saveFolders,
     loadProjects,

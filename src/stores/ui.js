@@ -55,3 +55,10 @@ export const canvasTagPickerOpenStore = writable(false);
 export const splitModeStore = writable('split');
 export function getSplitMode() { return get(splitModeStore); }
 export function setSplitMode(v) { splitModeStore.set(v); }
+
+// ── Dual-canvas split ────────────────────────
+// When set to a canvas key string, a second canvas panel is shown beside the primary.
+// null = single canvas mode.
+export const secondaryCanvasKeyStore = writable(null);
+export function getSecondaryCanvasKey()  { return get(secondaryCanvasKeyStore); }
+export function setSecondaryCanvasKey(k) { secondaryCanvasKeyStore.set(k); }

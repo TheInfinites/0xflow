@@ -2,26 +2,15 @@
   // ══════════════════════════════════════════════
   // TasksView.svelte — the Tasks hub (v3 projects)
   // ══════════════════════════════════════════════
-  import { onMount } from 'svelte';
   import {
     projectsStore, activeProjectIdStore,
-    projectTasksStore,
+    projectTasksStore, projectCanvasesStore,
   } from '../stores/projects.js';
   import { activeViewStore, splitModeStore } from '../stores/ui.js';
   import TaskRow from './TaskRow.svelte';
 
   let splitMode = $derived($splitModeStore);
 
-  // Window controls (Tauri)
-  const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__?.__isMock;
-  let _win = $state(null);
-  onMount(async () => {
-    if (!IS_TAURI) return;
-    try {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      _win = getCurrentWindow();
-    } catch {}
-  });
   let visible = $derived(
     $activeViewStore !== 'dashboard' &&
     ($activeViewStore === 'tasks' || (splitMode && splitMode !== 'right'))
@@ -138,19 +127,6 @@
           </button>
         {/if}
       {/if}
-      {#if IS_TAURI && _win}
-        <div class="tv-win-controls">
-          <button class="tv-win-btn" title="Minimize" onclick={() => _win.minimize()}>
-            <svg viewBox="0 0 10 10" width="10" height="10"><line x1="2" y1="5" x2="8" y2="5" stroke="currentColor" stroke-width="1.2"/></svg>
-          </button>
-          <button class="tv-win-btn" title="Maximize" onclick={() => _win.toggleMaximize()}>
-            <svg viewBox="0 0 10 10" width="10" height="10"><rect x="2" y="2" width="6" height="6" rx="0.5" stroke="currentColor" stroke-width="1" fill="none"/></svg>
-          </button>
-          <button class="tv-win-btn tv-win-close" title="Close" onclick={() => _win.close()}>
-            <svg viewBox="0 0 10 10" width="10" height="10"><path d="M3 3l4 4M7 3l-4 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-          </button>
-        </div>
-      {/if}
     </div>
   </header>
 
@@ -202,6 +178,20 @@
       </button>
     </div>
   </main>
+
+  <!-- Canvas footer: quick-add a new named canvas for this project -->
+  <footer class="tv-canvas-footer">
+    <button class="tv-canvas-add-btn" onclick={() => {
+      const id = $activeProjectIdStore;
+      if (!id) return;
+      window.createNamedCanvas?.(id, 'untitled canvas').then(c => {
+        if (c) window.switchToCanvas?.('canvas:' + c.id);
+      });
+    }}>
+      <svg viewBox="0 0 12 12" width="10" height="10"><rect x="1" y="1" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="none"/><line x1="6" y1="3.5" x2="6" y2="8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><line x1="3.5" y1="6" x2="8.5" y2="6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+      New canvas
+    </button>
+  </footer>
 </div>
 {/if}
 
@@ -283,25 +273,6 @@
   }
   .tv-ctrl-btn:hover { color: rgba(255,255,255,0.7); background: rgba(255,255,255,0.04); }
 
-  .tv-win-controls {
-    display: flex;
-    align-items: center;
-    margin-left: 10px;
-    gap: 0;
-  }
-  .tv-win-btn {
-    width: 32px;
-    height: 28px;
-    border: none;
-    background: transparent;
-    color: rgba(255,255,255,0.4);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .tv-win-btn:hover { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.9); }
-  .tv-win-close:hover { background: #e81123; color: #fff; }
 
   /* ── Hero ───────────────────── */
   .tv-hero {
@@ -441,8 +412,28 @@
   :global(body.dash-light) .tv-add-btn:hover { color: rgba(0,0,0,0.5); }
   :global(body.dash-light) .tv-add-icon { border-color: rgba(0,0,0,0.15); }
   :global(body.dash-light) .tv-add-btn:hover .tv-add-icon { border-color: rgba(0,0,0,0.3); }
-  :global(body.dash-light) .tv-win-btn { color: rgba(0,0,0,0.4); }
-  :global(body.dash-light) .tv-win-btn:hover { background: rgba(0,0,0,0.06); color: rgba(0,0,0,0.9); }
-  :global(body.dash-light) .tv-win-close:hover { background: #e81123; color: #fff; }
+
   :global(body.on-split.dash-light) .tasks-view { border-right-color: rgba(0,0,0,0.08); }
+
+  .tv-canvas-footer {
+    flex-shrink: 0;
+    padding: 8px 16px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+  }
+  .tv-canvas-add-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 4px;
+    padding: 5px 12px;
+    color: rgba(255,255,255,0.3);
+    font-size: 10px; font-family: 'Geist Mono', monospace; letter-spacing: 0.05em;
+    text-transform: uppercase; cursor: pointer;
+    transition: color 0.12s, border-color 0.12s;
+  }
+  .tv-canvas-add-btn:hover {
+    color: rgba(255,255,255,0.75); border-color: rgba(255,255,255,0.28);
+  }
+  :global(body.dash-light) .tv-canvas-add-btn { color: rgba(0,0,0,0.3); border-color: rgba(0,0,0,0.12); }
+  :global(body.dash-light) .tv-canvas-add-btn:hover { color: rgba(0,0,0,0.7); border-color: rgba(0,0,0,0.3); }
 </style>

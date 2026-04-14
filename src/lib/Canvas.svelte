@@ -6,14 +6,18 @@
   import { activeCanvasKeyStore, projectTasksStore, projectTagsStore, projectsStore, parseCanvasKey } from '../stores/projects.js';
   import { scaleStore, pxStore, pyStore, setCurTool, getCurTool, setSelected, setScale, setPx, setPy, activeEditorIdStore, setActiveEditorId, snapEnabledStore, isLightStore } from '../stores/canvas.js';
   import { activeProjectIdStore } from '../stores/projects.js';
-  import { brainstormOpenStore, canvasTagPickerOpenStore } from '../stores/ui.js';
+  import { brainstormOpenStore, canvasTagPickerOpenStore, secondaryCanvasKeyStore } from '../stores/ui.js';
+  import { secondaryVisibleElementsStore, secondaryStrokesStore, secondaryRelationsStore } from '../stores/secondary-canvas.js';
   import { store } from './projects-service.js';
+  import { embedMediaElement, releaseMediaElement } from './media-service.js';
   import NoteOverlay   from './NoteOverlay.svelte';
   import MediaOverlay  from './MediaOverlay.svelte';
   import BrainstormPanel from './BrainstormPanel.svelte';
 
   // ── Props / callbacks ────────────────────────
-  let { onBack = () => {} } = $props();
+  let { onBack = () => {}, slot = 'primary' } = $props();
+  const isPrimary   = slot === 'primary';
+  const isSecondary = slot === 'secondary';
 
   // ── State ────────────────────────────────────
   let canvasEl;    // <canvas> element
@@ -296,21 +300,26 @@
       if (!zoomRaf) zoomRaf = requestAnimationFrame(animateZoom);
     };
 
-    // Subscribe to store changes — unsubs collected for top-level onDestroy
-    // v3: render from visibleElementsStore (filtered by activeCanvasKey).
-    // For v2 projects this passthroughs to the full elementsStore.
-    _unsubEl    = visibleElementsStore.subscribe(renderElements);
-    _unsubSt    = strokesStore.subscribe(renderStrokes);
+    // Subscribe to store changes — unsubs collected for top-level onDestroy.
+    // Secondary canvas reads from secondaryVisibleElementsStore / secondaryStrokesStore.
+    // Primary canvas reads from visibleElementsStore / strokesStore (v3-filtered).
+    const _elStore  = isSecondary ? secondaryVisibleElementsStore : visibleElementsStore;
+    const _stStore  = isSecondary ? secondaryStrokesStore          : strokesStore;
+    const _getEls   = () => get(_elStore);
+    const _getSts   = () => get(_stStore);
+
+    _unsubEl    = _elStore.subscribe(renderElements);
+    _unsubSt    = _stStore.subscribe(renderStrokes);
     _unsubTheme = isLightStore.subscribe((isLight) => {
       if (app) app.renderer.background.color = isLight ? 0xf0ede8 : 0x0e0e0f;
       drawDotGrid();
-      renderElements($visibleElementsStore);
-      renderStrokes($strokesStore);
+      renderElements(_getEls());
+      renderStrokes(_getSts());
     });
 
     // Initial render from any loaded state
-    renderElements($visibleElementsStore);
-    renderStrokes($strokesStore);
+    renderElements(_getEls());
+    renderStrokes(_getSts());
   });
 
   onDestroy(() => {
@@ -2082,6 +2091,7 @@
 
   // ── Expose to legacy bridge ──────────────────
   $effect(() => {
+    if (!isPrimary) return; // secondary canvas doesn't register globals
     window._pixiCanvas = {
       serializePixiCanvas, restorePixiCanvas,
       makeNote, makeAiNote, makeLabel, makeTodo, makeDrawCard,
@@ -2158,19 +2168,19 @@
   });
 </script>
 
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydown={isPrimary ? onKeydown : undefined} />
 
 <div
   class="pixi-canvas-wrap"
   role="application"
-  aria-label="Infinite canvas"
-  onpointerdown={onPointerDown}
-  onpointermove={onPointerMove}
-  onpointerup={onPointerUp}
-  ondblclick={onDblClick}
+  aria-label={isSecondary ? 'Secondary canvas (read-only)' : 'Infinite canvas'}
+  onpointerdown={isPrimary ? onPointerDown : undefined}
+  onpointermove={isPrimary ? onPointerMove : undefined}
+  onpointerup={isPrimary ? onPointerUp : undefined}
+  ondblclick={isPrimary ? onDblClick : undefined}
   onwheel={onWheel}
-  oncontextmenu={e => { e.preventDefault(); if (ctxMenu) closeCtxMenu(); }}
-  style="position:relative;width:100%;height:100%;overflow:hidden;"
+  oncontextmenu={e => { e.preventDefault(); if (isPrimary && ctxMenu) closeCtxMenu(); }}
+  style="position:relative;width:100%;height:100%;overflow:hidden;{isSecondary ? 'pointer-events:none;' : ''}"
 >
   <canvas bind:this={canvasEl} style="display:block;width:100%;height:100%;"></canvas>
 
@@ -2471,6 +2481,19 @@
           <span class="ctx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><rect x="1" y="1" width="5" height="5" rx="0.5" opacity="0.4"/><rect x="8" y="1" width="5" height="5" rx="0.5" opacity="0.4"/><rect x="1" y="8" width="5" height="5" rx="0.5" opacity="0.4"/><rect x="8" y="8" width="5" height="5" rx="0.5" opacity="0.4"/><line x1="1" y1="13" x2="13" y2="1" stroke-width="1.4" stroke-linecap="round"/></svg></span>
           ungroup
         </button>
+      {/if}
+      {#if ctxEl?.type === 'image' || ctxEl?.type === 'video' || ctxEl?.type === 'audio'}
+        {#if !ctxEl?.content?.embedded}
+          <button class="ctx-item" onclick={() => { embedMediaElement(ctxMenu.elId); closeCtxMenu(); }}>
+            <span class="ctx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 2v7M4 6l3 3 3-3"/><rect x="2" y="10" width="10" height="2" rx="0.5"/></svg></span>
+            embed file
+          </button>
+        {:else}
+          <button class="ctx-item" onclick={() => { releaseMediaElement(ctxMenu.elId); closeCtxMenu(); }}>
+            <span class="ctx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 12V5M4 8l3-3 3 3"/><rect x="2" y="2" width="10" height="2" rx="0.5"/></svg></span>
+            release from app
+          </button>
+        {/if}
       {/if}
       <div class="ctx-sep"></div>
       <button class="ctx-item danger" onclick={() => ctxDelete(ctxMenu.elId)}>

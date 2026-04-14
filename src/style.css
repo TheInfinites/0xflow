@@ -153,9 +153,12 @@ body.on-split #bar {
   right: 0 !important;
   width: auto !important;
 }
-body.on-split #win-controls {
-  display: none !important;
+body.on-split #canvas-tabs {
+  left: 50% !important;
+  right: 0 !important;
+  width: auto !important;
 }
+/* win-controls are always fixed top-right — no split-mode override needed */
 body.on-split #svelte-toolbar-mount {
   left: 50% !important;
 }
@@ -197,9 +200,11 @@ body.on-split.split-right #svelte-canvas-bar-mount {
 body.on-split.split-right #bar {
   left: 0 !important;
 }
-body.on-split.split-right #win-controls {
-  display: flex !important;
+body.on-split.split-right #canvas-tabs {
+  left: 0 !important;
+  width: 100% !important;
 }
+/* win-controls visibility controlled by onMount in CanvasBar.svelte (Tauri only) */
 body.on-split.split-right #svelte-toolbar-mount {
   left: 0 !important;
 }
@@ -212,6 +217,25 @@ body.on-split.split-right #svelte-selection-bar-mount {
 body.on-split.split-right #svelte-status-bar-mount {
   left: 0 !important;
 }
+
+/* ── Dual-canvas split (two canvases side by side) ── */
+/* Default: secondary panel hidden */
+#pixi-canvas-mount-secondary { display: none; position: fixed; top: 76px; bottom: 28px; z-index: 2; }
+
+/* Split mode + dual canvas: Tasks(0-50%) | Canvas A(50-75%) | Canvas B(75-100%) */
+body.on-split.dual-canvas #pixi-canvas-mount           { width: 50% !important; }
+body.on-split.dual-canvas #pixi-canvas-mount-secondary { display: block; left: 75%; width: 25%; }
+body.on-split.dual-canvas #view-canvas                 { width: 50% !important; }
+
+/* Canvas-only dual canvas (no tasks panel): Canvas A(0-50%) | Canvas B(50-100%) */
+body.dual-canvas:not(.on-split) #pixi-canvas-mount           { left: 0; width: 50%; }
+body.dual-canvas:not(.on-split) #pixi-canvas-mount-secondary { display: block; left: 50%; width: 50%; }
+body.dual-canvas:not(.on-split) #canvas-tabs                 { width: 50%; }
+body.dual-canvas:not(.on-split) #bar                         { width: 50%; }
+
+/* Split-right + dual canvas: Canvas A(0-50%) | Canvas B(50-100%) */
+body.on-split.split-right.dual-canvas #pixi-canvas-mount           { width: 50% !important; }
+body.on-split.split-right.dual-canvas #pixi-canvas-mount-secondary { display: block; left: 50%; width: 50%; }
 
 /* ════════════════════════════════════════════
    DASHBOARD — Dark Editorial
@@ -444,6 +468,31 @@ body.on-split.split-right #svelte-status-bar-mount {
 .project-card.has-cover .card-thumb,
 .folder-card.has-cover .card-thumb { background: #000; }
 
+/* canvas count row (below card name, visible on hover) */
+.card-canvas-row {
+  display: flex; align-items: center; justify-content: space-between;
+  height: 0; overflow: hidden; opacity: 0;
+  padding: 0 2px;
+  transition: height 0.15s, opacity 0.15s;
+}
+.project-card:hover .card-canvas-row {
+  height: 18px; opacity: 1;
+}
+.card-canvas-count {
+  font-size: 8px; font-family: 'DM Mono', monospace; letter-spacing: 0.08em;
+  color: rgba(255,255,255,0.3); text-transform: uppercase;
+}
+.card-canvas-add {
+  font-size: 8px; font-family: 'DM Mono', monospace; letter-spacing: 0.06em;
+  color: rgba(255,255,255,0.3); background: transparent;
+  border: 1px solid rgba(255,255,255,0.1); border-radius: 2px;
+  padding: 1px 6px; cursor: pointer; text-transform: uppercase;
+  transition: color 0.1s, border-color 0.1s;
+}
+.card-canvas-add:hover {
+  color: rgba(255,255,255,0.8); border-color: rgba(255,255,255,0.3);
+}
+
 /* label sits below the thumb */
 .card-name,
 .folder-card-name {
@@ -660,18 +709,132 @@ body.dash-light #empty-state h3 { color: rgba(0,0,0,0.5); }
   pointer-events: none; z-index: 0;
   background-size: 40px 40px;
 }
-#cv { position: fixed; top: 48px; left: 0; right: 0; bottom: 28px; overflow: hidden; z-index: 3; background: transparent; pointer-events: none; }
+/* ── Canvas tab bar ── */
+#canvas-tabs {
+  position: fixed; top: 0; left: 0; right: 0; height: 28px; z-index: 901;
+  display: flex; align-items: center; gap: 1px; padding: 0 8px;
+  padding-right: 116px; /* reserve space for win controls (3 × ~36px) */
+  background: rgba(8,8,9,0.95); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none;
+  pointer-events: auto;
+  -webkit-app-region: drag;
+}
+/* Tabs and buttons inside must not trigger drag */
+#canvas-tabs .ctab,
+#canvas-tabs button,
+#canvas-tabs input {
+  -webkit-app-region: no-drag;
+}
+#canvas-tabs::-webkit-scrollbar { display: none; }
+.ctab {
+  position: relative;
+  display: flex; align-items: center; gap: 0;
+  height: 22px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(255,255,255,0.35);
+  font-size: 10px; font-family: 'Geist Mono', monospace; letter-spacing: 0.02em;
+  transition: color 0.1s, background 0.1s;
+  flex-shrink: 0;
+}
+.ctab:hover { color: rgba(255,255,255,0.7); background: rgba(255,255,255,0.04); }
+.ctab.active { color: rgba(255,255,255,0.9); background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.1); }
+.ctab-body {
+  display: flex; align-items: center; gap: 5px;
+  height: 100%; padding: 0 8px;
+  background: transparent; border: none; cursor: pointer;
+  color: inherit; font: inherit;
+}
+.ctab-body svg {
+  width: 8px; height: 8px; fill: currentColor; flex-shrink: 0; opacity: 0.7;
+}
+.ctab-label {
+  max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ctab-split-btn {
+  display: none;
+  align-items: center; justify-content: center;
+  width: 18px; height: 18px; padding: 0; margin-right: 2px;
+  background: transparent; border: none; cursor: pointer;
+  color: rgba(255,255,255,0.25); font-size: 11px;
+  border-radius: 2px; flex-shrink: 0;
+}
+.ctab:hover .ctab-split-btn { display: flex; }
+.ctab-split-btn:hover { color: rgba(255,255,255,0.7); background: rgba(255,255,255,0.08); }
+.ctab-secondary-dot {
+  display: inline-block; width: 5px; height: 5px; margin-right: 4px;
+  border-radius: 50%; background: rgba(232,68,10,0.8); flex-shrink: 0;
+}
+.ctab-rename-input {
+  width: 100px; height: 18px; padding: 0 6px;
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 2px; color: rgba(255,255,255,0.9);
+  font: inherit; font-size: 10px;
+  outline: none;
+}
+.ctab-add-input {
+  width: 100px; height: 18px; padding: 0 6px;
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 2px; color: rgba(255,255,255,0.9);
+  font: 10px 'Geist Mono', monospace;
+  outline: none;
+}
+.ctab-add-input::placeholder { color: rgba(255,255,255,0.3); }
+.ctab-adding { padding: 0 4px; border: 1px solid rgba(255,255,255,0.12); }
+.ctab.ctab-add {
+  padding: 0 10px;
+  font-size: 14px; font-weight: 300;
+  border: 1px dashed rgba(255,255,255,0.12);
+  cursor: pointer;
+}
+.ctab.ctab-add:hover { border-color: rgba(255,255,255,0.25); color: rgba(255,255,255,0.6); }
+.ctab-task { /* task canvas tabs get a subtle left accent */ }
+.ctab-task.active::before {
+  content: ''; position: absolute; left: 0; top: 3px; bottom: 3px;
+  width: 2px; background: rgba(232,68,10,0.6); border-radius: 1px;
+}
+/* Tab context menu */
+.tab-ctx-menu {
+  position: fixed; z-index: 9999;
+  min-width: 140px;
+  background: rgba(18,18,20,0.97); border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px; padding: 4px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+.tab-ctx-menu button {
+  display: block; width: 100%; padding: 6px 10px; text-align: left;
+  background: transparent; border: none; border-radius: 4px;
+  color: rgba(255,255,255,0.75); font-size: 11px; cursor: pointer;
+}
+.tab-ctx-menu button:hover { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.95); }
+.tab-ctx-menu button.danger { color: rgba(240,80,60,0.85); }
+.tab-ctx-menu button.danger:hover { background: rgba(240,80,60,0.12); color: rgba(240,80,60,1); }
+
+/* Adjust bar and canvas down to account for tab bar */
+#cv { position: fixed; top: 76px; left: 0; right: 0; bottom: 28px; overflow: hidden; z-index: 3; background: transparent; pointer-events: none; }
 
 /* top bar */
 #bar {
-  position: fixed; top: 0; left: 0; right: 0; height: 48px; z-index: 900;
+  position: fixed; top: 28px; left: 0; right: 0; height: 48px; z-index: 900;
   display: flex; align-items: center; justify-content: space-between; padding: 0 16px; gap: 12px;
   background: rgba(10,10,10,0.92); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
   border-bottom: 1px solid rgba(255,255,255,0.06);
   pointer-events: auto;
+  -webkit-app-region: drag;
 }
-/* ── Window controls (Tauri) ── */
-#win-controls { display: none; }
+#bar button, #bar input, #bar select, #bar a, #bar-left, #bar-center, #bar-right {
+  -webkit-app-region: no-drag;
+}
+/* ── Window controls (Tauri) — fixed to top-right of tabs row ── */
+#win-controls {
+  display: none;
+  position: fixed; top: 0; right: 0; height: 28px; z-index: 902;
+  align-items: center; gap: 0;
+  background: transparent;
+}
 .win-ctrl {
   width: 36px; height: 28px; border: none; background: transparent;
   color: rgba(255,255,255,0.5); font-size: 12px; cursor: pointer;

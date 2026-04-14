@@ -240,6 +240,68 @@ export function clearCanvasState() {
   _viewports = {};
 }
 
+// ── Named canvas (isolated) save/load ────────
+// Named canvases use the canvas UUID as the storage key instead of the project ID.
+// They reuse the v3 format but without the viewports map (each named canvas has its own viewport).
+
+export async function saveNamedCanvas(canvasId) {
+  if (!canvasId) return;
+
+  const elements = get(elementsStore).map(e => ({
+    ...e,
+    tags: Array.isArray(e.tags) ? e.tags : [],
+    viewPositions: e.viewPositions || {},
+  }));
+
+  const state = {
+    version:   FORMAT_VERSION_V3,
+    savedAt:   Date.now(),
+    elements,
+    strokes:   get(strokesStore),
+    relations: get(relationsStore),
+    viewport:  { scale: get(scaleStore), px: get(pxStore), py: get(pyStore) },
+    viewports: {},
+    activeCanvasKey: 'canvas:' + canvasId,
+  };
+
+  const json = JSON.stringify(state);
+
+  if (IS_TAURI) {
+    await waitForDB();
+    await dbSaveCanvasState(canvasId, json);
+  } else {
+    try { localStorage.setItem('freeflow_canvas_named_' + canvasId, json); } catch {}
+  }
+}
+
+/**
+ * Load a named canvas state. Returns the raw parsed object (does NOT apply to stores).
+ * Caller decides whether to push into elementsStore or secondaryElementsStore.
+ */
+export async function loadNamedCanvas(canvasId) {
+  if (!canvasId) return null;
+
+  let raw = null;
+
+  if (IS_TAURI) {
+    await waitForDB();
+    raw = await dbLoadCanvasState(canvasId);
+  }
+
+  if (!raw) {
+    try { raw = localStorage.getItem('freeflow_canvas_named_' + canvasId); } catch {}
+  }
+
+  if (!raw) return null;
+
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { return null; }
+
+  if (!parsed) return null;
+  // Accept both v3 format and empty canvases
+  return parsed;
+}
+
 // ── v1 → v2 migration ────────────────────────
 // Converts a raw v1 canvas JSON string (legacy DOM-based format) to a v2
 // state object compatible with elementsStore.  Does NOT write anything —
