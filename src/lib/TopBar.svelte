@@ -64,7 +64,7 @@
     </button>
     <button class="pill-btn primary" onclick={() => dispatch('newCanvas')}>
       <svg viewBox="0 0 12 12"><line x1="6" y1="1" x2="6" y2="11"/><line x1="1" y1="6" x2="11" y2="6"/></svg>
-      new canvas
+      new project
     </button>
     <button id="dash-close-btn" onclick={toggleDashboard} title="back to canvas  ⌘\\">
       <svg viewBox="0 0 12 12" style="width:10px;height:10px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;">

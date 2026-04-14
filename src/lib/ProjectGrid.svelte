@@ -121,11 +121,10 @@
     >
       {#if isDeletingThis}
         <div class="card-delete-confirm">
-          <div class="card-delete-msg">DELETE <span>"{p.name}"</span>?</div>
-          <div class="card-delete-sub">this cannot be undone</div>
+          <div class="card-delete-msg">delete?</div>
           <div class="card-delete-btns">
-            <button class="card-del-cancel" onclick={e => { e.stopPropagation(); deletingId = null; }}>CANCEL</button>
-            <button class="card-del-confirm" onclick={e => { e.stopPropagation(); confirmDelete(p); }}>DELETE</button>
+            <button class="card-del-cancel" onclick={e => { e.stopPropagation(); deletingId = null; }}>cancel</button>
+            <button class="card-del-confirm" onclick={e => { e.stopPropagation(); confirmDelete(p); }}>delete</button>
           </div>
         </div>
       {:else}
