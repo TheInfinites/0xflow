@@ -125,9 +125,7 @@
     const val = value.trim();
     if (modalMode === 'new-folder') {
       const name = val || 'new folder';
-      const f = { id: 'fold_' + Date.now(), name, parentId: null };
-      const curFolders = [...folders, f];
-      _svc('saveFolders', curFolders);
+      _svc('createFolder', name);
       _svc('showToast', `folder "${name}" created`);
     } else if (modalMode === 'rename-folder' && modalTarget) {
       const f = folders.find(x => x.id === modalTarget);

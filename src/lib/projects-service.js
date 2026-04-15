@@ -91,6 +91,102 @@ const ACCENT_COLORS = [null, null, null,
   'rgba(120,160,120,0.8)', 'rgba(160,120,80,0.8)', 'rgba(130,100,170,0.8)',
 ];
 
+// Bundled default cover images — shipped with the app under src/assets/covers/.
+// Vite picks them up at build time, fingerprints them, and gives us URLs we can fetch.
+const DEFAULT_COVER_MODULES = import.meta.glob('../assets/covers/*.{png,jpg,jpeg,gif,webp}', {
+  eager: true, query: '?url', import: 'default',
+});
+const DEFAULT_COVER_URLS = Object.values(DEFAULT_COVER_MODULES);
+
+// Shuffled-queue picker: each image is used once before any repeats, so a batch
+// of new projects/folders (or the first-run backfill) gets maximum variety.
+// We also avoid repeating the last-used image when the queue wraps.
+let _coverQueue = [];
+let _lastCoverUrl = null;
+
+function _fisherYates(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function _nextCoverUrl() {
+  if (!DEFAULT_COVER_URLS.length) return null;
+  if (_coverQueue.length === 0) {
+    _coverQueue = _fisherYates(DEFAULT_COVER_URLS);
+    // Avoid back-to-back repeat across the seam when refilling
+    if (_lastCoverUrl && _coverQueue.length > 1 && _coverQueue[0] === _lastCoverUrl) {
+      [_coverQueue[0], _coverQueue[1]] = [_coverQueue[1], _coverQueue[0]];
+    }
+  }
+  const url = _coverQueue.shift();
+  _lastCoverUrl = url;
+  return url;
+}
+
+async function _pickRandomDefaultCoverBlob() {
+  const url = _nextCoverUrl();
+  if (!url) return null;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return await res.blob();
+  } catch (e) {
+    console.warn('[projects-service] default cover fetch failed:', e);
+    return null;
+  }
+}
+
+async function _assignDefaultProjectCover(projectId) {
+  const blob = await _pickRandomDefaultCoverBlob();
+  if (!blob) return;
+  const { saveImgBlob } = await import('./media-service.js');
+  const newId = await saveImgBlob(blob);
+  if (!newId) return;
+  const projects = loadProjects();
+  const p = projects.find(x => x.id === projectId);
+  if (!p || p.coverImageId) return; // user may have already set one
+  p.coverImageId = newId;
+  saveProjects(projects);
+}
+
+async function _assignDefaultFolderCover(folderId) {
+  const blob = await _pickRandomDefaultCoverBlob();
+  if (!blob) return;
+  const { saveImgBlob } = await import('./media-service.js');
+  const newId = await saveImgBlob(blob);
+  if (!newId) return;
+  const folders = loadFolders();
+  const f = folders.find(x => x.id === folderId);
+  if (!f || f.coverImageId) return;
+  f.coverImageId = newId;
+  saveFolders(folders);
+}
+
+// One-time backfill: give every existing project/folder without a cover one of
+// the bundled default images. Runs after init, awaited sequentially to avoid
+// thrashing the blob store on first run.
+async function _backfillDefaultCovers() {
+  if (!DEFAULT_COVER_URLS.length) return;
+  try {
+    const projects = loadProjects();
+    for (const p of projects) {
+      if (p.coverImageId) continue;
+      await _assignDefaultProjectCover(p.id);
+    }
+    const folders = loadFolders();
+    for (const f of folders) {
+      if (f.coverImageId) continue;
+      await _assignDefaultFolderCover(f.id);
+    }
+  } catch (e) {
+    console.warn('[projects-service] default-cover backfill failed:', e);
+  }
+}
+
 function createProject(name) {
   const id = 'proj_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
   const fid = getCurrentFolderId() === '__unfiled__' ? null : (getCurrentFolderId() || null);
@@ -110,7 +206,22 @@ function createProject(name) {
   const finalTag = _makeTag(id, 'final', 'builtin', null, '#e0b84a');
   _persistTag(finalTag);
 
+  // Assign a random default cover (fire-and-forget). User can replace it later.
+  _assignDefaultProjectCover(id);
+
   return p;
+}
+
+function createFolder(name) {
+  const trimmed = (name || '').trim() || 'new folder';
+  const f = { id: 'fold_' + Date.now(), name: trimmed, parentId: null };
+  const folders = [...loadFolders(), f];
+  saveFolders(folders);
+
+  // Assign a random default cover (fire-and-forget). User can replace it later.
+  _assignDefaultFolderCover(f.id);
+
+  return f;
 }
 
 function dupProject(id) {
@@ -932,6 +1043,8 @@ function initProjectsService() {
       if (store.get('freeflow_dash_theme') === 'light') {
         document.body.classList.add('dash-light');
       }
+      // Backfill default covers for any existing items without one
+      _backfillDefaultCovers();
     }).catch(e => console.error('[projects-service] DB init failed:', e));
   } else {
     // Browser mode — load from localStorage immediately
@@ -948,6 +1061,8 @@ function initProjectsService() {
     if (store.get('freeflow_dash_theme') === 'light') {
       document.body.classList.add('dash-light');
     }
+    // Backfill default covers for any existing items without one
+    _backfillDefaultCovers();
   }
 
   // Auto-save canvas every 30s when on canvas (version-aware)
@@ -1042,6 +1157,7 @@ export function mountProjectsBridge() {
       store.set('freeflow_dash_theme', isLight ? 'light' : 'dark');
     },
     createProject,
+    createFolder,
     renameProject,
     setProjectCover,
     setFolderCover,

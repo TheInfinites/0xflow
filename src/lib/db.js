@@ -78,6 +78,12 @@ export async function initDB() {
     updated_at INTEGER
   )`);
 
+  // ── v5 schema additions (additive, non-destructive) ─────
+  // Adds cover_image_id column to projects and folders so thumbnails
+  // (bundled defaults + user-set covers) survive app restarts.
+  try { await _db.execute('ALTER TABLE projects ADD COLUMN cover_image_id TEXT'); } catch (e) { /* exists */ }
+  try { await _db.execute('ALTER TABLE folders  ADD COLUMN cover_image_id TEXT'); } catch (e) { /* exists */ }
+
   // One-time migration from localStorage
   const migrated = await _db.select("SELECT value FROM meta WHERE key='migrated'");
   if (migrated.length === 0) {
@@ -128,19 +134,21 @@ export async function dbLoadProjects() {
     accent: r.accent || null,
     folderId: r.folder_id || null,
     schemaVersion: r.schema_version || 2,
+    coverImageId: r.cover_image_id || null,
   }));
 }
 
 export async function dbSaveProject(p) {
   if (!_db) return;
   await _db.execute(
-    `INSERT INTO projects (id, name, created_at, updated_at, note_count, accent, folder_id, schema_version)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO projects (id, name, created_at, updated_at, note_count, accent, folder_id, schema_version, cover_image_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        name=excluded.name, updated_at=excluded.updated_at,
        note_count=excluded.note_count, accent=excluded.accent,
-       folder_id=excluded.folder_id, schema_version=excluded.schema_version`,
-    [p.id, p.name, p.createdAt, p.updatedAt, p.noteCount || 0, p.accent || null, p.folderId || null, p.schemaVersion || 2]
+       folder_id=excluded.folder_id, schema_version=excluded.schema_version,
+       cover_image_id=excluded.cover_image_id`,
+    [p.id, p.name, p.createdAt, p.updatedAt, p.noteCount || 0, p.accent || null, p.folderId || null, p.schemaVersion || 2, p.coverImageId || null]
   );
 }
 
@@ -272,15 +280,18 @@ export async function dbLoadFolders() {
     id: r.id,
     name: r.name,
     parentId: r.parent_id || null,
+    coverImageId: r.cover_image_id || null,
   }));
 }
 
 export async function dbSaveFolder(f) {
   if (!_db) return;
   await _db.execute(
-    `INSERT INTO folders (id, name, parent_id) VALUES (?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET name=excluded.name, parent_id=excluded.parent_id`,
-    [f.id, f.name, f.parentId || null]
+    `INSERT INTO folders (id, name, parent_id, cover_image_id) VALUES (?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       name=excluded.name, parent_id=excluded.parent_id,
+       cover_image_id=excluded.cover_image_id`,
+    [f.id, f.name, f.parentId || null, f.coverImageId || null]
   );
 }
 
