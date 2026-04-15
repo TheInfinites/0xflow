@@ -12,6 +12,7 @@
   let expanded   = $state(false);
   let editing    = $state(false);
   let editValue  = $state('');
+  let notesTab   = $state('description'); // 'description' | 'comments'
 
   let tasks = $derived($projectTasksStore);
   let allTags = $derived($projectTagsStore);
@@ -135,19 +136,133 @@
     _svc('deleteTask', task.id, untag ? 'untag' : 'keep');
   }
 
-  function updateStartDate(e) {
-    _svc('updateTask', task.id, { startDate: e.target.value || null });
+  function fmtDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   }
 
-  function updateEndDate(e) {
-    _svc('updateTask', task.id, { endDate: e.target.value || null });
+  // Time progress: position between start and due date. If only due is set,
+  // treat "now" as the marker against a 14-day runway back from due.
+  let timeProgress = $derived.by(() => {
+    if (!task.endDate) return null;
+    const now = Date.now();
+    const end = new Date(task.endDate);
+    end.setHours(23, 59, 59, 999);
+    const endMs = end.getTime();
+    const start = task.startDate
+      ? new Date(task.startDate).getTime()
+      : endMs - 14 * 24 * 60 * 60 * 1000;
+    if (endMs <= start) return null;
+    const pct = Math.max(0, Math.min(100, ((now - start) / (endMs - start)) * 100));
+    const msLeft = endMs - now;
+    const daysLeft = Math.ceil(msLeft / (24 * 60 * 60 * 1000));
+    let label;
+    if (msLeft < 0) label = `${Math.abs(daysLeft)}d overdue`;
+    else if (daysLeft === 0) label = 'due today';
+    else if (daysLeft === 1) label = 'due tomorrow';
+    else label = `${daysLeft}d left`;
+    let color;
+    if (msLeft < 0) color = '#e84040';
+    else if (pct < 60) color = 'rgba(120,200,140,0.75)';
+    else if (pct < 80) color = 'rgba(230,190,90,0.9)';
+    else color = 'rgba(240,140,70,0.95)';
+    return { pct, daysLeft, overdue: msLeft < 0, label, color };
+  });
+
+  // ── Custom calendar popover ─────
+  let datePickerOpen = $state(null); // 'start' | 'end' | null
+  let viewMonth = $state(new Date()); // Date object pointing at month being viewed
+  let pickerPos = $state({ top: 0, left: 0 });
+  const CAL_W = 240;
+  const CAL_H = 280;
+
+  function toIso(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
   }
+  function sameDay(a, b) {
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  }
+
+  let calendarGrid = $derived.by(() => {
+    const first = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 1);
+    const startOffset = (first.getDay() + 6) % 7; // Monday-first
+    const start = new Date(first);
+    start.setDate(first.getDate() - startOffset);
+    const days = [];
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      days.push(d);
+    }
+    return days;
+  });
+
+  let monthLabel = $derived(
+    viewMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+  );
+
+  function openPicker(which, e) {
+    e?.stopPropagation();
+    if (datePickerOpen === which) { datePickerOpen = null; return; }
+    const cur = which === 'start' ? task.startDate : task.endDate;
+    viewMonth = cur ? new Date(cur) : new Date();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let left = rect.left;
+    if (left + CAL_W + 8 > vw) left = vw - CAL_W - 8;
+    if (left < 8) left = 8;
+    let top = rect.bottom + 6;
+    if (top + CAL_H + 8 > vh) top = rect.top - CAL_H - 6;
+    if (top < 8) top = 8;
+    pickerPos = { top, left };
+    datePickerOpen = which;
+  }
+  function closePicker() { datePickerOpen = null; }
+  function shiftMonth(delta) {
+    viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + delta, 1);
+  }
+  function pickDay(d) {
+    const iso = toIso(d);
+    if (datePickerOpen === 'start') _svc('updateTask', task.id, { startDate: iso });
+    else if (datePickerOpen === 'end') _svc('updateTask', task.id, { endDate: iso });
+    closePicker();
+  }
+  function pickToday() { pickDay(new Date()); }
+  function clearCurrent(e) {
+    e.stopPropagation();
+    if (datePickerOpen === 'start') _svc('updateTask', task.id, { startDate: null });
+    else if (datePickerOpen === 'end') _svc('updateTask', task.id, { endDate: null });
+    closePicker();
+  }
+  function onPickerKeydown(e) {
+    if (e.key === 'Escape') { e.stopPropagation(); closePicker(); }
+  }
+
+  $effect(() => {
+    if (!datePickerOpen) return;
+    const onDocDown = (e) => {
+      if (!e.target.closest('.tr-cal') && !e.target.closest('.tr-date-pill')) {
+        closePicker();
+      }
+    };
+    document.addEventListener('mousedown', onDocDown);
+    return () => document.removeEventListener('mousedown', onDocDown);
+  });
 </script>
 
 <div
-  class="tr"
+  class="tr-shell"
+  class:tr-shell-card={depth === 0}
+  class:tr-shell-nested={depth > 0}
   class:done={task.status === 'done'}
   class:drag-over={isDragOver}
+  class:expanded
   style="--depth: {depth}"
   role="listitem"
   draggable={!!onDragStart}
@@ -155,157 +270,296 @@
   ondragover={e => { e.preventDefault(); onDragOver?.(e, task); }}
   ondrop={e => { e.preventDefault(); onDrop?.(e, task); }}
 >
-  <div class="tv-col tv-col-name">
-    {#if onDragStart}
-      <span class="tr-drag" title="drag to reorder">
-        <svg viewBox="0 0 8 14" width="6" height="10"><circle cx="2" cy="2" r="1" fill="currentColor"/><circle cx="6" cy="2" r="1" fill="currentColor"/><circle cx="2" cy="7" r="1" fill="currentColor"/><circle cx="6" cy="7" r="1" fill="currentColor"/><circle cx="2" cy="12" r="1" fill="currentColor"/><circle cx="6" cy="12" r="1" fill="currentColor"/></svg>
-      </span>
-    {/if}
-    {#if subTasks.length || depth === 0}
-      <button class="tr-caret" class:open={expanded} onclick={() => expanded = !expanded}>
-        <svg viewBox="0 0 10 10" width="8" height="8"><path d="M3 2l4 3-4 3" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  <div class="tr">
+    <div class="tr-main">
+      <button class="tr-check" class:done={task.status === 'done'} onclick={toggleStatus} title="toggle status">
+        {#if task.status === 'done'}
+          <svg viewBox="0 0 12 12" width="10" height="10"><path d="M3 6l2 2 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        {/if}
       </button>
-    {:else}
-      <span class="tr-caret-space"></span>
-    {/if}
-    <button class="tr-check" class:done={task.status === 'done'} onclick={toggleStatus} title="toggle status">
-      {#if task.status === 'done'}
-        <svg viewBox="0 0 12 12" width="10" height="10"><path d="M3 6l2 2 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      {/if}
-    </button>
-    {#if editing}
-      <input
-        class="tr-title-input"
-        bind:value={editValue}
-        onblur={commitEdit}
-        onkeydown={(e) => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') editing = false; }}
-        autofocus
-      />
-    {:else}
-      <button class="tr-title" onclick={beginEdit}>
-        {task.title}
-      </button>
-    {/if}
-  </div>
-
-  <div class="tv-col tv-col-tags">
-    <div class="tr-tags">
-      {#each taskMetaTags as tag (tag.id)}
-        <button
-          class="tr-tag"
-          style="--tag-color: {_tagColor(tag)};"
-          onclick={e => { e.stopPropagation(); removeMetaTag(tag.id); }}
-          title="click to remove"
-        >{tag.name}</button>
-      {/each}
-      <button
-        class="tr-tag-add"
-        onclick={e => { e.stopPropagation(); metaPickerOpen = !metaPickerOpen; }}
-        title="add tag"
-      >+</button>
-      {#if metaPickerOpen}
-        <div
-          class="tr-picker"
-          role="menu"
-          tabindex="-1"
-          onclick={e => e.stopPropagation()}
-          onkeydown={e => e.stopPropagation()}
-        >
-          {#if availableMetaTags.length > 0}
-            {#each availableMetaTags as tag (tag.id)}
-              <button class="tr-picker-item" onclick={() => { addMetaTag(tag.id); metaPickerOpen = false; }}>
-                <span class="tr-picker-dot" style="background:{_tagColor(tag)};"></span>
-                {tag.name}
-              </button>
-            {/each}
-          {:else}
-            <div class="tr-picker-empty">no tags</div>
-          {/if}
-          <div class="tr-picker-new">
-            <input
-              type="text"
-              placeholder="new tag..."
-              bind:value={newMetaTagName}
-              onkeydown={e => { if (e.key === 'Enter') { createAndAddMetaTag(); metaPickerOpen = false; } }}
-            />
-            <button onclick={() => { createAndAddMetaTag(); metaPickerOpen = false; }}>+</button>
-          </div>
-        </div>
-      {/if}
-    </div>
-  </div>
-
-  <div class="tv-col tv-col-date">
-    <input type="date" value={task.startDate || ''} onchange={updateStartDate} />
-  </div>
-
-  <div class="tv-col tv-col-date">
-    <input type="date" value={task.endDate || ''} onchange={updateEndDate} />
-  </div>
-
-  <div class="tv-col tv-col-progress">
-    {#if progress}
-      <div class="tr-progress">
-        <div class="tr-progress-fill" style="width: {progress.pct}%"></div>
-      </div>
-      <span class="tr-progress-num">{progress.pct}%</span>
-    {:else}
-      <span class="tr-progress-num muted">--</span>
-    {/if}
-  </div>
-
-  <div class="tv-col tv-col-actions">
-    <button class="tr-act" onclick={openTaskCanvas} title="open canvas">
-      <svg viewBox="0 0 12 12" width="11" height="11"><path d="M4 2h6v6M4 8L10 2" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    </button>
-    <button class="tr-act tr-act-del" onclick={removeTask} title="delete">
-      <svg viewBox="0 0 12 12" width="11" height="11"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-    </button>
-  </div>
-</div>
-
-{#if expanded}
-  <div class="tr-detail" style="--depth: {depth}">
-    <!-- Top actions row -->
-    <div class="tr-detail-actions">
-      {#if depth === 0}
-        <button class="tr-detail-chip" onclick={openFinalCanvas}>
-          <svg viewBox="0 0 12 12" width="10" height="10"><path d="M2 2h3v3H2zM7 2h3v3H7zM2 7h3v3H2zM7 7h3v3H7z" stroke="currentColor" stroke-width="1" fill="none"/></svg>
-          Final canvas
+      {#if editing}
+        <input
+          class="tr-title-input"
+          bind:value={editValue}
+          onblur={commitEdit}
+          onkeydown={(e) => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') editing = false; }}
+          autofocus
+        />
+      {:else}
+        <button class="tr-title" onclick={beginEdit}>
+          {task.title}
         </button>
       {/if}
-      <button class="tr-detail-chip" onclick={openTaskCanvas}>
-        <svg viewBox="0 0 12 12" width="10" height="10"><path d="M4 2h6v6M4 8L10 2" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        Open canvas
-      </button>
     </div>
 
-    <!-- Two-column layout: description + comments -->
-    <div class="tr-detail-grid">
-      <div class="tr-detail-card">
-        <div class="tr-card-header">
-          <svg viewBox="0 0 12 12" width="10" height="10"><rect x="1" y="2" width="10" height="8" rx="1" stroke="currentColor" stroke-width="1" fill="none"/><line x1="3" y1="5" x2="9" y2="5" stroke="currentColor" stroke-width="0.8"/><line x1="3" y1="7" x2="7" y2="7" stroke="currentColor" stroke-width="0.8"/></svg>
-          <span>Description</span>
+    <div class="tr-trail">
+      {#if timeProgress}
+        <div
+          class="tr-tl-mini"
+          class:overdue={timeProgress.overdue}
+          style="--tl-color: {timeProgress.color};"
+          title={timeProgress.label}
+        >
+          <div class="tr-tl-mini-fill" style="width: {timeProgress.pct}%"></div>
         </div>
-        <textarea
-          id="desc-{task.id}"
-          class="tr-textarea"
-          placeholder="Write something..."
-          bind:value={descDraft}
-          onblur={commitDesc}
-          onkeydown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.target.blur(); } }}
-          rows="3"
-        ></textarea>
+      {/if}
+      {#if progress}
+        <div class="tr-progress">
+          <div class="tr-progress-fill" style="width: {progress.pct}%"></div>
+        </div>
+        <span class="tr-progress-num">{progress.pct}%</span>
+      {/if}
+      {#if depth === 0}
+        <button class="tr-act" onclick={openFinalCanvas} title="final canvas">
+          <svg viewBox="0 0 12 12" width="11" height="11"><path d="M2 2h3v3H2zM7 2h3v3H7zM2 7h3v3H2zM7 7h3v3H7z" stroke="currentColor" stroke-width="1" fill="none"/></svg>
+        </button>
+      {/if}
+      <button class="tr-act" onclick={openTaskCanvas} title="open canvas">
+        <svg viewBox="0 0 12 12" width="11" height="11"><path d="M4 2h6v6M4 8L10 2" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="tr-act tr-act-del" onclick={removeTask} title="delete">
+        <svg viewBox="0 0 12 12" width="11" height="11"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+      </button>
+      <button class="tr-caret" class:open={expanded} onclick={() => expanded = !expanded} title="expand">
+        <svg viewBox="0 0 10 10" width="9" height="9"><path d="M2 4l3 3 3-3" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  </div>
+
+{#if expanded}
+  <div class="tr-detail">
+    <!-- Inline meta row: tags + started + due on one line -->
+    <div class="tr-meta-row">
+      <div class="tr-tags">
+        {#each taskMetaTags as tag (tag.id)}
+          <button
+            class="tr-tag"
+            style="--tag-color: {_tagColor(tag)};"
+            onclick={e => { e.stopPropagation(); removeMetaTag(tag.id); }}
+            title="click to remove"
+          >{tag.name}</button>
+        {/each}
+        <button
+          class="tr-tag-add"
+          onclick={e => { e.stopPropagation(); metaPickerOpen = !metaPickerOpen; }}
+          title="add tag"
+        >+</button>
+        {#if metaPickerOpen}
+          <div
+            class="tr-picker"
+            role="menu"
+            tabindex="-1"
+            onclick={e => e.stopPropagation()}
+            onkeydown={e => e.stopPropagation()}
+          >
+            {#if availableMetaTags.length > 0}
+              {#each availableMetaTags as tag (tag.id)}
+                <button class="tr-picker-item" onclick={() => { addMetaTag(tag.id); metaPickerOpen = false; }}>
+                  <span class="tr-picker-dot" style="background:{_tagColor(tag)};"></span>
+                  {tag.name}
+                </button>
+              {/each}
+            {:else}
+              <div class="tr-picker-empty">no tags</div>
+            {/if}
+            <div class="tr-picker-new">
+              <input
+                type="text"
+                placeholder="new tag..."
+                bind:value={newMetaTagName}
+                onkeydown={e => { if (e.key === 'Enter') { createAndAddMetaTag(); metaPickerOpen = false; } }}
+              />
+              <button onclick={() => { createAndAddMetaTag(); metaPickerOpen = false; }}>+</button>
+            </div>
+          </div>
+        {/if}
       </div>
 
-      <div class="tr-detail-card">
-        <div class="tr-card-header">
-          <svg viewBox="0 0 12 12" width="10" height="10"><path d="M1 3h10v6a1 1 0 01-1 1H2a1 1 0 01-1-1V3z" stroke="currentColor" stroke-width="1" fill="none"/><path d="M1 3l5 3.5L11 3" stroke="currentColor" stroke-width="1" fill="none"/></svg>
-          <span>Comments</span>
-          {#if Array.isArray(task.comments) && task.comments.length > 0}
-            <span class="tr-card-count">{task.comments.length}</span>
+      <div class="tr-dates">
+        <div class="tr-date-wrap">
+          <button
+            class="tr-date-pill"
+            class:set={task.startDate}
+            class:active={datePickerOpen === 'start'}
+            onclick={e => openPicker('start', e)}
+            title="start date"
+          >
+            <svg viewBox="0 0 12 12" width="10" height="10"><rect x="1.5" y="2.5" width="9" height="8" rx="1" stroke="currentColor" stroke-width="1" fill="none"/><line x1="1.5" y1="5" x2="10.5" y2="5" stroke="currentColor" stroke-width="1"/></svg>
+            <span class="tr-date-text">{task.startDate ? fmtDate(task.startDate) : 'Start'}</span>
+          </button>
+          {#if datePickerOpen === 'start'}
+            <div
+              class="tr-cal"
+              role="dialog"
+              tabindex="-1"
+              style="top: {pickerPos.top}px; left: {pickerPos.left}px;"
+              onclick={e => e.stopPropagation()}
+              onkeydown={onPickerKeydown}
+            >
+              <div class="tr-cal-head">
+                <span class="tr-cal-month">{monthLabel}</span>
+                <div class="tr-cal-nav">
+                  <button onclick={() => shiftMonth(-1)} aria-label="previous month">
+                    <svg viewBox="0 0 10 10" width="9" height="9"><path d="M6.5 2L3 5l3.5 3" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                  <button onclick={() => shiftMonth(1)} aria-label="next month">
+                    <svg viewBox="0 0 10 10" width="9" height="9"><path d="M3.5 2L7 5l-3.5 3" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="tr-cal-dow">
+                <span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span>
+              </div>
+              <div class="tr-cal-grid">
+                {#each calendarGrid as d (d.getTime())}
+                  {@const outside = d.getMonth() !== viewMonth.getMonth()}
+                  {@const isToday = sameDay(d, new Date())}
+                  {@const selected = task.startDate && sameDay(d, new Date(task.startDate))}
+                  <button
+                    class="tr-cal-day"
+                    class:outside
+                    class:today={isToday}
+                    class:selected
+                    onclick={() => pickDay(d)}
+                  >{d.getDate()}</button>
+                {/each}
+              </div>
+              <div class="tr-cal-foot">
+                <button class="tr-cal-foot-btn" onclick={clearCurrent}>Clear</button>
+                <button class="tr-cal-foot-btn" onclick={pickToday}>Today</button>
+              </div>
+            </div>
           {/if}
         </div>
+
+        <span class="tr-date-sep" aria-hidden="true">→</span>
+
+        <div class="tr-date-wrap">
+          <button
+            class="tr-date-pill"
+            class:set={task.endDate}
+            class:active={datePickerOpen === 'end'}
+            onclick={e => openPicker('end', e)}
+            title="due date"
+          >
+            <svg viewBox="0 0 12 12" width="10" height="10"><circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1" fill="none"/><path d="M6 3.5V6l1.8 1.8" stroke="currentColor" stroke-width="1" stroke-linecap="round" fill="none"/></svg>
+            <span class="tr-date-text">{task.endDate ? fmtDate(task.endDate) : 'Due'}</span>
+          </button>
+          {#if datePickerOpen === 'end'}
+            <div
+              class="tr-cal"
+              role="dialog"
+              tabindex="-1"
+              style="top: {pickerPos.top}px; left: {pickerPos.left}px;"
+              onclick={e => e.stopPropagation()}
+              onkeydown={onPickerKeydown}
+            >
+              <div class="tr-cal-head">
+                <span class="tr-cal-month">{monthLabel}</span>
+                <div class="tr-cal-nav">
+                  <button onclick={() => shiftMonth(-1)} aria-label="previous month">
+                    <svg viewBox="0 0 10 10" width="9" height="9"><path d="M6.5 2L3 5l3.5 3" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                  <button onclick={() => shiftMonth(1)} aria-label="next month">
+                    <svg viewBox="0 0 10 10" width="9" height="9"><path d="M3.5 2L7 5l-3.5 3" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="tr-cal-dow">
+                <span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span>
+              </div>
+              <div class="tr-cal-grid">
+                {#each calendarGrid as d (d.getTime())}
+                  {@const outside = d.getMonth() !== viewMonth.getMonth()}
+                  {@const isToday = sameDay(d, new Date())}
+                  {@const selected = task.endDate && sameDay(d, new Date(task.endDate))}
+                  <button
+                    class="tr-cal-day"
+                    class:outside
+                    class:today={isToday}
+                    class:selected
+                    onclick={() => pickDay(d)}
+                  >{d.getDate()}</button>
+                {/each}
+              </div>
+              <div class="tr-cal-foot">
+                <button class="tr-cal-foot-btn" onclick={clearCurrent}>Clear</button>
+                <button class="tr-cal-foot-btn" onclick={pickToday}>Today</button>
+              </div>
+            </div>
+          {/if}
+        </div>
+      </div>
+    </div>
+
+    {#if timeProgress}
+      <div
+        class="tr-timeline"
+        class:overdue={timeProgress.overdue}
+        style="--tl-color: {timeProgress.color};"
+      >
+        <div class="tr-timeline-track">
+          <div class="tr-timeline-fill" style="width: {timeProgress.pct}%"></div>
+        </div>
+        <span class="tr-timeline-label">{timeProgress.label}</span>
+      </div>
+    {/if}
+  </div>
+
+  <!-- Sub-tasks: right under the meta row so they're the hero of the card -->
+  {#if subTasks.length > 0 || depth === 0}
+    <div class="tr-subtasks-section">
+      <div class="tr-subtasks-header">
+        <span class="tr-subtasks-label">Sub-tasks</span>
+        {#if subTasks.length > 0}
+          <span class="tr-subtasks-count">{subTasks.filter(s => s.status === 'done').length}/{subTasks.length}</span>
+        {/if}
+      </div>
+      {#each subTasks as sub (sub.id)}
+        <svelte:self
+          task={sub}
+          subTasks={grandChildrenOf(sub.id)}
+          depth={depth + 1}
+        />
+      {/each}
+      <button class="tr-add-sub" onclick={addSubTask}>
+        <span class="tr-add-sub-icon">+</span>
+        Add sub-task
+      </button>
+    </div>
+  {/if}
+
+  <!-- Notes: tabbed editor for description + comments -->
+  <div class="tr-notes">
+    <div class="tr-notes-tabs" role="tablist">
+      <button
+        class="tr-notes-tab"
+        class:active={notesTab === 'description'}
+        role="tab"
+        aria-selected={notesTab === 'description'}
+        onclick={() => notesTab = 'description'}
+      >Description{#if descDraft.trim()} <span class="tr-notes-dot"></span>{/if}</button>
+      <button
+        class="tr-notes-tab"
+        class:active={notesTab === 'comments'}
+        role="tab"
+        aria-selected={notesTab === 'comments'}
+        onclick={() => notesTab = 'comments'}
+      >Comments{#if Array.isArray(task.comments) && task.comments.length > 0} <span class="tr-notes-count">{task.comments.length}</span>{/if}</button>
+    </div>
+
+    {#if notesTab === 'description'}
+      <textarea
+        id="desc-{task.id}"
+        class="tr-textarea"
+        placeholder="Write something..."
+        bind:value={descDraft}
+        onblur={commitDesc}
+        onkeydown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.target.blur(); } }}
+        rows="2"
+      ></textarea>
+    {:else}
+      <div class="tr-notes-comments">
         {#if Array.isArray(task.comments) && task.comments.length > 0}
           <div class="tr-comments">
             {#each task.comments as c (c.id)}
@@ -329,74 +583,64 @@
             bind:value={newComment}
             onkeydown={e => { if (e.key === 'Enter') addComment(); }}
           />
-          <button class="tr-comment-send" onclick={addComment} disabled={!newComment.trim()}>
+          <button class="tr-comment-send" onclick={addComment} disabled={!newComment.trim()} aria-label="send comment">
             <svg viewBox="0 0 12 12" width="10" height="10"><path d="M2 6h8M7 3l3 3-3 3" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
         </div>
       </div>
-    </div>
-
-    <!-- Sub-tasks section -->
-    {#if subTasks.length > 0 || depth === 0}
-      <div class="tr-subtasks-section">
-        <div class="tr-subtasks-header">
-          <span class="tr-subtasks-label">Sub-tasks</span>
-          {#if subTasks.length > 0}
-            <span class="tr-subtasks-count">{subTasks.filter(s => s.status === 'done').length}/{subTasks.length}</span>
-          {/if}
-        </div>
-        {#each subTasks as sub (sub.id)}
-          <svelte:self
-            task={sub}
-            subTasks={grandChildrenOf(sub.id)}
-            depth={depth + 1}
-          />
-        {/each}
-        <button class="tr-add-sub" onclick={addSubTask}>
-          <span class="tr-add-sub-icon">+</span>
-          Add sub-task
-        </button>
-      </div>
     {/if}
   </div>
 {/if}
+</div>
 
 <style>
-  /* ── Row ───────────────────── */
-  .tr {
-    display: grid;
-    grid-template-columns: 2.5fr 1.2fr 0.8fr 0.8fr 1fr 60px;
-    gap: 12px;
-    padding: 10px 0;
-    padding-left: calc(var(--depth) * 28px);
-    border-bottom: 1px solid rgba(255,255,255,0.04);
-    align-items: center;
-    font-size: 13px;
-    transition: background 0.1s;
+  /* ── Card shell (depth 0) ───────────────────── */
+  .tr-shell-card {
+    background: rgba(255,255,255,0.025);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 14px;
+    padding: 4px 14px;
+    transition: background 0.12s, border-color 0.12s;
   }
-  .tr:hover { background: rgba(255,255,255,0.02); }
-  .tr.drag-over { border-top: 2px solid rgba(255,255,255,0.2); }
-  .tr.done .tr-title { text-decoration: line-through; opacity: 0.4; }
+  .tr-shell-card:hover {
+    background: rgba(255,255,255,0.035);
+    border-color: rgba(255,255,255,0.09);
+  }
+  .tr-shell-card.expanded {
+    background: rgba(255,255,255,0.04);
+    border-color: rgba(255,255,255,0.1);
+  }
+  .tr-shell-card.drag-over {
+    border-color: rgba(255,255,255,0.25);
+  }
+  .tr-shell-nested {
+    margin-left: 12px;
+    padding-left: 12px;
+    border-left: 1px solid rgba(255,255,255,0.05);
+  }
+  .tr-shell.done .tr-title { text-decoration: line-through; opacity: 0.4; }
 
-  .tv-col {
+  /* ── Surface row ───────────────────── */
+  .tr {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
+    padding: 10px 0;
+    font-size: 13px;
+  }
+  .tr-main {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
     min-width: 0;
   }
-
-  /* ── Drag handle ───────────────────── */
-  .tr-drag {
-    cursor: grab;
-    color: rgba(255,255,255,0.1);
+  .tr-trail {
     display: flex;
     align-items: center;
-    padding: 2px;
-    opacity: 0;
-    transition: opacity 0.15s;
+    gap: 6px;
+    flex-shrink: 0;
   }
-  .tr:hover .tr-drag { opacity: 1; }
-  .tr-drag:hover { color: rgba(255,255,255,0.4); }
 
   /* ── Caret ───────────────────── */
   .tr-caret {
@@ -413,9 +657,8 @@
     transition: transform 0.15s, color 0.1s;
     flex-shrink: 0;
   }
-  .tr-caret.open { transform: rotate(90deg); }
+  .tr-caret.open { transform: rotate(180deg); }
   .tr-caret:hover { color: rgba(255,255,255,0.6); }
-  .tr-caret-space { width: 18px; flex-shrink: 0; }
 
   /* ── Checkbox ───────────────────── */
   .tr-check {
@@ -472,32 +715,30 @@
   }
   .tr-title-input:focus { border-color: rgba(255,255,255,0.3); }
 
-  /* ── Date ───────────────────── */
-  .tv-col-date input[type="date"] {
-    background: transparent;
-    border: none;
-    color: rgba(255,255,255,0.4);
-    font-family: 'Geist Mono', monospace;
-    font-size: 10px;
-    color-scheme: dark;
-    padding: 4px 2px;
-    border-radius: 3px;
-    width: 100%;
-    cursor: pointer;
-  }
-  .tv-col-date input[type="date"]:hover {
-    background: rgba(255,255,255,0.04);
-    color: rgba(255,255,255,0.6);
-  }
-
   /* ── Progress ───────────────────── */
-  .tr-progress {
-    flex: 1;
+  .tr-tl-mini {
+    width: 36px;
     height: 3px;
     background: rgba(255,255,255,0.06);
     border-radius: 2px;
     overflow: hidden;
-    min-width: 40px;
+  }
+  .tr-tl-mini-fill {
+    height: 100%;
+    background: var(--tl-color);
+    border-radius: 2px;
+    transition: width 0.3s ease;
+  }
+  .tr-tl-mini.overdue { background: rgba(232,64,64,0.15); }
+  :global(body.dash-light) .tr-tl-mini { background: rgba(0,0,0,0.06); }
+  :global(body.dash-light) .tr-tl-mini.overdue { background: rgba(232,64,64,0.15); }
+
+  .tr-progress {
+    width: 56px;
+    height: 3px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 2px;
+    overflow: hidden;
   }
   .tr-progress-fill {
     height: 100%;
@@ -508,17 +749,215 @@
   .tr-progress-num {
     font-family: 'Geist Mono', monospace;
     font-size: 10px;
-    color: rgba(255,255,255,0.35);
+    color: rgba(255,255,255,0.4);
     min-width: 28px;
     text-align: right;
   }
-  .tr-progress-num.muted { color: rgba(255,255,255,0.12); }
+
+  /* ── Inline meta row (in detail) ───────────────────── */
+  .tr-meta-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 2px 0 10px;
+  }
+  .tr-meta-row .tr-tags { flex: 1; min-width: 0; }
+
+  .tr-dates {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .tr-date-pill {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 9px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.06);
+    background: rgba(255,255,255,0.02);
+    color: rgba(255,255,255,0.38);
+    cursor: pointer;
+    transition: all 0.12s;
+  }
+  .tr-date-pill:hover {
+    color: rgba(255,255,255,0.85);
+    background: rgba(255,255,255,0.05);
+    border-color: rgba(255,255,255,0.12);
+  }
+  .tr-date-pill.set {
+    color: rgba(255,255,255,0.8);
+    background: rgba(255,255,255,0.04);
+    border-color: rgba(255,255,255,0.1);
+  }
+  .tr-date-text {
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    line-height: 1;
+  }
+  .tr-date-wrap { position: relative; }
+  .tr-date-pill.active {
+    color: #fff;
+    background: rgba(255,255,255,0.08);
+    border-color: rgba(255,255,255,0.18);
+  }
+
+  /* ── Calendar popover ───────────────────── */
+  .tr-cal {
+    position: fixed;
+    z-index: 9999;
+    width: 240px;
+    background: #17171a;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    padding: 10px;
+    box-shadow: 0 18px 44px rgba(0,0,0,0.6), 0 2px 6px rgba(0,0,0,0.4);
+    animation: tr-cal-in 0.14s ease-out;
+  }
+  @keyframes tr-cal-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .tr-cal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 2px 2px 8px;
+  }
+  .tr-cal-month {
+    font-family: 'Geist', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    color: rgba(255,255,255,0.9);
+    letter-spacing: -0.01em;
+  }
+  .tr-cal-nav { display: flex; gap: 2px; }
+  .tr-cal-nav button {
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.4);
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.1s;
+  }
+  .tr-cal-nav button:hover { color: #fff; background: rgba(255,255,255,0.06); }
+  .tr-cal-dow {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 0;
+    padding: 0 2px 4px;
+  }
+  .tr-cal-dow span {
+    font-family: 'Geist Mono', monospace;
+    font-size: 9px;
+    color: rgba(255,255,255,0.25);
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .tr-cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 1px;
+    padding: 2px;
+  }
+  .tr-cal-day {
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.75);
+    font-family: 'Geist', sans-serif;
+    font-size: 11px;
+    height: 26px;
+    border-radius: 5px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.1s;
+  }
+  .tr-cal-day:hover { background: rgba(255,255,255,0.06); color: #fff; }
+  .tr-cal-day.outside { color: rgba(255,255,255,0.18); }
+  .tr-cal-day.today {
+    color: #fff;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.25);
+  }
+  .tr-cal-day.selected {
+    background: #fff;
+    color: #111;
+    box-shadow: none;
+  }
+  .tr-cal-day.selected:hover { background: #fff; }
+  .tr-cal-foot {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 2px 0;
+    margin-top: 6px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+  }
+  .tr-cal-foot-btn {
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.5);
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    padding: 3px 6px;
+    border-radius: 4px;
+    transition: all 0.1s;
+  }
+  .tr-cal-foot-btn:hover { color: #fff; background: rgba(255,255,255,0.06); }
+
+  .tr-date-sep {
+    color: rgba(255,255,255,0.2);
+    font-size: 11px;
+    padding: 0 2px;
+  }
+
+  /* ── Time progress (start → due) ───────────────────── */
+  .tr-timeline {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 2px 0 8px;
+    --tl-color: rgba(255,255,255,0.55);
+  }
+  .tr-timeline-track {
+    flex: 1;
+    height: 3px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .tr-timeline-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: var(--tl-color);
+    transition: width 0.3s ease, background 0.2s;
+  }
+  .tr-timeline-label {
+    font-family: 'Geist Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--tl-color);
+    min-width: 70px;
+    text-align: right;
+  }
+  .tr-timeline.overdue .tr-timeline-track { background: rgba(232,64,64,0.1); }
 
   /* ── Actions ───────────────────── */
-  .tv-col-actions {
-    justify-content: flex-end;
-    gap: 2px;
-  }
   .tr-act {
     background: none;
     border: none;
@@ -533,7 +972,8 @@
     opacity: 0;
     transition: all 0.1s;
   }
-  .tr:hover .tr-act { opacity: 1; }
+  .tr-shell:hover .tr-act { opacity: 1; }
+  .tr-shell.expanded .tr-act { opacity: 1; }
   .tr-act:hover { color: rgba(255,255,255,0.7); background: rgba(255,255,255,0.05); }
   .tr-act-del:hover { color: #e84040; }
 
@@ -663,71 +1103,57 @@
 
   /* ── Detail panel ───────────────────── */
   .tr-detail {
-    padding-left: calc((var(--depth) + 1) * 28px);
-    padding-top: 8px;
-    padding-bottom: 20px;
-    padding-right: 16px;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
+    padding: 4px 0 2px;
   }
 
-  .tr-detail-actions {
-    display: flex;
-    gap: 6px;
-    margin-bottom: 16px;
+  /* ── Notes (tabbed description/comments) ───────────────────── */
+  .tr-notes {
+    padding: 8px 0 4px;
+    margin-top: 2px;
+    border-top: 1px solid rgba(255,255,255,0.05);
   }
-  .tr-detail-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: rgba(255,255,255,0.04);
+  .tr-notes-tabs {
+    display: flex;
+    gap: 2px;
+    margin-bottom: 6px;
+  }
+  .tr-notes-tab {
+    background: none;
     border: none;
-    color: rgba(255,255,255,0.5);
-    padding: 6px 14px;
-    border-radius: 20px;
-    font-family: 'Geist Mono', monospace;
-    font-size: 10px;
-    letter-spacing: 0.04em;
-    cursor: pointer;
-    transition: all 0.12s;
-  }
-  .tr-detail-chip:hover {
-    color: rgba(255,255,255,0.85);
-    background: rgba(255,255,255,0.08);
-  }
-
-  .tr-detail-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-
-  .tr-detail-card {
-    background: rgba(255,255,255,0.02);
-    border: 1px solid rgba(255,255,255,0.05);
-    border-radius: 8px;
-    padding: 12px;
-  }
-
-  .tr-card-header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
+    color: rgba(255,255,255,0.3);
     font-family: 'Geist Mono', monospace;
     font-size: 9px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: rgba(255,255,255,0.3);
-    margin-bottom: 10px;
+    padding: 4px 10px 5px;
+    cursor: pointer;
+    border-bottom: 1px solid transparent;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: color 0.12s, border-color 0.12s;
   }
-  .tr-card-count {
-    margin-left: auto;
-    background: rgba(255,255,255,0.06);
-    padding: 1px 6px;
-    border-radius: 8px;
+  .tr-notes-tab:hover { color: rgba(255,255,255,0.6); }
+  .tr-notes-tab.active {
+    color: rgba(255,255,255,0.85);
+    border-bottom-color: rgba(255,255,255,0.5);
+  }
+  .tr-notes-dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.4);
+  }
+  .tr-notes-count {
     font-size: 9px;
     color: rgba(255,255,255,0.4);
+    background: rgba(255,255,255,0.06);
+    padding: 0 5px;
+    border-radius: 6px;
+    min-width: 14px;
+    text-align: center;
   }
+  .tr-notes-comments { padding-top: 2px; }
 
   .tr-textarea {
     width: 100%;
@@ -828,13 +1254,19 @@
 
   /* ── Sub-tasks section ───────────────────── */
   .tr-subtasks-section {
-    margin-top: 4px;
+    padding: 6px 0 10px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+    margin-top: 2px;
+  }
+  .tr-shell-card > .tr-subtasks-section {
+    margin-left: -2px;
+    margin-right: -2px;
   }
   .tr-subtasks-header {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 4px;
+    margin: 4px 0 2px;
   }
   .tr-subtasks-label {
     font-family: 'Geist Mono', monospace;
@@ -883,11 +1315,20 @@
   .tr-add-sub:hover .tr-add-sub-icon { border-color: rgba(255,255,255,0.3); }
 
   /* ── Light mode ───────────────────── */
-  :global(body.dash-light) .tr { border-bottom-color: rgba(0,0,0,0.05); }
-  :global(body.dash-light) .tr:hover { background: rgba(0,0,0,0.02); }
-  :global(body.dash-light) .tr.drag-over { border-top-color: rgba(0,0,0,0.2); }
-  :global(body.dash-light) .tr-drag { color: rgba(0,0,0,0.1); }
-  :global(body.dash-light) .tr-drag:hover { color: rgba(0,0,0,0.35); }
+  :global(body.dash-light) .tr-shell-card {
+    background: rgba(0,0,0,0.025);
+    border-color: rgba(0,0,0,0.07);
+  }
+  :global(body.dash-light) .tr-shell-card:hover {
+    background: rgba(0,0,0,0.04);
+    border-color: rgba(0,0,0,0.1);
+  }
+  :global(body.dash-light) .tr-shell-card.expanded {
+    background: rgba(0,0,0,0.045);
+    border-color: rgba(0,0,0,0.12);
+  }
+  :global(body.dash-light) .tr-shell-card.drag-over { border-color: rgba(0,0,0,0.3); }
+  :global(body.dash-light) .tr-shell-nested { border-left-color: rgba(0,0,0,0.06); }
   :global(body.dash-light) .tr-caret { color: rgba(0,0,0,0.25); }
   :global(body.dash-light) .tr-caret:hover { color: rgba(0,0,0,0.6); }
   :global(body.dash-light) .tr-check { border-color: rgba(0,0,0,0.2); }
@@ -896,21 +1337,59 @@
   :global(body.dash-light) .tr-title { color: rgba(0,0,0,0.8); }
   :global(body.dash-light) .tr-title:hover { color: #000; }
   :global(body.dash-light) .tr-title-input { background: rgba(0,0,0,0.03); border-color: rgba(0,0,0,0.12); color: #1a1a1c; }
-  :global(body.dash-light) .tv-col-date input[type="date"] { color: rgba(0,0,0,0.4); color-scheme: light; }
-  :global(body.dash-light) .tv-col-date input[type="date"]:hover { background: rgba(0,0,0,0.03); color: rgba(0,0,0,0.6); }
-  :global(body.dash-light) .tr-progress { background: rgba(0,0,0,0.06); }
+  :global(body.dash-light) .tr-date-pill {
+    color: rgba(0,0,0,0.38);
+    background: rgba(0,0,0,0.02);
+    border-color: rgba(0,0,0,0.07);
+  }
+  :global(body.dash-light) .tr-date-pill:hover {
+    color: rgba(0,0,0,0.85);
+    background: rgba(0,0,0,0.05);
+    border-color: rgba(0,0,0,0.14);
+  }
+  :global(body.dash-light) .tr-date-pill.set {
+    color: rgba(0,0,0,0.8);
+    background: rgba(0,0,0,0.04);
+    border-color: rgba(0,0,0,0.12);
+  }
+  :global(body.dash-light) .tr-date-pill.active {
+    color: #000;
+    background: rgba(0,0,0,0.08);
+    border-color: rgba(0,0,0,0.2);
+  }
+  :global(body.dash-light) .tr-date-sep { color: rgba(0,0,0,0.2); }
+  :global(body.dash-light) .tr-timeline-track { background: rgba(0,0,0,0.06); }
+  :global(body.dash-light) .tr-timeline.overdue .tr-timeline-track { background: rgba(232,64,64,0.12); }
+  :global(body.dash-light) .tr-cal {
+    background: #faf8f4;
+    border-color: rgba(0,0,0,0.1);
+    box-shadow: 0 18px 44px rgba(0,0,0,0.15), 0 2px 6px rgba(0,0,0,0.08);
+  }
+  :global(body.dash-light) .tr-cal-month { color: rgba(0,0,0,0.9); }
+  :global(body.dash-light) .tr-cal-nav button { color: rgba(0,0,0,0.4); }
+  :global(body.dash-light) .tr-cal-nav button:hover { color: #000; background: rgba(0,0,0,0.06); }
+  :global(body.dash-light) .tr-cal-dow span { color: rgba(0,0,0,0.3); }
+  :global(body.dash-light) .tr-cal-day { color: rgba(0,0,0,0.75); }
+  :global(body.dash-light) .tr-cal-day:hover { background: rgba(0,0,0,0.06); color: #000; }
+  :global(body.dash-light) .tr-cal-day.outside { color: rgba(0,0,0,0.2); }
+  :global(body.dash-light) .tr-cal-day.today { color: #000; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.3); }
+  :global(body.dash-light) .tr-cal-day.selected { background: #1a1a1c; color: #f5f2ed; box-shadow: none; }
+  :global(body.dash-light) .tr-cal-day.selected:hover { background: #1a1a1c; }
+  :global(body.dash-light) .tr-cal-foot { border-top-color: rgba(0,0,0,0.06); }
+  :global(body.dash-light) .tr-cal-foot-btn { color: rgba(0,0,0,0.5); }
+  :global(body.dash-light) .tr-cal-foot-btn:hover { color: #000; background: rgba(0,0,0,0.06); }
+  :global(body.dash-light) .tr-progress { background: rgba(0,0,0,0.08); }
   :global(body.dash-light) .tr-progress-fill { background: #1a1a1c; }
-  :global(body.dash-light) .tr-progress-num { color: rgba(0,0,0,0.35); }
-  :global(body.dash-light) .tr-progress-num.muted { color: rgba(0,0,0,0.12); }
+  :global(body.dash-light) .tr-progress-num { color: rgba(0,0,0,0.4); }
   :global(body.dash-light) .tr-act { color: rgba(0,0,0,0.2); }
   :global(body.dash-light) .tr-act:hover { color: rgba(0,0,0,0.6); background: rgba(0,0,0,0.04); }
   :global(body.dash-light) .tr-act-del:hover { color: #e84040; }
-  :global(body.dash-light) .tr-detail { border-bottom-color: rgba(0,0,0,0.05); }
-  :global(body.dash-light) .tr-detail-chip { background: rgba(0,0,0,0.04); color: rgba(0,0,0,0.5); }
-  :global(body.dash-light) .tr-detail-chip:hover { color: rgba(0,0,0,0.8); background: rgba(0,0,0,0.07); }
-  :global(body.dash-light) .tr-detail-card { background: rgba(0,0,0,0.02); border-color: rgba(0,0,0,0.06); }
-  :global(body.dash-light) .tr-card-header { color: rgba(0,0,0,0.3); }
-  :global(body.dash-light) .tr-card-count { background: rgba(0,0,0,0.05); color: rgba(0,0,0,0.4); }
+  :global(body.dash-light) .tr-notes { border-top-color: rgba(0,0,0,0.07); }
+  :global(body.dash-light) .tr-notes-tab { color: rgba(0,0,0,0.3); }
+  :global(body.dash-light) .tr-notes-tab:hover { color: rgba(0,0,0,0.6); }
+  :global(body.dash-light) .tr-notes-tab.active { color: rgba(0,0,0,0.85); border-bottom-color: rgba(0,0,0,0.5); }
+  :global(body.dash-light) .tr-notes-dot { background: rgba(0,0,0,0.4); }
+  :global(body.dash-light) .tr-notes-count { background: rgba(0,0,0,0.06); color: rgba(0,0,0,0.45); }
   :global(body.dash-light) .tr-textarea { color: rgba(0,0,0,0.7); border-bottom-color: rgba(0,0,0,0.08); }
   :global(body.dash-light) .tr-textarea:focus { border-bottom-color: rgba(0,0,0,0.2); }
   :global(body.dash-light) .tr-textarea::placeholder { color: rgba(0,0,0,0.15); }
@@ -923,6 +1402,7 @@
   :global(body.dash-light) .tr-comment-input input::placeholder { color: rgba(0,0,0,0.15); }
   :global(body.dash-light) .tr-comment-send { color: rgba(0,0,0,0.2); }
   :global(body.dash-light) .tr-comment-send:hover:not(:disabled) { color: rgba(0,0,0,0.5); }
+  :global(body.dash-light) .tr-subtasks-section { border-top-color: rgba(0,0,0,0.07); }
   :global(body.dash-light) .tr-subtasks-label { color: rgba(0,0,0,0.25); }
   :global(body.dash-light) .tr-subtasks-count { color: rgba(0,0,0,0.2); background: rgba(0,0,0,0.04); }
   :global(body.dash-light) .tr-add-sub { color: rgba(0,0,0,0.18); }

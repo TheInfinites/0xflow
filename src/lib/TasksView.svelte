@@ -151,15 +151,6 @@
   <main class="tv-main">
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="tv-list" ondragend={() => { dragTaskId = null; dropTargetId = null; }}>
-      <div class="tv-list-header">
-        <div class="tv-col tv-col-name">Task</div>
-        <div class="tv-col tv-col-tags">Tags</div>
-        <div class="tv-col tv-col-date">Started</div>
-        <div class="tv-col tv-col-date">Due</div>
-        <div class="tv-col tv-col-progress">Progress</div>
-        <div class="tv-col tv-col-actions"></div>
-      </div>
-
       {#each parentTasks as task (task.id)}
         <TaskRow
           {task}
@@ -334,19 +325,11 @@
     padding: 0 40px 80px;
   }
   .tv-list {
-    max-width: 1100px;
-  }
-  .tv-list-header {
-    display: grid;
-    grid-template-columns: 2.5fr 1.2fr 0.8fr 0.8fr 1fr 60px;
-    gap: 12px;
-    padding: 12px 0;
-    font-family: 'Geist Mono', monospace;
-    font-size: 9px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: rgba(255,255,255,0.25);
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    max-width: 760px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding-top: 8px;
   }
 
   .tv-add-btn {
@@ -403,10 +386,6 @@
     color: #1a1a1c;
     border-color: rgba(0,0,0,0.3);
     background: rgba(0,0,0,0.03);
-  }
-  :global(body.dash-light) .tv-list-header {
-    color: rgba(0,0,0,0.3);
-    border-bottom-color: rgba(0,0,0,0.08);
   }
   :global(body.dash-light) .tv-add-btn { color: rgba(0,0,0,0.2); }
   :global(body.dash-light) .tv-add-btn:hover { color: rgba(0,0,0,0.5); }
