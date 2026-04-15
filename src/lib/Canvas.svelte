@@ -1,5 +1,5 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, setContext } from 'svelte';
   import { get } from 'svelte/store';
   import { Application, Graphics, Text, TextStyle, Container, Sprite, Texture, Assets } from 'pixi.js';
   import { elementsStore, visibleElementsStore, strokesStore, relationsStore, snapshot, undo, redo, canUndo, canRedo } from '../stores/elements.js';
@@ -29,11 +29,26 @@
   let relLayer;    // relation lines
   let domOverlay;  // positioned DOM elements (notes, videos, etc.)
 
-  // Viewport — seeded from stores so applyCanvasState pre-seeding is picked up on cold load
-  let scale = $state(get(scaleStore) || 1);
-  let px    = $state(get(pxStore)    || 0);
-  let py    = $state(get(pyStore)    || 0);
+  // Viewport — primary reads from stores (so applyCanvasState pre-seeding is picked up on cold load);
+  // secondary has its own independent viewport that never touches the global stores.
+  let scale = $state(isPrimary ? (get(scaleStore) || 1) : 1);
+  let px    = $state(isPrimary ? (get(pxStore)    || 0) : 0);
+  let py    = $state(isPrimary ? (get(pyStore)    || 0) : 0);
   const WORLD_OFFSET = 3000; // world origin offset
+
+  // Expose this canvas instance's viewport + element store to DOM-overlay children
+  // (MediaOverlay, NoteOverlay). Without this, those overlays read from the global
+  // primary stores and mirror the active canvas on both split panels.
+  setContext('canvas-slot', {
+    slot,
+    isPrimary,
+    isSecondary,
+    readOnly: isSecondary, // secondary is preview-only for now
+    get scale() { return scale; },
+    get px()    { return px; },
+    get py()    { return py; },
+    elementsStore: isSecondary ? secondaryVisibleElementsStore : visibleElementsStore,
+  });
 
   // Interaction
   let curTool = $state('select');
@@ -146,9 +161,12 @@
   // ── Per-view position helpers ──────────────
   // On task/final canvases, position changes write to viewPositions[canvasKey]
   // instead of the base x/y, keeping positions independent per view.
+  // Named canvases have their own isolated element pool, so they edit x/y directly.
   function _isPerViewCanvas() {
     const key = get(activeCanvasKeyStore);
-    return key && key !== '__project__';
+    if (!key || key === '__project__') return false;
+    if (key.startsWith('canvas:')) return false;
+    return true;
   }
   function _activeKey() {
     return get(activeCanvasKeyStore) || '__project__';
@@ -225,7 +243,7 @@
   let _clipboard = [];
 
   // Store unsubscribers (set in onMount, cleaned up in onDestroy)
-  let _unsubEl, _unsubSt, _unsubTheme, _docRadialCleanup;
+  let _unsubEl, _unsubSt, _unsubTheme, _unsubSecKey, _docRadialCleanup;
 
   // Element color palette
   const EL_COLORS = [null, '#1e1e1e', '#2a2a1e', '#1e2a1e', '#1e1e2e', '#2e1e1e', '#1e2a2a', '#2a1e2a'];
@@ -290,15 +308,17 @@
     // Ticker: re-render relations each frame
     app.ticker.add(tickRelations);
 
-    // Expose legacy bridge for canvas.js compatibility
-    window._pixiApp  = app;
-    window._pixiElemLayer   = elemLayer;
-    window._pixiStrokeLayer = strokeLayer;
-    window._applyViewport   = applyViewport;
-    window._applyViewportTo = (newScale, newPx, newPy) => {
-      zoomTarget = { scale: newScale, px: newPx, py: newPy };
-      if (!zoomRaf) zoomRaf = requestAnimationFrame(animateZoom);
-    };
+    // Expose legacy bridge for canvas.js compatibility — primary only, secondary must not clobber these
+    if (isPrimary) {
+      window._pixiApp  = app;
+      window._pixiElemLayer   = elemLayer;
+      window._pixiStrokeLayer = strokeLayer;
+      window._applyViewport   = applyViewport;
+      window._applyViewportTo = (newScale, newPx, newPy) => {
+        zoomTarget = { scale: newScale, px: newPx, py: newPy };
+        if (!zoomRaf) zoomRaf = requestAnimationFrame(animateZoom);
+      };
+    }
 
     // Subscribe to store changes — unsubs collected for top-level onDestroy.
     // Secondary canvas reads from secondaryVisibleElementsStore / secondaryStrokesStore.
@@ -317,13 +337,21 @@
       renderStrokes(_getSts());
     });
 
+    // Secondary: reset viewport to default when a new canvas is loaded into the panel
+    if (isSecondary) {
+      _unsubSecKey = secondaryCanvasKeyStore.subscribe(() => {
+        scale = 1; px = 0; py = 0;
+        applyViewport();
+      });
+    }
+
     // Initial render from any loaded state
     renderElements(_getEls());
     renderStrokes(_getSts());
   });
 
   onDestroy(() => {
-    _unsubEl?.(); _unsubSt?.(); _unsubTheme?.();
+    _unsubEl?.(); _unsubSt?.(); _unsubTheme?.(); _unsubSecKey?.();
     _docRadialCleanup?.();
     app?.destroy(false, { children: true });
   });
@@ -334,7 +362,8 @@
     stage.x = px;
     stage.y = py;
     stage.scale.set(scale);
-    setScale(scale); setPx(px); setPy(py);
+    // Only the primary canvas owns the global viewport stores — secondary is isolated
+    if (isPrimary) { setScale(scale); setPx(px); setPy(py); }
     drawDotGrid();
     positionDomOverlays();
     updateRelations();
@@ -930,6 +959,16 @@
 
   // ── Pointer event handlers ───────────────────
   function onPointerDown(e) {
+    // Secondary (preview) panel: allow pan only, drop everything else.
+    if (isSecondary) {
+      if (e.button === 1 || (e.button === 0 && e.altKey)) {
+        zoomTarget = null; zoomRaf = null;
+        isPanning = true;
+        panStart = { x: e.clientX, y: e.clientY, px, py };
+      }
+      return;
+    }
+
     // Suppress if a Pixi element was hit (walk up ancestors — hitTest returns deepest child)
     const r = canvasEl.getBoundingClientRect();
     const hit = app?.renderer?.events?.rootBoundary?.hitTest?.(e.clientX - r.left, e.clientY - r.top);
@@ -1136,6 +1175,7 @@
   }
 
   function onDblClick(e) {
+    if (isSecondary) return; // read-only preview: no editors
     const r = canvasEl.getBoundingClientRect();
     const hit = app?.renderer?.events?.rootBoundary?.hitTest?.(e.clientX - r.left, e.clientY - r.top);
     if (!hit?.label) return;
@@ -2157,14 +2197,18 @@
       }
     }
     function onDocContextMenu(e) { e.preventDefault(); }
-    document.addEventListener('pointerup', onDocRadialUp);
-    document.addEventListener('pointermove', onDocRadialMove);
-    document.addEventListener('contextmenu', onDocContextMenu);
-    _docRadialCleanup = () => {
-      document.removeEventListener('pointerup', onDocRadialUp);
-      document.removeEventListener('pointermove', onDocRadialMove);
-      document.removeEventListener('contextmenu', onDocContextMenu);
-    };
+    // Primary canvas owns document-level radial + contextmenu handlers.
+    // Secondary must not duplicate them (would fire twice per event).
+    if (isPrimary) {
+      document.addEventListener('pointerup', onDocRadialUp);
+      document.addEventListener('pointermove', onDocRadialMove);
+      document.addEventListener('contextmenu', onDocContextMenu);
+      _docRadialCleanup = () => {
+        document.removeEventListener('pointerup', onDocRadialUp);
+        document.removeEventListener('pointermove', onDocRadialMove);
+        document.removeEventListener('contextmenu', onDocContextMenu);
+      };
+    }
   });
 </script>
 

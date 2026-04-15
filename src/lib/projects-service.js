@@ -815,7 +815,11 @@ async function setSecondaryCanvas(key) {
     return;
   }
 
-  const parsed = parseCanvasKey(key);
+  // Refuse to put the same canvas on both sides — caller must swap or pick a different key.
+  if (key === get(activeCanvasKeyStore)) return;
+
+  const parsed       = parseCanvasKey(key);
+  const activeParsed = parseCanvasKey(get(activeCanvasKeyStore));
 
   if (parsed.kind === 'named') {
     // Named canvas: load snapshot once (isolated store — no live sync needed)
@@ -823,8 +827,20 @@ async function setSecondaryCanvas(key) {
     setSecondaryElements(state?.elements || []);
     setSecondaryStrokes(state?.strokes || []);
     setSecondaryRelations(state?.relations || []);
+  } else if (activeParsed.kind === 'named') {
+    // Secondary is project/task but primary is a named canvas — primary owns elementsStore,
+    // so we can't live-mirror it. Load the project pool from disk as a snapshot instead.
+    const projectId = getActiveProjectId();
+    const projects  = loadProjects();
+    const p         = projects.find(x => x.id === projectId);
+    let state = p?.schemaVersion === 3 ? await loadCanvasV3(projectId) : null;
+    if (!state) state = await loadCanvasV2(projectId);
+    setSecondaryElements(state?.elements || []);
+    setSecondaryStrokes(state?.strokes || []);
+    setSecondaryRelations(state?.relations || []);
   } else {
-    // Project / task canvas: live-mirror the primary pool so edits appear in real time
+    // Project / task canvas with project/task primary: live-mirror the shared pool
+    // so edits appear in real time. Tag-based filtering happens in secondaryVisibleElementsStore.
     const { elementsStore: els, strokesStore: stk, relationsStore: rel } = await import('../stores/elements.js');
     _secondaryUnsubs.push(els.subscribe(v => setSecondaryElements(v)));
     _secondaryUnsubs.push(stk.subscribe(v => setSecondaryStrokes(v)));
@@ -835,6 +851,55 @@ async function setSecondaryCanvas(key) {
   document.body.classList.add('dual-canvas');
   // Two rAF passes: first lets CSS apply, second lets PixiJS measure new bounds
   requestAnimationFrame(() => requestAnimationFrame(() => window.dispatchEvent(new Event('resize'))));
+}
+
+/**
+ * Explicitly assign a canvas to the LEFT (primary/active) panel.
+ * If it's already the secondary, swaps. If it equals the current active, no-op.
+ * Used by the L/R picker on canvas tabs.
+ */
+async function setLeftCanvas(key) {
+  if (!key) return;
+  const activeKey    = get(activeCanvasKeyStore);
+  const secondaryKey = get(secondaryCanvasKeyStore);
+  if (key === activeKey) return;
+  if (key === secondaryKey) {
+    // Already on right — swap so it lands on left
+    await swapSplitCanvases();
+    return;
+  }
+  // Brand new pick: just switch primary to it. Leave secondary alone (or clear if it matches).
+  await switchToCanvas(key);
+}
+
+/**
+ * Explicitly assign a canvas to the RIGHT (secondary) panel.
+ */
+async function setRightCanvas(key) {
+  if (!key) return;
+  const activeKey    = get(activeCanvasKeyStore);
+  const secondaryKey = get(secondaryCanvasKeyStore);
+  if (key === secondaryKey) return;
+  if (key === activeKey) {
+    // It's currently on the left — swap so it lands on right
+    if (secondaryKey) await swapSplitCanvases();
+    return;
+  }
+  await setSecondaryCanvas(key);
+}
+
+/**
+ * Swap primary (left) and secondary (right) canvases.
+ * Makes the secondary canvas become the active/primary one, and the
+ * current active canvas becomes the secondary.
+ */
+async function swapSplitCanvases() {
+  const secondaryKey = get(secondaryCanvasKeyStore);
+  const activeKey    = get(activeCanvasKeyStore);
+  if (!secondaryKey) return;
+  // Switch primary to what was secondary, then set secondary to what was primary
+  await switchToCanvas(secondaryKey);
+  await setSecondaryCanvas(activeKey);
 }
 
 // ── showNewModal — creates project, then triggers inline rename via ProjectGrid.svelte ──
@@ -1001,6 +1066,9 @@ export function mountProjectsBridge() {
     deleteNamedCanvas,
     switchToCanvas,
     setSecondaryCanvas,
+    setLeftCanvas,
+    setRightCanvas,
+    swapSplitCanvases,
     saveProjects,
     saveFolders,
     loadProjects,

@@ -752,19 +752,38 @@ body.dash-light #empty-state h3 { color: rgba(0,0,0,0.5); }
 .ctab-label {
   max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.ctab-split-btn {
-  display: none;
-  align-items: center; justify-content: center;
-  width: 18px; height: 18px; padding: 0; margin-right: 2px;
-  background: transparent; border: none; cursor: pointer;
-  color: rgba(255,255,255,0.25); font-size: 11px;
-  border-radius: 2px; flex-shrink: 0;
+/* L | R split picker chip — appears on the right edge of every canvas tab */
+.ctab-split-chip {
+  display: inline-flex; align-items: center; gap: 1px;
+  margin-right: 3px; margin-left: 2px;
+  flex-shrink: 0;
 }
-.ctab:hover .ctab-split-btn { display: flex; }
-.ctab-split-btn:hover { color: rgba(255,255,255,0.7); background: rgba(255,255,255,0.08); }
-.ctab-secondary-dot {
-  display: inline-block; width: 5px; height: 5px; margin-right: 4px;
-  border-radius: 50%; background: rgba(232,68,10,0.8); flex-shrink: 0;
+.ctab-side {
+  display: flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; padding: 0;
+  background: transparent; border: 1px solid transparent;
+  border-radius: 2px; cursor: pointer;
+  color: rgba(255,255,255,0.22);
+  font: 600 8px 'Geist Mono', monospace; letter-spacing: 0;
+  transition: color 0.1s, background 0.1s, border-color 0.1s, opacity 0.1s;
+  opacity: 0;
+}
+/* Reveal chip on tab hover, OR keep visible when a side is filled */
+.ctab:hover .ctab-side,
+.ctab .ctab-side.filled { opacity: 1; }
+.ctab-side:hover {
+  color: rgba(255,255,255,0.85);
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.18);
+}
+.ctab-side.filled {
+  color: rgba(232,68,10,0.95);
+  background: rgba(232,68,10,0.12);
+  border-color: rgba(232,68,10,0.35);
+}
+.ctab-side.filled:hover {
+  background: rgba(232,68,10,0.18);
+  border-color: rgba(232,68,10,0.55);
 }
 .ctab-rename-input {
   width: 100px; height: 18px; padding: 0 6px;
@@ -789,6 +808,15 @@ body.dash-light #empty-state h3 { color: rgba(0,0,0,0.5); }
   cursor: pointer;
 }
 .ctab.ctab-add:hover { border-color: rgba(255,255,255,0.25); color: rgba(255,255,255,0.6); }
+.ctab-swap-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0; margin-left: 2px;
+  background: transparent; border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 3px; cursor: pointer;
+  color: rgba(255,255,255,0.4); flex-shrink: 0;
+}
+.ctab-swap-btn svg { width: 12px; height: 12px; }
+.ctab-swap-btn:hover { color: rgba(255,255,255,0.8); border-color: rgba(255,255,255,0.28); background: rgba(255,255,255,0.06); }
 .ctab-task { /* task canvas tabs get a subtle left accent */ }
 .ctab-task.active::before {
   content: ''; position: absolute; left: 0; top: 3px; bottom: 3px;

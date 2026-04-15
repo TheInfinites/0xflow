@@ -1,4 +1,5 @@
 <script>
+  import { getContext } from 'svelte';
   import { activeEditorIdStore, setActiveEditorId, scaleStore, pxStore, pyStore } from '../stores/canvas.js';
   import { elementsStore } from '../stores/elements.js';
   import NoteEditor from './NoteEditor.svelte';
@@ -6,7 +7,11 @@
 
   const WORLD_OFFSET = 3000;
 
-  let activeId = $derived($activeEditorIdStore);
+  // Note editor is a primary-only popup — the secondary panel never opens editors.
+  const ctx = getContext('canvas-slot');
+  const isSecondary = !!ctx?.isSecondary;
+
+  let activeId = $derived(isSecondary ? null : $activeEditorIdStore);
   let scale    = $derived($scaleStore);
   let px       = $derived($pxStore);
   let py       = $derived($pyStore);

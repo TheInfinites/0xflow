@@ -51,8 +51,23 @@
   function openSecondary(key, e) {
     e?.stopPropagation();
     const current = $secondaryCanvasKeyStore;
-    window.setSecondaryCanvas?.(current === key ? null : key);
+    if (current === key) {
+      // Toggle off
+      window.setSecondaryCanvas?.(null);
+    } else if (key === activeKey && current) {
+      // Clicked "open in split" on the active (left) canvas while a secondary exists — swap them
+      window.swapSplitCanvases?.();
+    } else if (key === activeKey) {
+      // Active canvas has no secondary yet — nothing to swap to, just ignore
+    } else {
+      // Open a different canvas as secondary
+      window.setSecondaryCanvas?.(key);
+    }
   }
+
+  // Explicit L/R picker: assigns a canvas to the left or right split panel.
+  function pickLeft(key, e)  { e?.stopPropagation(); window.setLeftCanvas?.(key); }
+  function pickRight(key, e) { e?.stopPropagation(); window.setRightCanvas?.(key); }
 
   function startAddCanvas() {
     newCanvasName = '';
@@ -161,11 +176,20 @@
       <svg viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" rx="1"/></svg>
       <span class="ctab-label">{project?.name ?? 'project'}</span>
     </button>
-    {#if secondaryKey === '__project__'}
-      <span class="ctab-secondary-dot" title="shown in split view"></span>
-    {:else}
-      <button class="ctab-split-btn" title="Open in split view" onclick={e => openSecondary('__project__', e)}>⊕</button>
-    {/if}
+    <span class="ctab-split-chip" role="group" aria-label="Assign to split panel">
+      <button
+        class="ctab-side ctab-side-l"
+        class:filled={activeKey === '__project__'}
+        title={activeKey === '__project__' ? 'On left' : 'Move to left'}
+        onclick={e => pickLeft('__project__', e)}
+      >L</button>
+      <button
+        class="ctab-side ctab-side-r"
+        class:filled={secondaryKey === '__project__'}
+        title={secondaryKey === '__project__' ? 'On right (click to close)' : 'Move to right'}
+        onclick={e => secondaryKey === '__project__' ? openSecondary('__project__', e) : pickRight('__project__', e)}
+      >R</button>
+    </span>
   </div>
   <!-- Task canvas tabs (v3 projects, top-level tasks only) -->
   {#if isV3}
@@ -175,11 +199,20 @@
         <button class="ctab-body" onclick={() => openCanvas(tkey)} title={task.title}>
           <span class="ctab-label">{task.title}</span>
         </button>
-        {#if secondaryKey === tkey}
-          <span class="ctab-secondary-dot" title="shown in split view"></span>
-        {:else}
-          <button class="ctab-split-btn" title="Open in split view" onclick={e => openSecondary(tkey, e)}>⊕</button>
-        {/if}
+        <span class="ctab-split-chip" role="group" aria-label="Assign to split panel">
+          <button
+            class="ctab-side ctab-side-l"
+            class:filled={activeKey === tkey}
+            title={activeKey === tkey ? 'On left' : 'Move to left'}
+            onclick={e => pickLeft(tkey, e)}
+          >L</button>
+          <button
+            class="ctab-side ctab-side-r"
+            class:filled={secondaryKey === tkey}
+            title={secondaryKey === tkey ? 'On right (click to close)' : 'Move to right'}
+            onclick={e => secondaryKey === tkey ? openSecondary(tkey, e) : pickRight(tkey, e)}
+          >R</button>
+        </span>
       </div>
     {/each}
   {/if}
@@ -200,11 +233,20 @@
           <span class="ctab-label">{canvas.name}</span>
         </button>
       {/if}
-      {#if secondaryKey === ckey}
-        <span class="ctab-secondary-dot" title="shown in split view"></span>
-      {:else}
-        <button class="ctab-split-btn" title="Open in split view" onclick={e => openSecondary(ckey, e)}>⊕</button>
-      {/if}
+      <span class="ctab-split-chip" role="group" aria-label="Assign to split panel">
+        <button
+          class="ctab-side ctab-side-l"
+          class:filled={activeKey === ckey}
+          title={activeKey === ckey ? 'On left' : 'Move to left'}
+          onclick={e => pickLeft(ckey, e)}
+        >L</button>
+        <button
+          class="ctab-side ctab-side-r"
+          class:filled={secondaryKey === ckey}
+          title={secondaryKey === ckey ? 'On right (click to close)' : 'Move to right'}
+          onclick={e => secondaryKey === ckey ? openSecondary(ckey, e) : pickRight(ckey, e)}
+        >R</button>
+      </span>
     </div>
   {/each}
 
@@ -223,6 +265,16 @@
   {:else}
     <button class="ctab ctab-add" onclick={startAddCanvas} title="New canvas">+</button>
   {/if}
+
+  <!-- Swap split sides button — only shown when a secondary canvas is open -->
+  {#if secondaryKey}
+    <button class="ctab-swap-btn" title="Swap left / right panels" onclick={() => window.swapSplitCanvases?.()}>
+      <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="1,4 4,1 4,11"/>
+        <polyline points="11,8 8,11 8,1"/>
+      </svg>
+    </button>
+  {/if}
 </div>
 
 <!-- Tab context menu (right-click on named canvas tab) -->
@@ -235,7 +287,7 @@
     onmousedown={e => e.stopPropagation()}
   >
     <button onclick={() => startRenameTab(tabCtxMenu.canvasId)}>Rename</button>
-    <button onclick={() => openSecondary('canvas:' + tabCtxMenu.canvasId, null)}>Open in split</button>
+    <button onclick={() => openSecondary('canvas:' + tabCtxMenu.canvasId, null)}>Open in split view</button>
     <button class="danger" onclick={() => deleteTab(tabCtxMenu.canvasId)}>Delete</button>
   </div>
 {/if}

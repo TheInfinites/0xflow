@@ -1,5 +1,6 @@
 <!-- MediaOverlay — positions media element DOM overlays on the Pixi canvas -->
 <script>
+  import { getContext } from 'svelte';
   import { visibleElementsStore } from '../stores/elements.js';
   import { scaleStore, pxStore, pyStore, activeEditorIdStore } from '../stores/canvas.js';
   import { projectTagsStore, projectTasksStore } from '../stores/projects.js';
@@ -13,11 +14,19 @@
   const WORLD_OFFSET = 3000;
   const MEDIA_TYPES = new Set(['image', 'video', 'audio', 'draw', 'note', 'ai-note', 'todo']);
 
-  let scale    = $derived($scaleStore);
-  let px       = $derived($pxStore);
-  let py       = $derived($pyStore);
+  // Canvas.svelte publishes a per-slot context with reactive viewport getters and
+  // the element store appropriate to the panel (primary or secondary). If no
+  // context is present (legacy mounts), fall back to the global primary stores.
+  const ctx = getContext('canvas-slot');
+  const isSecondary = !!ctx?.isSecondary;
+  const readOnly    = !!ctx?.readOnly;
+  const elStore     = ctx?.elementsStore ?? visibleElementsStore;
+
+  let scale = $derived(ctx ? ctx.scale : $scaleStore);
+  let px    = $derived(ctx ? ctx.px    : $pxStore);
+  let py    = $derived(ctx ? ctx.py    : $pyStore);
   let activeId = $derived($activeEditorIdStore);
-  let elements = $derived($visibleElementsStore.filter(e => MEDIA_TYPES.has(e.type)));
+  let elements = $derived($elStore.filter(e => MEDIA_TYPES.has(e.type)));
 
   let allTags  = $derived($projectTagsStore);
   let allTasks = $derived($projectTasksStore);
@@ -61,13 +70,14 @@
   {@const r = rect(el)}
   {@const isCard = el.type === 'note' || el.type === 'ai-note' || el.type === 'todo' || el.type === 'image' || el.type === 'draw' || el.type === 'video' || el.type === 'audio'}
   {@const isVideo = el.type === 'video'}
-  {@const isEditing = el.id === activeId}
+  {@const isEditing = !isSecondary && el.id === activeId}
   {@const badges = badgesFor(el)}
   <div
     class="media-overlay-item"
     class:card-type={isCard}
     class:editing={isEditing}
     class:no-clip={isVideo}
+    class:read-only={readOnly}
     style="left:{r.left}px;top:{r.top}px;width:{r.width}px;height:{r.height}px;transform:scale({scale});transform-origin:top left;"
   >
     {#if el.type === 'note' || el.type === 'ai-note'}
@@ -117,6 +127,16 @@
   }
   .media-overlay-item.editing {
     visibility: hidden;
+  }
+  /* Secondary/read-only panels: show media content but block all interaction
+     so clicks don't edit, select, or fall through to the wrong Pixi instance. */
+  .media-overlay-item.read-only {
+    pointer-events: none !important;
+    user-select: none;
+  }
+  .media-overlay-item.read-only :global(*) {
+    pointer-events: none !important;
+    user-select: none;
   }
 
   .el-tag-stripe {
