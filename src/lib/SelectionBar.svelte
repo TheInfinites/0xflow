@@ -340,7 +340,7 @@
   .sel-divider { width: 1px; height: 14px; background: rgba(255,255,255,0.08); margin: 0 2px; }
   .sel-btn {
     height: 26px; padding: 0 9px;
-    background: none; border: 1px solid transparent; border-radius: 0;
+    background: none; border: 1px solid transparent;
     font-family: 'Geist Mono', monospace; font-size: 9px;
     letter-spacing: 0.08em; text-transform: uppercase;
     color: rgba(255,255,255,0.35);

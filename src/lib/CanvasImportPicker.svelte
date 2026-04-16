@@ -226,7 +226,7 @@
   .cip-source-item {
     display: flex; align-items: center; gap: 8px;
     width: 100%; padding: 7px 14px; text-align: left;
-    background: transparent; border: none; border-radius: 0; cursor: pointer;
+    background: transparent; border: none; cursor: pointer;
     color: rgba(255,255,255,0.5); font-size: 11px;
     transition: color 0.1s, background 0.1s;
   }

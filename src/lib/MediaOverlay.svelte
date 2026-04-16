@@ -185,7 +185,6 @@
     background: transparent !important;
     width: auto;
     height: auto;
-    border-radius: 0;
     font-family: 'Geist Mono', monospace;
     font-size: 6px;
     color: rgba(255,255,255,0.4);
