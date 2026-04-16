@@ -212,9 +212,9 @@ function createProject(name) {
   return p;
 }
 
-function createFolder(name) {
+function createFolder(name, parentId = null) {
   const trimmed = (name || '').trim() || 'new folder';
-  const f = { id: 'fold_' + Date.now(), name: trimmed, parentId: null };
+  const f = { id: 'fold_' + Date.now(), name: trimmed, parentId: parentId || null };
   const folders = [...loadFolders(), f];
   saveFolders(folders);
 

@@ -60,6 +60,27 @@
     (folders.find(f => f.id === currentFolderId)?.name ?? 'folder')
   );
 
+  // Breadcrumb trail — root → … → current folder
+  let breadcrumbs = $derived((() => {
+    if (currentFolderId === null) return [];
+    const trail = [];
+    if (currentFolderId === '__unfiled__') {
+      trail.push({ id: '__unfiled__', name: 'unfiled' });
+    } else {
+      let f = folders.find(x => x.id === currentFolderId);
+      while (f) {
+        trail.unshift({ id: f.id, name: f.name });
+        f = f.parentId ? folders.find(x => x.id === f.parentId) : null;
+      }
+    }
+    return trail;
+  })());
+  let parentFolderId = $derived((() => {
+    if (currentFolderId === null || currentFolderId === '__unfiled__') return null;
+    const f = folders.find(x => x.id === currentFolderId);
+    return f?.parentId || null;
+  })());
+
   // Eyebrow: index-style label above the title
   let heroEyebrow = $derived(
     currentFolderId === null ? '№ 00 · library' :
@@ -125,7 +146,8 @@
     const val = value.trim();
     if (modalMode === 'new-folder') {
       const name = val || 'new folder';
-      _svc('createFolder', name);
+      const parent = (currentFolderId && currentFolderId !== '__unfiled__') ? currentFolderId : null;
+      _svc('createFolder', name, parent);
       _svc('showToast', `folder "${name}" created`);
     } else if (modalMode === 'rename-folder' && modalTarget) {
       const f = folders.find(x => x.id === modalTarget);
@@ -182,6 +204,13 @@
     if (ctxOpen && !e.target.closest('#svelte-ctx-menu')) closeCtxMenu();
   }
 
+  // ── window bridge for ghost cards ────────────
+  import { onMount } from 'svelte';
+  onMount(() => {
+    window.showNewFolderModal = openNewFolderModal;
+    return () => { delete window.showNewFolderModal; };
+  });
+
   // ── keyboard ─────────────────────────────────
   function onKeydown(e) {
     if (document.body.classList.contains('on-canvas')) return;
@@ -208,10 +237,20 @@
 <div id="dash-body">
   <aside id="dash-hero">
     {#if currentFolderId !== null}
-      <button class="hero-back" onclick={() => setFolder(null)}>
-        <svg viewBox="0 0 12 12"><line x1="10" y1="6" x2="2" y2="6"/><polyline points="5,3 2,6 5,9"/></svg>
-        all canvases
-      </button>
+      <nav class="hero-breadcrumb" aria-label="folder trail">
+        <button class="bc-up" onclick={() => setFolder(parentFolderId)} title={parentFolderId ? 'up one level' : 'back to all canvases'}>
+          <svg viewBox="0 0 12 12"><polyline points="8,3 4,6 8,9"/></svg>
+        </button>
+        <button class="bc-root" onclick={() => setFolder(null)}>all</button>
+        {#each breadcrumbs as crumb, i}
+          <span class="bc-sep">/</span>
+          {#if i === breadcrumbs.length - 1}
+            <span class="bc-current">{crumb.name}</span>
+          {:else}
+            <button class="bc-link" onclick={() => setFolder(crumb.id)}>{crumb.name}</button>
+          {/if}
+        {/each}
+      </nav>
     {/if}
     <div class="hero-eyebrow">{heroEyebrow}</div>
     <h1 class="hero-title">{viewTitle}</h1>
@@ -225,7 +264,23 @@
       {/each}
     </dl>
     <div class="hero-actions">
-      <button class="hero-link" onclick={openNewFolderModal}>+ new folder</button>
+      <button class="hero-new-btn" onclick={openNewModal}>
+        <svg viewBox="0 0 12 12"><line x1="6" y1="1" x2="6" y2="11"/><line x1="1" y1="6" x2="11" y2="6"/></svg>
+        new project
+      </button>
+      <div class="hero-secondary-actions">
+        <button class="hero-link" onclick={openNewFolderModal}>+ new folder</button>
+        <button class="hero-link" id="hero-theme-btn" onclick={() => window.toggleDashTheme?.()}>
+          <svg id="dash-theme-icon" viewBox="0 0 12 12">
+            <circle cx="6" cy="6" r="2.5"/>
+            <line x1="6" y1="0.5" x2="6" y2="2"/><line x1="6" y1="10" x2="6" y2="11.5"/>
+            <line x1="0.5" y1="6" x2="2" y2="6"/><line x1="10" y1="6" x2="11.5" y2="6"/>
+            <line x1="2.2" y1="2.2" x2="3.2" y2="3.2"/><line x1="8.8" y1="8.8" x2="9.8" y2="9.8"/>
+            <line x1="9.8" y1="2.2" x2="8.8" y2="3.2"/><line x1="3.2" y1="8.8" x2="2.2" y2="9.8"/>
+          </svg>
+          <span id="dash-theme-label">light</span>
+        </button>
+      </div>
     </div>
   </aside>
 

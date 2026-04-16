@@ -271,7 +271,13 @@
   ondrop={e => { e.preventDefault(); onDrop?.(e, task); }}
 >
   <div class="tr">
-    <div class="tr-main">
+    <div
+      class="tr-main"
+      role="button"
+      tabindex="-1"
+      onclick={e => { if (e.target === e.currentTarget) expanded = !expanded; }}
+      onkeydown={e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); expanded = !expanded; } }}
+    >
       <button class="tr-check" class:done={task.status === 'done'} onclick={toggleStatus} title="toggle status">
         {#if task.status === 'done'}
           <svg viewBox="0 0 12 12" width="10" height="10"><path d="M3 6l2 2 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -634,6 +640,7 @@
     gap: 10px;
     flex: 1;
     min-width: 0;
+    cursor: pointer;
   }
   .tr-trail {
     display: flex;
@@ -696,7 +703,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    flex: 1;
+    max-width: 100%;
     letter-spacing: -0.01em;
   }
   .tr-title:hover { color: #fff; }
@@ -1127,16 +1134,14 @@
     text-transform: uppercase;
     padding: 4px 10px 5px;
     cursor: pointer;
-    border-bottom: 1px solid transparent;
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    transition: color 0.12s, border-color 0.12s;
+    transition: color 0.12s;
   }
   .tr-notes-tab:hover { color: rgba(255,255,255,0.6); }
   .tr-notes-tab.active {
     color: rgba(255,255,255,0.85);
-    border-bottom-color: rgba(255,255,255,0.5);
   }
   .tr-notes-dot {
     width: 4px;
@@ -1387,7 +1392,7 @@
   :global(body.dash-light) .tr-notes { border-top-color: rgba(0,0,0,0.07); }
   :global(body.dash-light) .tr-notes-tab { color: rgba(0,0,0,0.3); }
   :global(body.dash-light) .tr-notes-tab:hover { color: rgba(0,0,0,0.6); }
-  :global(body.dash-light) .tr-notes-tab.active { color: rgba(0,0,0,0.85); border-bottom-color: rgba(0,0,0,0.5); }
+  :global(body.dash-light) .tr-notes-tab.active { color: rgba(0,0,0,0.85); }
   :global(body.dash-light) .tr-notes-dot { background: rgba(0,0,0,0.4); }
   :global(body.dash-light) .tr-notes-count { background: rgba(0,0,0,0.06); color: rgba(0,0,0,0.45); }
   :global(body.dash-light) .tr-textarea { color: rgba(0,0,0,0.7); border-bottom-color: rgba(0,0,0,0.08); }

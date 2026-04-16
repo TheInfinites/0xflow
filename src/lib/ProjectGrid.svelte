@@ -6,8 +6,23 @@
 
   let { filtered, folders, currentFolderId, dashView, searchQuery } = $props();
 
-  let showFolders = $derived(currentFolderId === null && !searchQuery.trim());
-  let folderCards = $derived(showFolders ? folders.filter(f => !f.parentId) : []);
+  let showFolders = $derived(currentFolderId !== '__unfiled__' && !searchQuery.trim());
+  let folderCards = $derived(
+    showFolders
+      ? (currentFolderId === null
+          ? folders.filter(f => !f.parentId)
+          : folders.filter(f => f.parentId === currentFolderId))
+      : []
+  );
+  let parentFolderId = $derived((() => {
+    if (currentFolderId === null || currentFolderId === '__unfiled__') return null;
+    const f = folders.find(x => x.id === currentFolderId);
+    return f?.parentId || null;
+  })());
+  let parentFolderName = $derived((() => {
+    if (parentFolderId === null) return 'all canvases';
+    return folders.find(x => x.id === parentFolderId)?.name ?? 'back';
+  })());
 
   // Cover image URL cache — keyed by coverImageId, resolves async
   let coverUrls = $state({});
@@ -61,7 +76,37 @@
   function onDragEnd(e) { e.target.classList.remove('dragging'); }
 </script>
 
+<!-- Back strip — thin full-width bar above the grid when inside a folder -->
+{#if currentFolderId !== null && !searchQuery.trim()}
+  <button
+    class="back-strip"
+    onclick={() => window.setFolder?.(parentFolderId)}
+    title={parentFolderId ? `up to ${parentFolderName}` : 'back to all canvases'}
+  >
+    <svg class="back-strip-arrow" viewBox="0 0 16 16"><polyline points="9,4 5,8 9,12"/><line x1="5" y1="8" x2="13" y2="8"/></svg>
+    <span class="back-strip-up">up to</span>
+    <span class="back-strip-name">{parentFolderName}</span>
+  </button>
+{/if}
+
 <div id="project-grid" class:list-view={dashView === 'list'}>
+  <!-- Create action — single split tile: top = project, bottom = folder -->
+  {#if !searchQuery.trim()}
+    {@const showFolderHalf = currentFolderId !== '__unfiled__'}
+    <div class="ghost-card ghost-split" class:no-folder={!showFolderHalf}>
+      <button class="ghost-half ghost-project" onclick={() => window.showNewModal?.()} title="New project">
+        <svg viewBox="0 0 16 16"><line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/></svg>
+        <span class="ghost-half-label">new project</span>
+      </button>
+      {#if showFolderHalf}
+        <button class="ghost-half ghost-folder" onclick={() => window.showNewFolderModal?.()} title={currentFolderId === null ? 'New folder' : 'New subfolder'}>
+          <svg viewBox="0 0 16 16"><path d="M2 4.5a1 1 0 011-1h3l1.5 2H13a1 1 0 011 1v5.5a1 1 0 01-1 1H3a1 1 0 01-1-1v-7.5z"/></svg>
+          <span class="ghost-half-label">{currentFolderId === null ? 'new folder' : 'new subfolder'}</span>
+        </button>
+      {/if}
+    </div>
+  {/if}
+
   {#each folderCards as f (f.id)}
     {@const coverUrl = f.coverImageId ? coverUrls[f.coverImageId] : null}
     <div
@@ -175,4 +220,5 @@
       {/if}
     </div>
   {/each}
+
 </div>

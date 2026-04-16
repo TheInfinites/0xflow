@@ -292,17 +292,44 @@ body.on-split.split-right.dual-canvas #pixi-canvas-mount-secondary { display: bl
   overflow-y: auto;
   border-right: 1px solid rgba(255,255,255,0.05);
 }
-.hero-back {
-  background: none; border: none; padding: 0; cursor: pointer;
-  display: inline-flex; align-items: center; gap: 6px;
+/* breadcrumb nav in the hero sidebar */
+.hero-breadcrumb {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: 4px 6px;
   font-family: 'DM Mono', monospace; font-size: 8px;
   letter-spacing: 0.12em; text-transform: uppercase;
-  color: rgba(255,255,255,0.35); margin-bottom: 20px;
+  margin-bottom: 20px;
   align-self: flex-start;
+  max-width: 100%;
+}
+.bc-up {
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px; padding: 3px 5px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: rgba(255,255,255,0.6);
+  transition: color 0.12s, background 0.12s, border-color 0.12s, transform 0.12s;
+  margin-right: 2px;
+}
+.bc-up:hover {
+  color: #E8440A; background: rgba(232,68,10,0.1);
+  border-color: rgba(232,68,10,0.45); transform: translateX(-1px);
+}
+.bc-up svg {
+  width: 9px; height: 9px; stroke: currentColor; fill: none;
+  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
+.bc-root, .bc-link {
+  background: none; border: none; padding: 2px 0; cursor: pointer;
+  font: inherit; letter-spacing: inherit; text-transform: inherit;
+  color: rgba(255,255,255,0.35);
   transition: color 0.12s;
 }
-.hero-back:hover { color: rgba(255,255,255,0.9); }
-.hero-back svg { width: 10px; height: 10px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.bc-root:hover, .bc-link:hover { color: rgba(255,255,255,0.95); }
+.bc-sep { color: rgba(255,255,255,0.2); }
+.bc-current {
+  color: rgba(255,255,255,0.85);
+  max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .hero-eyebrow {
   font-family: 'DM Mono', monospace; font-size: 8px;
   letter-spacing: 0.14em; text-transform: uppercase;
@@ -544,43 +571,104 @@ input.card-name {
 #project-grid.list-view .folder-card-name { font-size: 11px; flex: 1; }
 #project-grid.list-view .card-more-btn { position: static; opacity: 1; background: none; }
 
-/* ghost cards */
-.ghost-card {
-  background: transparent;
-  border: 1px dashed rgba(255,255,255,0.1);
-  border-radius: 10px;
-  cursor: pointer;
-  display: flex; flex-direction: column;
-  transition: border-color 0.15s, background 0.15s;
-  padding: 0;
-}
-.ghost-card:hover {
-  border-color: rgba(255,255,255,0.28);
+/* back strip — thin full-width bar above the project grid, shown inside a folder */
+.back-strip {
+  display: flex; align-items: center; gap: 10px;
+  width: calc(100% - 80px);
+  margin: 32px 40px -16px;
+  padding: 10px 14px;
   background: rgba(255,255,255,0.02);
-}
-.ghost-thumb {
-  width: 100%; aspect-ratio: 1;
-  display: flex; align-items: center; justify-content: center;
-  border-radius: 8px 8px 0 0;
-}
-.ghost-thumb svg {
-  width: 16px; height: 16px;
-  stroke: rgba(255,255,255,0.18); fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
-  transition: stroke 0.15s;
-}
-.ghost-card:hover .ghost-thumb svg { stroke: rgba(255,255,255,0.5); }
-.ghost-folder .ghost-thumb svg { stroke: rgba(232,68,10,0.3); }
-.ghost-folder:hover .ghost-thumb svg { stroke: rgba(232,68,10,0.7); }
-.ghost-folder:hover { border-color: rgba(232,68,10,0.35); }
-.ghost-label {
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 6px;
+  cursor: pointer;
   font-family: 'DM Mono', monospace;
-  font-size: 9px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase;
-  color: rgba(255,255,255,0.18);
-  padding: 8px 2px 6px;
+  font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+  color: rgba(255,255,255,0.45);
+  text-align: left;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, padding 0.15s;
+}
+.back-strip:hover {
+  background: rgba(255,255,255,0.05);
+  border-color: rgba(255,255,255,0.18);
+  color: rgba(255,255,255,0.95);
+  padding-left: 18px;
+}
+.back-strip-arrow {
+  width: 12px; height: 12px; flex-shrink: 0;
+  stroke: currentColor; fill: none;
+  stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
+  transition: transform 0.15s;
+}
+.back-strip:hover .back-strip-arrow { transform: translateX(-2px); }
+.back-strip-up { color: rgba(255,255,255,0.3); }
+.back-strip:hover .back-strip-up { color: rgba(255,255,255,0.55); }
+.back-strip-name {
+  font-weight: 600; letter-spacing: 0.14em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  min-width: 0;
+}
+@media (max-width: 1099px) { .back-strip { width: calc(100% - 64px); margin: 24px 32px -12px; } }
+
+body.dash-light .back-strip { background: rgba(0,0,0,0.02); border-color: rgba(0,0,0,0.08); color: rgba(0,0,0,0.5); }
+body.dash-light .back-strip:hover { background: rgba(0,0,0,0.05); border-color: rgba(0,0,0,0.2); color: rgba(0,0,0,0.95); }
+body.dash-light .back-strip-up { color: rgba(0,0,0,0.35); }
+body.dash-light .back-strip:hover .back-strip-up { color: rgba(0,0,0,0.6); }
+
+/* ghost card — single split tile: top = project, bottom = folder */
+.ghost-card.ghost-split {
+  position: relative;
+  width: 100%; aspect-ratio: 1;
+  display: flex; flex-direction: column;
+  border-radius: 8px;
+  overflow: hidden;
+  background: transparent;
+  border: 1px dashed rgba(255,255,255,0.14);
+  transition: border-color 0.15s;
+}
+.ghost-card.ghost-split:hover { border-color: rgba(255,255,255,0.28); }
+.ghost-card.ghost-split.no-folder .ghost-project { flex: 1; }
+
+.ghost-half {
+  flex: 1;
+  position: relative;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 6px;
+  border: none; background: transparent;
+  cursor: pointer;
+  padding: 6px 8px;
+  font: inherit;
+  transition: background 0.15s;
+}
+.ghost-half + .ghost-half {
+  border-top: 1px dashed rgba(255,255,255,0.14);
+}
+.ghost-half svg {
+  width: 18px; height: 18px;
+  fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
+  transition: stroke 0.15s, transform 0.15s;
+}
+.ghost-half-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 8px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase;
   transition: color 0.15s;
 }
-.ghost-card:hover .ghost-label { color: rgba(255,255,255,0.5); }
-.ghost-folder:hover .ghost-label { color: rgba(232,68,10,0.7); }
+
+/* project half — brand orange */
+.ghost-half.ghost-project svg { stroke: rgba(232,68,10,0.85); }
+.ghost-half.ghost-project .ghost-half-label { color: rgba(232,68,10,0.85); }
+.ghost-half.ghost-project:hover { background: rgba(232,68,10,0.1); }
+.ghost-half.ghost-project:hover svg { stroke: #E8440A; transform: scale(1.12); }
+.ghost-half.ghost-project:hover .ghost-half-label { color: #E8440A; }
+
+/* folder half — neutral */
+.ghost-half.ghost-folder svg { stroke: rgba(255,255,255,0.55); fill: rgba(255,255,255,0.04); }
+.ghost-half.ghost-folder .ghost-half-label { color: rgba(255,255,255,0.5); }
+.ghost-half.ghost-folder:hover { background: rgba(255,255,255,0.04); }
+.ghost-half.ghost-folder:hover svg { stroke: rgba(255,255,255,0.95); fill: rgba(255,255,255,0.1); transform: scale(1.08); }
+.ghost-half.ghost-folder:hover .ghost-half-label { color: rgba(255,255,255,0.95); }
+
+.ghost-half:active svg { transform: scale(0.94); }
 /* list view */
 #project-grid.list-view .ghost-card {
   flex-direction: row; align-items: center; gap: 14px;
@@ -591,12 +679,14 @@ input.card-name {
 }
 #project-grid.list-view .ghost-label { padding: 0; font-size: 11px; }
 /* light mode */
-body.dash-light .ghost-card { border-color: rgba(0,0,0,0.1); }
-body.dash-light .ghost-card:hover { border-color: rgba(0,0,0,0.25); background: rgba(0,0,0,0.02); }
-body.dash-light .ghost-thumb svg { stroke: rgba(0,0,0,0.18); }
-body.dash-light .ghost-card:hover .ghost-thumb svg { stroke: rgba(0,0,0,0.45); }
-body.dash-light .ghost-label { color: rgba(0,0,0,0.25); }
-body.dash-light .ghost-card:hover .ghost-label { color: rgba(0,0,0,0.55); }
+body.dash-light .ghost-card.ghost-split { border-color: rgba(0,0,0,0.14); }
+body.dash-light .ghost-card.ghost-split:hover { border-color: rgba(0,0,0,0.3); }
+body.dash-light .ghost-half + .ghost-half { border-top-color: rgba(0,0,0,0.14); }
+body.dash-light .ghost-half.ghost-folder svg { stroke: rgba(0,0,0,0.55); fill: rgba(0,0,0,0.04); }
+body.dash-light .ghost-half.ghost-folder .ghost-half-label { color: rgba(0,0,0,0.55); }
+body.dash-light .ghost-half.ghost-folder:hover { background: rgba(0,0,0,0.04); }
+body.dash-light .ghost-half.ghost-folder:hover svg { stroke: rgba(0,0,0,0.95); fill: rgba(0,0,0,0.1); }
+body.dash-light .ghost-half.ghost-folder:hover .ghost-half-label { color: rgba(0,0,0,0.95); }
 
 /* empty state */
 #empty-state { display: none; flex-direction: column; align-items: flex-start; justify-content: center; padding: 60px 24px; gap: 6px; grid-column: 1/-1; background: #0a0a0a; }
@@ -675,8 +765,12 @@ body.dash-light #topbar-date { color: rgba(0,0,0,0.3); }
 body.dash-light .pill-btn { border-color: rgba(0,0,0,0.15); color: rgba(0,0,0,0.45); }
 body.dash-light .pill-btn:hover { color: rgba(0,0,0,0.8); border-color: rgba(0,0,0,0.35); }
 body.dash-light #dash-hero { border-right-color: rgba(0,0,0,0.08); }
-body.dash-light .hero-back { color: rgba(0,0,0,0.35); }
-body.dash-light .hero-back:hover { color: rgba(0,0,0,0.9); }
+body.dash-light .bc-up { background: rgba(0,0,0,0.04); border-color: rgba(0,0,0,0.12); color: rgba(0,0,0,0.55); }
+body.dash-light .bc-up:hover { color: #E8440A; background: rgba(232,68,10,0.1); border-color: rgba(232,68,10,0.45); }
+body.dash-light .bc-root, body.dash-light .bc-link { color: rgba(0,0,0,0.4); }
+body.dash-light .bc-root:hover, body.dash-light .bc-link:hover { color: rgba(0,0,0,0.95); }
+body.dash-light .bc-sep { color: rgba(0,0,0,0.2); }
+body.dash-light .bc-current { color: rgba(0,0,0,0.85); }
 body.dash-light .hero-eyebrow { color: rgba(0,0,0,0.35); }
 body.dash-light .hero-title { color: rgba(0,0,0,0.92); }
 body.dash-light .hero-rule { background: rgba(0,0,0,0.1); }
