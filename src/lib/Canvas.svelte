@@ -4,7 +4,7 @@
   import { Application, Graphics, Text, TextStyle, Container, Sprite, Texture, Assets } from 'pixi.js';
   import { elementsStore, visibleElementsStore, strokesStore, relationsStore, snapshot, undo, redo, canUndo, canRedo } from '../stores/elements.js';
   import { activeCanvasKeyStore, projectTasksStore, projectTagsStore, projectsStore, parseCanvasKey } from '../stores/projects.js';
-  import { scaleStore, pxStore, pyStore, setCurTool, getCurTool, setSelected, setScale, setPx, setPy, activeEditorIdStore, setActiveEditorId, snapEnabledStore, isLightStore } from '../stores/canvas.js';
+  import { scaleStore, pxStore, pyStore, setCurTool, getCurTool, setSelected, selectedStrokeIdsStore, setSelectedStrokeIds, shapeDefaultsStore, setScale, setPx, setPy, activeEditorIdStore, setActiveEditorId, snapEnabledStore, isLightStore } from '../stores/canvas.js';
   import { activeProjectIdStore } from '../stores/projects.js';
   import { brainstormOpenStore, canvasTagPickerOpenStore, secondaryCanvasKeyStore } from '../stores/ui.js';
   import { secondaryVisibleElementsStore, secondaryStrokesStore, secondaryRelationsStore } from '../stores/secondary-canvas.js';
@@ -93,6 +93,13 @@
 
   // Selected relations (supports multi-select via marquee)
   let selectedRelIds = $state(new Set());
+
+  // Selected strokes / shapes (pen + rect/ellipse/line)
+  let selectedStrokeIds = $state(new Set());
+
+  // Eraser drag state — on button-down we flip this on; every subsequent
+  // move that hits a stroke removes it from strokesStore.
+  let eraserActive = false;
 
   // Context menu state
   let ctxMenu = $state(null); // { x, y, elId } or null
@@ -243,7 +250,7 @@
   let _clipboard = [];
 
   // Store unsubscribers (set in onMount, cleaned up in onDestroy)
-  let _unsubEl, _unsubSt, _unsubTheme, _unsubSecKey, _docRadialCleanup;
+  let _unsubEl, _unsubSt, _unsubTheme, _unsubSecKey, _unsubStrokeSel, _docRadialCleanup;
 
   // Element color palette
   const EL_COLORS = [null, '#1e1e1e', '#2a2a1e', '#1e2a1e', '#1e1e2e', '#2e1e1e', '#1e2a2a', '#2a1e2a'];
@@ -330,6 +337,15 @@
 
     _unsubEl    = _elStore.subscribe(renderElements);
     _unsubSt    = _stStore.subscribe(renderStrokes);
+    // Keep local stroke-selection mirror in sync — the ShapeOptionsBar
+    // writes directly to the store (delete button), so we can't assume
+    // Canvas is the only writer.
+    if (!isSecondary) {
+      _unsubStrokeSel = selectedStrokeIdsStore.subscribe(ids => {
+        selectedStrokeIds = new Set(ids);
+        renderStrokeSelection();
+      });
+    }
     _unsubTheme = isLightStore.subscribe((isLight) => {
       if (app) app.renderer.background.color = isLight ? 0xf0ede8 : 0x0e0e0f;
       drawDotGrid();
@@ -351,7 +367,7 @@
   });
 
   onDestroy(() => {
-    _unsubEl?.(); _unsubSt?.(); _unsubTheme?.(); _unsubSecKey?.();
+    _unsubEl?.(); _unsubSt?.(); _unsubTheme?.(); _unsubSecKey?.(); _unsubStrokeSel?.();
     _docRadialCleanup?.();
     app?.destroy(false, { children: true });
   });
@@ -755,25 +771,166 @@
     return { color: hex, alpha: parseFloat(m[4] ?? 1) };
   }
 
+  // ── Stroke hit-testing ───────────────────────
+  // wp = world point; s = stroke record; tol = world-space tolerance in px.
+  // Tolerance is inflated by 1/scale by callers so the hit area stays
+  // consistent regardless of zoom level.
+  function strokeHit(s, wp, tol) {
+    if (s.type === 'stroke' && s.points?.length >= 2) {
+      const t2 = tol * tol;
+      for (let i = 1; i < s.points.length; i++) {
+        const a = s.points[i - 1], b = s.points[i];
+        if (_distSqToSeg(wp, a, b) <= t2) return true;
+      }
+      return false;
+    }
+    if (s.type === 'shape' && s.points?.length === 2) {
+      const [a, b] = s.points;
+      const x1 = Math.min(a.x, b.x), y1 = Math.min(a.y, b.y);
+      const x2 = Math.max(a.x, b.x), y2 = Math.max(a.y, b.y);
+      if (s.shapeType === 'rect') {
+        const inside = wp.x >= x1 && wp.x <= x2 && wp.y >= y1 && wp.y <= y2;
+        if (s.fill && inside) return true;
+        // Hit if within tol of any edge
+        const nearLeft   = Math.abs(wp.x - x1) <= tol && wp.y >= y1 - tol && wp.y <= y2 + tol;
+        const nearRight  = Math.abs(wp.x - x2) <= tol && wp.y >= y1 - tol && wp.y <= y2 + tol;
+        const nearTop    = Math.abs(wp.y - y1) <= tol && wp.x >= x1 - tol && wp.x <= x2 + tol;
+        const nearBottom = Math.abs(wp.y - y2) <= tol && wp.x >= x1 - tol && wp.x <= x2 + tol;
+        return nearLeft || nearRight || nearTop || nearBottom;
+      }
+      if (s.shapeType === 'ellipse') {
+        const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+        const rx = (x2 - x1) / 2 || 1, ry = (y2 - y1) / 2 || 1;
+        const nx = (wp.x - cx) / rx, ny = (wp.y - cy) / ry;
+        const r = Math.sqrt(nx * nx + ny * ny);
+        if (s.fill && r <= 1) return true;
+        // Approximate: distance from the point to the ellipse outline ≈ |r-1| * min(rx,ry)
+        return Math.abs(r - 1) * Math.min(rx, ry) <= tol;
+      }
+      if (s.shapeType === 'line') {
+        return _distSqToSeg(wp, a, b) <= tol * tol;
+      }
+    }
+    return false;
+  }
+
+  function _distSqToSeg(p, a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    if (len2 === 0) { const ex = p.x - a.x, ey = p.y - a.y; return ex*ex + ey*ey; }
+    let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const qx = a.x + t * dx, qy = a.y + t * dy;
+    const ex = p.x - qx, ey = p.y - qy;
+    return ex * ex + ey * ey;
+  }
+
+  function strokeBounds(s) {
+    if (!s.points?.length) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of s.points) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+    return { minX, minY, maxX, maxY };
+  }
+
+  function pickStrokeAt(wp) {
+    // Search top-down; `strokesStore` ordering is insertion order so iterate
+    // in reverse so the most-recently-drawn stroke wins ties.
+    const tol = Math.max(6, 10 / (scale || 1));
+    const ss = $strokesStore;
+    for (let i = ss.length - 1; i >= 0; i--) {
+      const s = ss[i];
+      if (s.type === 'stroke' || s.type === 'shape') {
+        if (strokeHit(s, wp, tol)) return s;
+      }
+    }
+    return null;
+  }
+
+  function eraseAt(wp) {
+    const hit = pickStrokeAt(wp);
+    if (!hit) return false;
+    strokesStore.update(ss => ss.filter(s => s.id !== hit.id));
+    // Drop it from any pending selection too.
+    if (selectedStrokeIds.has(hit.id)) {
+      const next = new Set(selectedStrokeIds);
+      next.delete(hit.id);
+      selectedStrokeIds = next;
+      setSelectedStrokeIds(new Set(next));
+    }
+    return true;
+  }
+
+  // ── Stroke selection halo ────────────────────
+  let _strokeSelG = null;
+
+  function renderStrokeSelection() {
+    if (!strokeLayer) return;
+    if (!_strokeSelG) { _strokeSelG = new Graphics(); strokeLayer.addChild(_strokeSelG); }
+    _strokeSelG.clear();
+    if (!selectedStrokeIds.size) return;
+    const color = 0xE8440A;
+    const pad = 4;
+    for (const s of $strokesStore) {
+      if (!selectedStrokeIds.has(s.id)) continue;
+      const b = strokeBounds(s);
+      if (!b) continue;
+      const x = b.minX - WORLD_OFFSET - pad;
+      const y = b.minY - WORLD_OFFSET - pad;
+      const w = b.maxX - b.minX + pad * 2;
+      const h = b.maxY - b.minY + pad * 2;
+      _strokeSelG.roundRect(x, y, w, h, 4).stroke({ color, width: 1.25, alpha: 0.85 });
+    }
+  }
+
   // ── Stroke rendering ─────────────────────────
   const _strokeGraphics = new Map();
+
+  // Cache last-rendered record per id so we can detect prop changes (color,
+  // width, fill, cornerRadius) and rebuild the graphic when they differ.
+  const _strokeRecords = new Map();
+
+  function _strokeDirty(prev, next) {
+    if (!prev) return true;
+    return prev.stroke !== next.stroke
+      || prev.strokeWidth !== next.strokeWidth
+      || prev.fill !== next.fill
+      || prev.cornerRadius !== next.cornerRadius
+      || prev.points !== next.points;
+  }
 
   function renderStrokes(strokes) {
     if (!strokeLayer) return;
     const existing = new Set(_strokeGraphics.keys());
     for (const s of strokes) {
       existing.delete(s.id);
+      const prev = _strokeRecords.get(s.id);
       if (!_strokeGraphics.has(s.id)) {
         const g = buildStrokeGraphic(s);
         _strokeGraphics.set(s.id, g);
         strokeLayer.addChild(g);
+      } else if (_strokeDirty(prev, s)) {
+        const old = _strokeGraphics.get(s.id);
+        if (old) { strokeLayer.removeChild(old); old.destroy(); }
+        const g = buildStrokeGraphic(s);
+        _strokeGraphics.set(s.id, g);
+        strokeLayer.addChild(g);
       }
+      _strokeRecords.set(s.id, s);
     }
     for (const id of existing) {
       const g = _strokeGraphics.get(id);
       if (g) { strokeLayer.removeChild(g); g.destroy(); }
       _strokeGraphics.delete(id);
+      _strokeRecords.delete(id);
     }
+    // Keep halo on top and synced with the latest bounds.
+    if (_strokeSelG) strokeLayer.addChild(_strokeSelG);
+    renderStrokeSelection();
   }
 
   function buildStrokeGraphic(s) {
@@ -816,8 +973,14 @@
       if (s.shapeType === 'rect') {
         const rx = Math.min(x1,x2), ry = Math.min(y1,y2);
         const rw = Math.abs(x2-x1), rh = Math.abs(y2-y1);
-        if (fill) g.rect(rx,ry,rw,rh).fill(fill);
-        g.rect(rx,ry,rw,rh).stroke(strokeStyle);
+        const cr = Math.max(0, Math.min(s.cornerRadius || 0, Math.min(rw, rh) / 2));
+        if (cr > 0) {
+          if (fill) g.roundRect(rx,ry,rw,rh,cr).fill(fill);
+          g.roundRect(rx,ry,rw,rh,cr).stroke(strokeStyle);
+        } else {
+          if (fill) g.rect(rx,ry,rw,rh).fill(fill);
+          g.rect(rx,ry,rw,rh).stroke(strokeStyle);
+        }
       } else if (s.shapeType === 'ellipse') {
         const ex = (x1+x2)/2, ey = (y1+y2)/2;
         const ew = Math.abs(x2-x1)/2, eh = Math.abs(y2-y1)/2;
@@ -1005,7 +1168,12 @@
       penActive = true;
       return;
     }
-    if (curTool === 'eraser') return;
+    if (curTool === 'eraser') {
+      snapshot();
+      eraserActive = true;
+      eraseAt(wp);
+      return;
+    }
     if (curTool === 'arrow') {
       arrowStart = wp; return;
     }
@@ -1019,6 +1187,27 @@
       makeLabel(wp.x, wp.y); return;
     }
     if (curTool === 'select') {
+      // Before starting a marquee, see if the click landed on a pen
+      // stroke / shape — those aren't elements so they don't get pixi
+      // hit-tests; we test them ourselves.
+      const hitStroke = pickStrokeAt(wp);
+      if (hitStroke) {
+        selectedRelIds = new Set();
+        clearSelection();
+        const next = e.shiftKey ? new Set(selectedStrokeIds) : new Set();
+        if (next.has(hitStroke.id)) next.delete(hitStroke.id);
+        else next.add(hitStroke.id);
+        selectedStrokeIds = next;
+        setSelectedStrokeIds(new Set(next));
+        renderStrokeSelection();
+        return;
+      }
+      // Empty canvas: drop any stroke selection.
+      if (selectedStrokeIds.size) {
+        selectedStrokeIds = new Set();
+        setSelectedStrokeIds(new Set());
+        renderStrokeSelection();
+      }
       // Marquee start on empty canvas — clear relation selection
       selectedRelIds = new Set();
       marqueeActive = true;
@@ -1087,6 +1276,8 @@
 
     if (penActive) { extendPenStroke(wp.x, wp.y); return; }
 
+    if (eraserActive) { eraseAt(wp); return; }
+
     if (arrowStart) {
       // Preview line on pixi
       updateArrowPreview(arrowStart, wp); return;
@@ -1138,6 +1329,11 @@
       endPenStroke();
       penActive = false;
       snapshot();
+      return;
+    }
+
+    if (eraserActive) {
+      eraserActive = false;
       return;
     }
 
@@ -1206,6 +1402,11 @@
     dragMoved = false;
 
     selectedRelIds = new Set();
+    if (selectedStrokeIds.size) {
+      selectedStrokeIds = new Set();
+      setSelectedStrokeIds(new Set());
+      renderStrokeSelection();
+    }
 
     if (e.shiftKey) {
       // Shift: toggle this element in/out of selection
@@ -1246,6 +1447,11 @@
   function clearSelection() {
     selected = new Set();
     setSelected(new Set());
+    if (selectedStrokeIds.size) {
+      selectedStrokeIds = new Set();
+      setSelectedStrokeIds(new Set());
+      renderStrokeSelection();
+    }
     elementsStore.update(els => { renderElements(get(visibleElementsStore)); return els; });
   }
 
@@ -1403,6 +1609,20 @@
       }
     }
     selectedRelIds = newRelSel;
+
+    // Strokes / shapes whose bounding box intersects the marquee.
+    const newStrokeSel = new Set();
+    for (const s of $strokesStore) {
+      if (s.type !== 'stroke' && s.type !== 'shape') continue;
+      const b = strokeBounds(s);
+      if (!b) continue;
+      if (b.minX < maxX && b.maxX > minX && b.minY < maxY && b.maxY > minY) {
+        newStrokeSel.add(s.id);
+      }
+    }
+    selectedStrokeIds = newStrokeSel;
+    setSelectedStrokeIds(new Set(newStrokeSel));
+    renderStrokeSelection();
   }
 
   // ── Arrow tool ───────────────────────────────
@@ -1443,13 +1663,29 @@
     shapePreviewG.clear();
     const x1 = start.x - WORLD_OFFSET, y1 = start.y - WORLD_OFFSET;
     const x2 = cur.x   - WORLD_OFFSET, y2 = cur.y   - WORLD_OFFSET;
-    const color = $isLightStore ? 0x000000 : 0xffffff;
+    const defs = $shapeDefaultsStore;
+    const color = parseInt((defs.stroke || ($isLightStore ? '#000000' : '#ffffff')).replace('#',''), 16);
+    const width = defs.strokeWidth ?? 1.5;
+    const fill = defs.fill ? { color: parseInt(defs.fill.replace('#',''), 16), alpha: 0.5 } : null;
+    const stroke = { color, width, alpha: 0.7 };
     if (curTool === 'rect') {
-      shapePreviewG.rect(Math.min(x1,x2), Math.min(y1,y2), Math.abs(x2-x1), Math.abs(y2-y1)).stroke({ color, width: 1.5, alpha: 0.6 });
+      const rx = Math.min(x1,x2), ry = Math.min(y1,y2);
+      const rw = Math.abs(x2-x1), rh = Math.abs(y2-y1);
+      const cr = Math.max(0, Math.min(defs.cornerRadius || 0, Math.min(rw, rh) / 2));
+      if (cr > 0) {
+        if (fill) shapePreviewG.roundRect(rx,ry,rw,rh,cr).fill(fill);
+        shapePreviewG.roundRect(rx,ry,rw,rh,cr).stroke(stroke);
+      } else {
+        if (fill) shapePreviewG.rect(rx,ry,rw,rh).fill(fill);
+        shapePreviewG.rect(rx,ry,rw,rh).stroke(stroke);
+      }
     } else if (curTool === 'ellipse') {
-      shapePreviewG.ellipse((x1+x2)/2, (y1+y2)/2, Math.abs(x2-x1)/2, Math.abs(y2-y1)/2).stroke({ color, width: 1.5, alpha: 0.6 });
+      const ex = (x1+x2)/2, ey = (y1+y2)/2;
+      const ew = Math.abs(x2-x1)/2, eh = Math.abs(y2-y1)/2;
+      if (fill) shapePreviewG.ellipse(ex,ey,ew,eh).fill(fill);
+      shapePreviewG.ellipse(ex,ey,ew,eh).stroke(stroke);
     } else if (curTool === 'line') {
-      shapePreviewG.moveTo(x1,y1).lineTo(x2,y2).stroke({ color, width: 1.5, alpha: 0.6 });
+      shapePreviewG.moveTo(x1,y1).lineTo(x2,y2).stroke(stroke);
     }
   }
 
@@ -1460,14 +1696,23 @@
   function finishShape(start, end) {
     const dx = end.x - start.x, dy = end.y - start.y;
     if (Math.abs(dx) + Math.abs(dy) < 4) return;
-    const id = 'shape_' + Date.now();
+    const id = 'shape_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
     const isLight = $isLightStore;
+    const defs = $shapeDefaultsStore;
+    const stroke = defs.stroke || (isLight ? '#000000' : '#ffffff');
+    const newId = id;
     strokesStore.update(ss => [...ss, {
-      id, type: 'shape', shapeType: curTool,
+      id: newId, type: 'shape', shapeType: curTool,
       points: [{ x: start.x, y: start.y }, { x: end.x, y: end.y }],
-      stroke: isLight ? '#000000' : '#ffffff',
-      strokeWidth: 1.5, fill: null,
+      stroke,
+      strokeWidth: defs.strokeWidth ?? 1.5,
+      fill: defs.fill ?? null,
+      cornerRadius: curTool === 'rect' ? (defs.cornerRadius ?? 0) : 0,
     }]);
+    // Auto-select the freshly drawn shape so the options bar appears.
+    selectedStrokeIds = new Set([newId]);
+    setSelectedStrokeIds(new Set([newId]));
+    renderStrokeSelection();
   }
 
   // ── Frame tool ───────────────────────────────
@@ -1649,6 +1894,15 @@
     if (e.key === 'Escape')   { clearSelection(); selectedRelIds = new Set(); return; }
     if (e.key === 'z' && !e.ctrlKey && !e.metaKey) { if (selected.size) zoomToSelection(); else zoomToFit(); return; }
     if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (selectedStrokeIds.size) {
+        snapshot();
+        const ids = new Set(selectedStrokeIds);
+        strokesStore.update(ss => ss.filter(s => !ids.has(s.id)));
+        selectedStrokeIds = new Set();
+        setSelectedStrokeIds(new Set());
+        renderStrokeSelection();
+        return;
+      }
       if (selectedRelIds.size) { snapshot(); relationsStore.update(rs => rs.filter(r => !selectedRelIds.has(r.id))); selectedRelIds = new Set(); return; }
       // Shift+Backspace (or Delete key) = full delete even in task views.
       deleteSelected(e.shiftKey || e.key === 'Delete');

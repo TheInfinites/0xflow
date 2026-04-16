@@ -69,6 +69,7 @@ import Canvas          from './lib/Canvas.svelte';
 import Toolbar         from './lib/Toolbar.svelte';
 import CanvasBar       from './lib/CanvasBar.svelte';
 import SelectionBar    from './lib/SelectionBar.svelte';
+import ShapeOptionsBar from './lib/ShapeOptionsBar.svelte';
 import StatusBar       from './lib/StatusBar.svelte';
 import Minimap         from './lib/Minimap.svelte';
 import CommandPalette  from './lib/CommandPalette.svelte';
@@ -94,6 +95,9 @@ if (canvasBarMount) {
 
 const selBarMount = document.getElementById('svelte-selection-bar-mount');
 if (selBarMount) mount(SelectionBar, { target: selBarMount });
+
+const shapeBarMount = document.getElementById('svelte-shape-options-bar-mount');
+if (shapeBarMount) mount(ShapeOptionsBar, { target: shapeBarMount });
 
 const statusMount = document.getElementById('svelte-status-bar-mount');
 if (statusMount) mount(StatusBar, { target: statusMount });
