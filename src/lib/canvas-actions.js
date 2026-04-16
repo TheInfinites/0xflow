@@ -201,6 +201,8 @@ export function toggleTheme() {
   setIsLight(isLight);
   document.body.classList.toggle('light', isLight);
   try { localStorage.setItem('freeflow_theme', isLight ? 'light' : 'dark'); } catch {}
+  // keep dashboard in sync
+  document.body.classList.toggle('dash-light', isLight);
 }
 
 // ── Always on top ───────────────────────────────────────────────────────────
@@ -348,7 +350,7 @@ Object.assign(window, {
 // ── Restore persisted theme on load ────────────────────────────────────────
 try {
   if (localStorage.getItem('freeflow_theme') === 'light') {
-    document.body.classList.add('light');
+    document.body.classList.add('light', 'dash-light');
     setIsLight(true);
   }
 } catch {}

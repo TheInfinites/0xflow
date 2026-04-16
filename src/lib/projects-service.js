@@ -1039,9 +1039,9 @@ function initProjectsService() {
         const p = { id: 'demo_0', name: 'untitled', createdAt: Date.now(), updatedAt: Date.now(), noteCount: 0, accent: null, folderId: null };
         saveProjects([p]);
       }
-      // Restore theme
-      if (store.get('freeflow_dash_theme') === 'light') {
-        document.body.classList.add('dash-light');
+      // Restore theme (unified — same key as canvas)
+      if (store.get('freeflow_theme') === 'light') {
+        document.body.classList.add('light', 'dash-light');
       }
       // Backfill default covers for any existing items without one
       _backfillDefaultCovers();
@@ -1057,9 +1057,9 @@ function initProjectsService() {
       const p = { id: 'demo_0', name: 'untitled', createdAt: Date.now(), updatedAt: Date.now(), noteCount: 0, accent: null, folderId: null };
       saveProjects([p]);
     }
-    // Restore theme
-    if (store.get('freeflow_dash_theme') === 'light') {
-      document.body.classList.add('dash-light');
+    // Restore theme (unified — same key as canvas)
+    if (store.get('freeflow_theme') === 'light') {
+      document.body.classList.add('light', 'dash-light');
     }
     // Backfill default covers for any existing items without one
     _backfillDefaultCovers();
@@ -1153,8 +1153,7 @@ export function mountProjectsBridge() {
     // Svelte sidebar/theme render reactively — these are no-ops
     renderSidebar: () => {},
     toggleDashTheme: () => {
-      const isLight = document.body.classList.toggle('dash-light');
-      store.set('freeflow_dash_theme', isLight ? 'light' : 'dark');
+      window.toggleTheme?.();
     },
     createProject,
     createFolder,
