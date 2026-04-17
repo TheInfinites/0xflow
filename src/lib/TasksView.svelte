@@ -5,6 +5,7 @@
   import {
     projectsStore, activeProjectIdStore,
     projectTasksStore, projectCanvasesStore,
+    activeCanvasKeyStore,
   } from '../stores/projects.js';
   import { activeViewStore, splitModeStore } from '../stores/ui.js';
   import TaskRow from './TaskRow.svelte';
@@ -22,6 +23,47 @@
   let activeId = $derived($activeProjectIdStore);
   let project  = $derived(projects.find(p => p.id === activeId) || null);
   let tasks    = $derived($projectTasksStore);
+  let canvases = $derived(
+    $projectCanvasesStore
+      .slice()
+      .sort((a, b) => (a.order || 0) - (b.order || 0))
+  );
+  let activeKey = $derived($activeCanvasKeyStore);
+
+  // ── Canvas rename state ────────────────
+  let renamingCanvasId = $state(null);
+  let renameCanvasVal  = $state('');
+  let renameInputEl    = $state(null);
+
+  function openCanvas(canvasId) {
+    _svc('switchToCanvas', 'canvas:' + canvasId);
+  }
+  function startRenameCanvas(e, c) {
+    e.stopPropagation();
+    renamingCanvasId = c.id;
+    renameCanvasVal  = c.name;
+    requestAnimationFrame(() => { renameInputEl?.focus(); renameInputEl?.select(); });
+  }
+  function commitRenameCanvas() {
+    if (!renamingCanvasId) return;
+    const name = renameCanvasVal.trim() || 'untitled canvas';
+    _svc('renameNamedCanvas', renamingCanvasId, name);
+    renamingCanvasId = null;
+  }
+  function cancelRenameCanvas() { renamingCanvasId = null; }
+  function deleteCanvas(e, c) {
+    e.stopPropagation();
+    if (!confirm(`Delete canvas "${c.name}"? This cannot be undone.`)) return;
+    _svc('deleteNamedCanvas', c.id);
+  }
+  function fmtDate(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    if (sameDay) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  }
 
   let parentTasks = $derived(
     tasks
@@ -170,18 +212,52 @@
     </div>
   </main>
 
-  <!-- Canvas footer: quick-add a new named canvas for this project -->
+  <!-- Canvas footer: horizontal strip of canvas chips + add button -->
   <footer class="tv-canvas-footer">
-    <button class="tv-canvas-add-btn" onclick={() => {
-      const id = $activeProjectIdStore;
-      if (!id) return;
-      window.createNamedCanvas?.(id, 'untitled canvas').then(c => {
-        if (c) window.switchToCanvas?.('canvas:' + c.id);
-      });
-    }}>
-      <svg viewBox="0 0 12 12" width="10" height="10"><rect x="1" y="1" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="none"/><line x1="6" y1="3.5" x2="6" y2="8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><line x1="3.5" y1="6" x2="8.5" y2="6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-      New canvas
-    </button>
+    <div class="tv-canvas-strip">
+      {#each canvases as c (c.id)}
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          class="tv-canvas-chip"
+          class:active={activeKey === 'canvas:' + c.id}
+          onclick={() => openCanvas(c.id)}
+          oncontextmenu={(e) => { e.preventDefault(); startRenameCanvas(e, c); }}
+          title={`${c.name} — ${fmtDate(c.updatedAt || c.createdAt)}`}
+        >
+          <svg viewBox="0 0 12 12" width="9" height="9" class="tv-chip-ico"><rect x="1" y="2" width="10" height="8" rx="1" stroke="currentColor" stroke-width="1.1" fill="none"/></svg>
+          {#if renamingCanvasId === c.id}
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              bind:this={renameInputEl}
+              class="tv-chip-rename"
+              bind:value={renameCanvasVal}
+              onclick={(e) => e.stopPropagation()}
+              onblur={commitRenameCanvas}
+              onkeydown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); commitRenameCanvas(); }
+                else if (e.key === 'Escape') { e.preventDefault(); cancelRenameCanvas(); }
+              }}
+            />
+          {:else}
+            <span class="tv-chip-name">{c.name}</span>
+            <button class="tv-chip-del" title="delete" onclick={(e) => deleteCanvas(e, c)}>
+              <svg viewBox="0 0 10 10" width="8" height="8"><path d="M2 2l6 6M8 2L2 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+            </button>
+          {/if}
+        </div>
+      {/each}
+      <button class="tv-canvas-add-btn" onclick={() => {
+        const id = $activeProjectIdStore;
+        if (!id) return;
+        window.createNamedCanvas?.(id, 'untitled canvas').then(c => {
+          if (c) window.switchToCanvas?.('canvas:' + c.id);
+        });
+      }}>
+        <svg viewBox="0 0 12 12" width="10" height="10"><rect x="1" y="1" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="none"/><line x1="6" y1="3.5" x2="6" y2="8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><line x1="3.5" y1="6" x2="8.5" y2="6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+        New canvas
+      </button>
+    </div>
   </footer>
 </div>
 {/if}
@@ -363,6 +439,79 @@
     border-color: rgba(255,255,255,0.35);
   }
 
+  /* ── Canvas strip (footer) ───────────────────── */
+  .tv-canvas-strip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+  }
+  .tv-canvas-strip::-webkit-scrollbar { height: 4px; }
+  .tv-canvas-strip::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+  .tv-canvas-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 4px;
+    padding: 4px 6px 4px 8px;
+    color: rgba(255,255,255,0.55);
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: color 0.12s, border-color 0.12s, background 0.12s;
+    max-width: 180px;
+  }
+  .tv-canvas-chip:hover {
+    color: rgba(255,255,255,0.9);
+    border-color: rgba(255,255,255,0.22);
+    background: rgba(255,255,255,0.03);
+  }
+  .tv-canvas-chip.active {
+    color: #fff;
+    border-color: rgba(255,255,255,0.4);
+    background: rgba(255,255,255,0.06);
+  }
+  .tv-chip-ico { opacity: 0.7; flex-shrink: 0; }
+  .tv-chip-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+  }
+  .tv-chip-rename {
+    background: rgba(0,0,0,0.3);
+    border: none;
+    outline: none;
+    color: #fff;
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 1px 4px;
+    border-radius: 2px;
+    min-width: 80px;
+  }
+  .tv-chip-del {
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.3);
+    cursor: pointer;
+    padding: 2px;
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    opacity: 0;
+    transition: opacity 0.12s, color 0.12s;
+  }
+  .tv-canvas-chip:hover .tv-chip-del { opacity: 1; }
+  .tv-chip-del:hover { color: #ff7a7a; background: rgba(255,100,100,0.1); }
+
   /* ── Light mode ───────────────────── */
   :global(body.dash-light) .tasks-view {
     background: #f5f2ed;
@@ -393,6 +542,26 @@
   :global(body.dash-light) .tv-add-btn:hover .tv-add-icon { border-color: rgba(0,0,0,0.3); }
 
   :global(body.on-split.dash-light) .tasks-view { border-right-color: rgba(0,0,0,0.08); }
+
+  :global(body.dash-light) .tv-canvas-chip {
+    border-color: rgba(0,0,0,0.12);
+    color: rgba(0,0,0,0.55);
+  }
+  :global(body.dash-light) .tv-canvas-chip:hover {
+    color: rgba(0,0,0,0.9);
+    border-color: rgba(0,0,0,0.28);
+    background: rgba(0,0,0,0.03);
+  }
+  :global(body.dash-light) .tv-canvas-chip.active {
+    color: #1a1a1c;
+    border-color: rgba(0,0,0,0.4);
+    background: rgba(0,0,0,0.05);
+  }
+  :global(body.dash-light) .tv-chip-rename {
+    background: rgba(255,255,255,0.8);
+    color: #1a1a1c;
+  }
+  :global(body.dash-light) .tv-chip-del { color: rgba(0,0,0,0.3); }
 
   .tv-canvas-footer {
     flex-shrink: 0;

@@ -965,6 +965,27 @@ body.dash-light #empty-state h3 { color: rgba(0,0,0,0.5); }
   background: rgba(232,68,10,0.2);
   border-color: rgba(232,68,10,0.6);
 }
+.ctab-close {
+  display: flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; padding: 0;
+  margin-left: 2px;
+  background: transparent; border: 1px solid transparent;
+  border-radius: 3px; cursor: pointer;
+  color: rgba(255,255,255,0.3);
+  opacity: 0;
+  pointer-events: none;
+  transition: color 0.1s, background 0.1s, border-color 0.1s, opacity 0.12s;
+}
+.ctab:hover .ctab-close,
+.ctab.active .ctab-close {
+  opacity: 1;
+  pointer-events: auto;
+}
+.ctab-close:hover {
+  color: #ff7a7a;
+  background: rgba(255,100,100,0.12);
+  border-color: rgba(255,100,100,0.35);
+}
 .ctab-rename-input {
   width: 120px; height: 20px; padding: 0 8px;
   background: rgba(255,255,255,0.09); border: 1px solid rgba(255,255,255,0.18);

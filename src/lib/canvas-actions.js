@@ -18,6 +18,7 @@ import {
   saveImgBlob,
 } from './media-service.js';
 import { saveCanvasV2, applyCanvasState } from './canvas-persistence.js';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { callAI } from './ai-service.js';
 import { store } from './projects-service.js';
 
@@ -208,12 +209,19 @@ export function toggleTheme() {
 // ── Always on top ───────────────────────────────────────────────────────────
 export async function toggleAlwaysOnTop() {
   if (!IS_TAURI) return;
+  const cur = _getStore(alwaysOnTopStore);
+  const next = !cur;
   try {
-    const { invoke } = window.__TAURI__.core;
-    const cur = await invoke('plugin:window|is_always_on_top', { label: 'main' });
-    await invoke('plugin:window|set_always_on_top', { label: 'main', alwaysOnTop: !cur });
-    alwaysOnTopStore.set(!cur);
-  } catch(e) { console.warn('toggleAlwaysOnTop', e); }
+    // Prefer the plugin API; falls back to the custom Rust command if permission is missing.
+    try {
+      const win = getCurrentWindow();
+      await win.setAlwaysOnTop(next);
+    } catch (pluginErr) {
+      const { invoke } = window.__TAURI__.core;
+      await invoke('set_always_on_top', { onTop: next });
+    }
+    alwaysOnTopStore.set(next);
+  } catch (e) { console.warn('toggleAlwaysOnTop', e); }
 }
 
 // ── Brainstorm ──────────────────────────────────────────────────────────────

@@ -113,6 +113,14 @@
     window.deleteNamedCanvas?.(canvasId);
   }
 
+  function closeTab(e, canvasId) {
+    e.stopPropagation();
+    const c = namedCanvases.find(x => x.id === canvasId);
+    const name = c?.name || 'this canvas';
+    if (!confirm(`Delete canvas "${name}"? This cannot be undone.`)) return;
+    window.deleteNamedCanvas?.(canvasId);
+  }
+
   function goProjectCanvas() { window.openCanvasView?.(null, 'task'); }
   function goTaskCanvas(id)  { window.openCanvasView?.(id, 'task'); }
   function goBackToTasks()   { window.backToTasks?.(); }
@@ -247,6 +255,14 @@
           onclick={e => secondaryKey === ckey ? openSecondary(ckey, e) : pickRight(ckey, e)}
         >R</button>
       </span>
+      <button
+        class="ctab-close"
+        title="Close canvas"
+        aria-label="Close canvas"
+        onclick={e => closeTab(e, canvas.id)}
+      >
+        <svg viewBox="0 0 10 10" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 2l6 6M8 2L2 8"/></svg>
+      </button>
     </div>
   {/each}
 
