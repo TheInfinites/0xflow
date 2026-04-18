@@ -3054,7 +3054,7 @@
     position: absolute;
     width: 14px;
     height: 14px;
-    border-color: #e8440a;
+    border-color: rgba(232,68,10,0.75);
     border-style: solid;
     border-width: 0;
   }
@@ -3071,8 +3071,8 @@
     font-size: 10px;
     font-weight: 500;
     letter-spacing: 0.04em;
-    color: rgba(255,255,255,0.95);
-    background: #e8440a;
+    color: rgba(255,255,255,0.9);
+    background: rgba(232,68,10,0.9);
     border-radius: 3px;
     line-height: 1.2;
   }
@@ -3084,7 +3084,7 @@
     font-size: 10px;
     font-weight: 500;
     letter-spacing: 0.04em;
-    color: rgba(232,68,10,0.85);
+    color: rgba(232,68,10,0.75);
     line-height: 1.2;
     white-space: nowrap;
   }
