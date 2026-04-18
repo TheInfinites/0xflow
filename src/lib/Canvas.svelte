@@ -2269,6 +2269,7 @@
       pinned: false, locked: false, votes: 0, reactions: [],
       color: null,
       content: { frameColor: 0, frameLabel: '', groupIds: [...selected] },
+      tags: _autoTags(),
     };
     elementsStore.update(all => [frame, ...all]);
     selected = new Set([frameId]);

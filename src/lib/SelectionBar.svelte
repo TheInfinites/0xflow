@@ -163,13 +163,21 @@
   let vpy   = $derived($pyStore);
   let barPos = $derived((() => {
     if (!selEls.length) return null;
+    // Canvas mount can be offset from window origin (e.g. split view puts
+    // the primary canvas at left:50%). vpx/vpy are relative to the canvas
+    // element, while the bar uses position:fixed (window coords), so add
+    // the mount's bounding-rect offset.
+    const mount = typeof document !== 'undefined' ? document.getElementById('pixi-canvas-mount') : null;
+    const rect = mount?.getBoundingClientRect();
+    const offX = rect?.left ?? 0;
+    const offY = rect?.top ?? 0;
     const screenXs = selEls.flatMap(e => [
-      (e.x - WORLD_OFFSET) * scale + vpx,
-      (e.x + e.width - WORLD_OFFSET) * scale + vpx,
+      (e.x - WORLD_OFFSET) * scale + vpx + offX,
+      (e.x + e.width - WORLD_OFFSET) * scale + vpx + offX,
     ]);
     const screenYs = selEls.flatMap(e => [
-      (e.y - WORLD_OFFSET) * scale + vpy,
-      (e.y + e.height - WORLD_OFFSET) * scale + vpy,
+      (e.y - WORLD_OFFSET) * scale + vpy + offY,
+      (e.y + e.height - WORLD_OFFSET) * scale + vpy + offY,
     ]);
     const minX = Math.min(...screenXs), maxX = Math.max(...screenXs);
     const maxY = Math.max(...screenYs);
