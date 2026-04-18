@@ -255,11 +255,10 @@ body.on-split.split-right.dual-canvas #pixi-canvas-mount-secondary { display: bl
   letter-spacing: 0.14em; color: rgba(255,255,255,0.85); text-transform: uppercase;
   display: flex; align-items: center; gap: 10px;
 }
-#logo-mark {
-  width: 20px; height: 20px; background: #E8440A;
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+#logo-img {
+  width: 28px; height: 28px; border-radius: 6px; flex-shrink: 0;
+  object-fit: cover; display: block;
 }
-#logo-mark svg { width: 10px; height: 10px; stroke: white; fill: none; stroke-width: 2.5; stroke-linecap: round; }
 #topbar-right { display: flex; align-items: center; gap: 8px; }
 #dash-close-btn { display:flex;align-items:center;justify-content:center;width:26px;height:26px;background:none;border:1px solid rgba(255,255,255,0.1);border-radius:6px;cursor:pointer;color:rgba(255,255,255,0.4);transition:all 0.1s; }
 #dash-close-btn:hover { border-color: rgba(255,255,255,0.25); color: rgba(255,255,255,0.75); }
@@ -691,7 +690,7 @@ body.dash-light .ghost-half.ghost-folder:hover svg { stroke: rgba(0,0,0,0.95); f
 body.dash-light .ghost-half.ghost-folder:hover .ghost-half-label { color: rgba(0,0,0,0.95); }
 
 /* empty state */
-#empty-state { display: none; flex-direction: column; align-items: flex-start; justify-content: center; padding: 60px 24px; gap: 6px; grid-column: 1/-1; background: #0a0a0a; }
+#empty-state { display: none; flex-direction: column; align-items: flex-start; justify-content: center; padding: 60px 24px; gap: 6px; grid-column: 1/-1; background: transparent; }
 #empty-state svg { display: none; }
 #empty-state h3 { font-family: 'Barlow Condensed', sans-serif; font-size: 44px; font-weight: 700; text-transform: uppercase; color: rgba(255,255,255,0.08); letter-spacing: 0.04em; margin: 0; }
 #empty-state p { font-family: 'DM Mono', monospace; font-size: 9px; color: rgba(255,255,255,0.15); letter-spacing: 0.1em; text-transform: uppercase; }

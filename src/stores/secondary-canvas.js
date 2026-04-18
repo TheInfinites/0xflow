@@ -16,11 +16,17 @@ export const secondaryVisibleElementsStore = derived(
   ([$els, $key, $flows]) => {
     if (!$els.length) return [];
     const parsed = parseCanvasKey($key);
-    if (parsed.kind === 'project' || parsed.kind === 'named') return $els;
+    const isFlowScoped = (e) => !!e.content?.flowScope;
+    if (parsed.kind === 'project' || parsed.kind === 'named') {
+      return $els.filter(e => !isFlowScoped(e));
+    }
     if (parsed.kind === 'task' || parsed.kind === 'final') {
       const flow = $flows.find(t => t.id === parsed.flowId);
       if (!flow) return $els;
-      return $els.filter(e => Array.isArray(e.tags) && e.tags.includes(flow.tagId));
+      return $els.filter(e =>
+        Array.isArray(e.tags) && e.tags.includes(flow.tagId) &&
+        (!isFlowScoped(e) || e.content?.flowScope === $key)
+      );
     }
     return $els;
   }

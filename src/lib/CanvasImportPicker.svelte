@@ -64,6 +64,7 @@
         y: e.y + 40,
         tags: [],
         viewPositions: {},
+        content: { ...(e.content || {}), flowScope: null },
       }));
     snapshot();
     elementsStore.update(els => [...els, ...toImport]);

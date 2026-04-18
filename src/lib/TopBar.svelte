@@ -20,9 +20,7 @@
 
 <div id="topbar">
   <div id="logo">
-    <div id="logo-mark">
-      <svg viewBox="0 0 10 10"><line x1="5" y1="1" x2="5" y2="9"/><line x1="1" y1="5" x2="9" y2="5"/></svg>
-    </div>
+    <img id="logo-img" src="/splash-logo.png" alt="0xflow" />
     <span style="letter-spacing:0.14em;"><em style="font-style:italic;letter-spacing:0.14em;">0</em>*flow</span>
   </div>
 

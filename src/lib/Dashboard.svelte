@@ -7,6 +7,13 @@
   // We call window.* so that the service is guaranteed to be mounted before Dashboard renders.
   function _svc(name, ...args) { return window[name]?.(...args); }
 
+  /** Svelte action: move the node to document.body so ancestor CSS transforms
+   *  don't trap `position: fixed` inside a transformed containing block. */
+  function portal(node) {
+    document.body.appendChild(node);
+    return { destroy() { if (node.parentNode === document.body) document.body.removeChild(node); } };
+  }
+
 
   // Reactive state from stores
   let projects = $derived($projectsStore);
@@ -164,15 +171,34 @@
     e.stopPropagation(); e.preventDefault();
     ctxId = id;
     ctxKind = kind;
-    const btn = e.target.closest('.card-action-btn') || e.target;
-    const rect = btn.getBoundingClientRect();
     const menuW = 180, menuH = 240;
-    let x = rect.right - menuW;
-    let y = rect.top - menuH - 6;
-    if (y < 8) y = rect.bottom + 6;
+    const btn = e.target.closest('.card-action-btn');
+    let x, y;
+    if (btn) {
+      // Three-dot button click — anchor menu to button rect
+      const rect = btn.getBoundingClientRect();
+      x = rect.right - menuW;
+      y = rect.top - menuH - 6;
+      if (y < 8) y = rect.bottom + 6;
+    } else {
+      // Right-click on card — open at cursor
+      x = e.clientX;
+      y = e.clientY;
+    }
     ctxX = Math.max(8, Math.min(x, window.innerWidth - menuW - 8));
-    ctxY = Math.max(8, y);
-    setTimeout(() => { ctxOpen = true; }, 0);
+    ctxY = Math.max(8, Math.min(y, window.innerHeight - menuH - 8));
+    setTimeout(() => {
+      ctxOpen = true;
+      // Post-render clamp using actual rendered size (item labels can make the
+      // menu wider than the estimate).
+      requestAnimationFrame(() => {
+        const menu = document.getElementById('svelte-ctx-menu');
+        if (!menu) return;
+        const r = menu.getBoundingClientRect();
+        if (r.right > window.innerWidth - 8) ctxX = Math.max(8, window.innerWidth - r.width - 8);
+        if (r.bottom > window.innerHeight - 8) ctxY = Math.max(8, window.innerHeight - r.height - 8);
+      });
+    }, 0);
   }
 
   function closeCtxMenu() { ctxOpen = false; ctxId = null; }
@@ -322,12 +348,12 @@
   </div>
 </div>
 
-<!-- Context menu -->
+<!-- Context menu — portalled to body so ancestor transforms don't affect fixed positioning -->
 {#if ctxOpen}
   {@const ctxProject = ctxKind === 'project' ? projects.find(x => x.id === ctxId) : null}
   {@const ctxFolder  = ctxKind === 'folder'  ? folders.find(x => x.id === ctxId) : null}
   {@const hasCover   = ctxKind === 'project' ? !!ctxProject?.coverImageId : !!ctxFolder?.coverImageId}
-  <div id="svelte-ctx-menu" class="show" style="left:{ctxX}px;top:{ctxY}px;position:fixed;z-index:9999;">
+  <div id="svelte-ctx-menu" class="show" use:portal style="left:{ctxX}px;top:{ctxY}px;position:fixed;z-index:9999;">
     <button class="ctx-item" onclick={() => ctxAction('open')}>
       <svg viewBox="0 0 12 12"><path d="M2 6h8M6 3l3 3-3 3"/></svg>open
     </button>

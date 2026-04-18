@@ -76,18 +76,24 @@ function _applyViewPos(els, canvasKey) {
   });
 }
 
+const _isFlowScoped = (e) => !!e.content?.flowScope;
+const _scopeMatches = (e, key) => e.content?.flowScope === key;
+
 export const visibleElementsStore = derived(
   [elementsStore, activeCanvasKeyStore, projectFlowsStore, projectTagsStore],
   ([$els, $key, $flows, $tags]) => {
     const parsed = parseCanvasKey($key);
-    if (parsed.kind === 'project') return $els;
+    if (parsed.kind === 'project') return $els.filter(e => !_isFlowScoped(e));
 
     const flow = $flows.find(t => t.id === parsed.flowId);
     if (!flow) return $els; // fallback — unknown flow, show all
     const flowTagId = flow.tagId;
 
     if (parsed.kind === 'task') {
-      const filtered = $els.filter(e => Array.isArray(e.tags) && e.tags.includes(flowTagId));
+      const filtered = $els.filter(e =>
+        Array.isArray(e.tags) && e.tags.includes(flowTagId) &&
+        (!_isFlowScoped(e) || _scopeMatches(e, $key))
+      );
       return _applyViewPos(filtered, $key);
     }
 
@@ -97,7 +103,8 @@ export const visibleElementsStore = derived(
       const filtered = $els.filter(e =>
         Array.isArray(e.tags) &&
         e.tags.includes(flowTagId) &&
-        e.tags.includes(finalTag.id)
+        e.tags.includes(finalTag.id) &&
+        (!_isFlowScoped(e) || _scopeMatches(e, $key))
       );
       return _applyViewPos(filtered, $key);
     }

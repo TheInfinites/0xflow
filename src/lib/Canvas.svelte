@@ -4,7 +4,7 @@
   import { Application, Graphics, Text, TextStyle, Container, Sprite, Texture, Assets } from 'pixi.js';
   import { elementsStore, visibleElementsStore, strokesStore, relationsStore, snapshot, undo, redo, canUndo, canRedo } from '../stores/elements.js';
   import { activeCanvasKeyStore, projectFlowsStore, projectTagsStore, projectsStore, parseCanvasKey } from '../stores/projects.js';
-  import { scaleStore, pxStore, pyStore, setCurTool, getCurTool, setSelected, selectedStrokeIdsStore, setSelectedStrokeIds, shapeDefaultsStore, setScale, setPx, setPy, activeEditorIdStore, setActiveEditorId, snapEnabledStore, isLightStore } from '../stores/canvas.js';
+  import { scaleStore, pxStore, pyStore, setCurTool, getCurTool, setSelected, selectedStore, selectedStrokeIdsStore, setSelectedStrokeIds, shapeDefaultsStore, setScale, setPx, setPy, activeEditorIdStore, setActiveEditorId, snapEnabledStore, isLightStore, hoveredElIdStore } from '../stores/canvas.js';
   import { activeProjectIdStore } from '../stores/projects.js';
   import { brainstormOpenStore, canvasTagPickerOpenStore, secondaryCanvasKeyStore } from '../stores/ui.js';
   import { secondaryVisibleElementsStore, secondaryStrokesStore, secondaryRelationsStore } from '../stores/secondary-canvas.js';
@@ -90,6 +90,11 @@
   let resizeHandle = null;   // 'n'|'ne'|'e'|'se'|'s'|'sw'|'w'|'nw'
   let resizeEl = null;       // element id being resized
   let resizeOrigin = null;   // { el snapshot, startClientX, startClientY }
+
+  // Multi-select uniform resize state
+  let multiResizing = false;
+  let multiResizeHandle = null; // 'nw'|'ne'|'sw'|'se'
+  let multiResizeOrigin = null; // { snapshots: [{id,x,y,w,h}], bbox:{x,y,w,h}, startX, startY }
 
   // Selected relations (supports multi-select via marquee)
   let selectedRelIds = $state(new Set());
@@ -1289,6 +1294,14 @@
     if (marqueeActive && marqueeStart) {
       updateMarqueePreview(marqueeStart, wp);
     }
+
+    // Hover tracking — powers the on-hover tag peek in MediaOverlay.
+    if (!isSecondary) {
+      const r = canvasEl.getBoundingClientRect();
+      const hit = app?.renderer?.events?.rootBoundary?.hitTest?.(e.clientX - r.left, e.clientY - r.top);
+      const id = hit?.label && $elementsStore.some(el => el.id === hit.label) ? hit.label : null;
+      if (get(hoveredElIdStore) !== id) hoveredElIdStore.set(id);
+    }
   }
 
   function onPointerUp(e) {
@@ -1740,7 +1753,7 @@
       x: Math.min(start.x, end.x), y: Math.min(start.y, end.y),
       width: w, height: h, zIndex: 0,
       pinned: false, locked: false, votes: 0, reactions: [],
-      color: null, content: { frameColor: 0, frameLabel: '' },
+      color: null, content: { frameColor: 0, frameLabel: '', flowScope: _autoFlowScope() },
       tags: _autoTags(),
     }]);
     setCurTool('select'); curTool = 'select';
@@ -1768,6 +1781,17 @@
     return out;
   }
 
+  /**
+   * Scope a newly created element to the current flow canvas. Returns the
+   * canvas key on a flow (task/final) canvas, null on the parent project
+   * canvas. Stored in content.flowScope — the visibleElements filter hides
+   * scoped elements from the parent canvas so flow-local additions don't
+   * disrupt the parent layout.
+   */
+  function _autoFlowScope() {
+    return _isPerViewCanvas() ? _activeKey() : null;
+  }
+
   function makeNote(wx, wy) {
     snapshot();
     const id = 'note_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
@@ -1776,7 +1800,7 @@
       id, type: 'note',
       x, y, width: 240, height: 180, zIndex: Date.now(),
       pinned: false, locked: false, votes: 0, reactions: [],
-      color: null, content: { blocks: [], fontSize: 14 },
+      color: null, content: { blocks: [], fontSize: 14, flowScope: _autoFlowScope() },
       tags: _autoTags(),
     }]);
     return id;
@@ -1790,7 +1814,7 @@
       id, type: 'ai-note',
       x, y, width: 320, height: 260, zIndex: Date.now(),
       pinned: false, locked: false, votes: 0, reactions: [],
-      color: null, content: { blocks: [], aiHistory: [], aiModel: 'claude' },
+      color: null, content: { blocks: [], aiHistory: [], aiModel: 'claude', flowScope: _autoFlowScope() },
       tags: _autoTags(),
     }]);
     return id;
@@ -1804,7 +1828,7 @@
       id, type: 'label',
       x: wx, y: wy, width: 160, height: 32, zIndex: Date.now(),
       pinned: false, locked: false, votes: 0, reactions: [],
-      color: null, content: { text: '', fontSize: 14 },
+      color: null, content: { text: '', fontSize: 14, flowScope: _autoFlowScope() },
       tags: _autoTags(),
     }]);
     return id;
@@ -1818,7 +1842,7 @@
       id, type: 'draw',
       x, y, width: 400, height: 300, zIndex: Date.now(),
       pinned: false, locked: false, votes: 0, reactions: [],
-      color: null, content: { strokes: [] },
+      color: null, content: { strokes: [], flowScope: _autoFlowScope() },
       tags: _autoTags(),
     }]);
     return id;
@@ -1832,7 +1856,7 @@
       id, type: 'todo',
       x, y, width: 220, height: 200, zIndex: Date.now(),
       pinned: false, locked: false, votes: 0, reactions: [],
-      color: null, content: { todoTitle: '', todoItems: [] },
+      color: null, content: { todoTitle: '', todoItems: [], flowScope: _autoFlowScope() },
       tags: _autoTags(),
     }]);
     setActiveEditorId(id);
@@ -2046,6 +2070,86 @@
     window.removeEventListener('pointerup', onResizeUp);
   }
 
+  // Compute combined bbox of selected elements using effective positions.
+  function _selectedBBox() {
+    const els = $elementsStore.filter(e => selected.has(e.id));
+    if (!els.length) return null;
+    const pts = els.map(e => { const p = _getElPos(e); return { x: p.x, y: p.y, w: e.width, h: e.height }; });
+    const minX = Math.min(...pts.map(p => p.x));
+    const minY = Math.min(...pts.map(p => p.y));
+    const maxX = Math.max(...pts.map(p => p.x + p.w));
+    const maxY = Math.max(...pts.map(p => p.y + p.h));
+    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  }
+
+  function startMultiResize(e, handle) {
+    e.stopPropagation(); e.preventDefault();
+    const bbox = _selectedBBox();
+    if (!bbox) return;
+    const snapshots = $elementsStore.filter(el => selected.has(el.id)).map(el => {
+      const p = _getElPos(el);
+      return { id: el.id, x: p.x, y: p.y, w: el.width, h: el.height };
+    });
+    multiResizing = true;
+    multiResizeHandle = handle;
+    multiResizeOrigin = { snapshots, bbox, startX: e.clientX, startY: e.clientY };
+    window.addEventListener('pointermove', onMultiResizeMove);
+    window.addEventListener('pointerup', onMultiResizeUp);
+  }
+
+  function onMultiResizeMove(e) {
+    if (!multiResizing || !multiResizeOrigin) return;
+    const { bbox, snapshots, startX, startY } = multiResizeOrigin;
+    const dx = (e.clientX - startX) / scale;
+    const dy = (e.clientY - startY) / scale;
+    const h = multiResizeHandle;
+    // Anchor = opposite corner of the bbox, stays fixed during scale.
+    const anchorX = h.includes('w') ? bbox.x + bbox.w : bbox.x;
+    const anchorY = h.includes('n') ? bbox.y + bbox.h : bbox.y;
+    const signX = h.includes('w') ? -1 : 1;
+    const signY = h.includes('n') ? -1 : 1;
+    // Proposed new bbox size
+    const newW = Math.max(16, bbox.w + signX * dx);
+    const newH = Math.max(16, bbox.h + signY * dy);
+    // Uniform scale — dominant axis by ratio magnitude
+    const rx = newW / bbox.w, ry = newH / bbox.h;
+    const k = Math.abs(rx - 1) >= Math.abs(ry - 1) ? rx : ry;
+    const kClamped = Math.max(0.05, k);
+
+    elementsStore.update(els => els.map(el => {
+      const snap0 = snapshots.find(s => s.id === el.id);
+      if (!snap0) return el;
+      const nx = anchorX + (snap0.x - anchorX) * kClamped;
+      const ny = anchorY + (snap0.y - anchorY) * kClamped;
+      const nw = snap0.w * kClamped;
+      const nh = snap0.h * kClamped;
+      return { ..._setElPos(el, nx, ny), width: nw, height: nh };
+    }));
+  }
+
+  function onMultiResizeUp() {
+    if (!multiResizing) return;
+    multiResizing = false;
+    snapshot();
+    multiResizeHandle = null; multiResizeOrigin = null;
+    window.removeEventListener('pointermove', onMultiResizeMove);
+    window.removeEventListener('pointerup', onMultiResizeUp);
+  }
+
+  function bboxHandlePos(bbox, handle, s) {
+    const sx = (bbox.x - WORLD_OFFSET) * s + px;
+    const sy = (bbox.y - WORLD_OFFSET) * s + py;
+    const ew = bbox.w * s, eh = bbox.h * s;
+    const hw = 8;
+    const map = {
+      nw: { left: sx - hw,      top: sy - hw,      cursor: 'nw-resize' },
+      ne: { left: sx + ew - hw, top: sy - hw,      cursor: 'ne-resize' },
+      sw: { left: sx - hw,      top: sy + eh - hw, cursor: 'sw-resize' },
+      se: { left: sx + ew - hw, top: sy + eh - hw, cursor: 'se-resize' },
+    };
+    return map[handle];
+  }
+
   function resizeHandlePos(el, handle, s) {
     const sx = (el.x - WORLD_OFFSET) * s + px;
     const sy = (el.y - WORLD_OFFSET) * s + py;
@@ -2256,20 +2360,23 @@
     snapshot();
     const els = $elementsStore.filter(e => selected.has(e.id));
     const PAD = 16;
-    const minX = Math.min(...els.map(e => e.x)) - PAD;
-    const minY = Math.min(...els.map(e => e.y)) - PAD;
-    const maxX = Math.max(...els.map(e => e.x + e.width))  + PAD;
-    const maxY = Math.max(...els.map(e => e.y + e.height)) + PAD;
+    const positioned = els.map(e => { const p = _getElPos(e); return { e, x: p.x, y: p.y }; });
+    const minX = Math.min(...positioned.map(p => p.x)) - PAD;
+    const minY = Math.min(...positioned.map(p => p.y)) - PAD;
+    const maxX = Math.max(...positioned.map(p => p.x + p.e.width))  + PAD;
+    const maxY = Math.max(...positioned.map(p => p.y + p.e.height)) + PAD;
     const frameId = 'frame_' + Date.now();
+    const perView = _isPerViewCanvas();
     const frame = {
       id: frameId, type: 'frame',
-      x: minX, y: minY,
+      x: perView ? 0 : minX, y: perView ? 0 : minY,
       width: maxX - minX, height: maxY - minY,
       zIndex: Math.min(...els.map(e => e.zIndex ?? 0)) - 1,
       pinned: false, locked: false, votes: 0, reactions: [],
       color: null,
-      content: { frameColor: 0, frameLabel: '', groupIds: [...selected] },
+      content: { frameColor: 0, frameLabel: '', groupIds: [...selected], flowScope: perView ? _activeKey() : null },
       tags: _autoTags(),
+      viewPositions: perView ? { [_activeKey()]: { x: minX, y: minY } } : {},
     };
     elementsStore.update(all => [frame, ...all]);
     selected = new Set([frameId]);
@@ -2514,22 +2621,43 @@
     {/if}
   </div>
 
-  <!-- Resize handles — rendered for each selected element in select tool -->
+  <!-- Resize handles — per-element when single selection, unified bbox when multi-select -->
   {#if curTool === 'select'}
-    {#each $elementsStore.filter(el => selected.has(el.id)) as el (el.id)}
-      {#each RESIZE_HANDLES as handle}
-        {@const pos = resizeHandlePos(el, handle, scale)}
-        {@const isCorner = handle === 'nw' || handle === 'ne' || handle === 'sw' || handle === 'se'}
+    {#if $selectedStore.size >= 2}
+      {@const mbbox = _selectedBBox()}
+      {#if mbbox}
+        {@const bx = (mbbox.x - WORLD_OFFSET) * scale + px}
+        {@const by = (mbbox.y - WORLD_OFFSET) * scale + py}
         <div
-          class="resize-handle"
-          class:resize-corner={isCorner}
-          class:resize-edge={!isCorner}
-          style="left:{pos.left}px;top:{pos.top}px;cursor:{pos.cursor};"
-          onpointerdown={e => startResize(e, el.id, handle)}
-          role="none"
+          class="multi-bbox"
+          style="left:{bx}px;top:{by}px;width:{mbbox.w * scale}px;height:{mbbox.h * scale}px;"
         ></div>
+        {#each ['nw','ne','sw','se'] as handle}
+          {@const pos = bboxHandlePos(mbbox, handle, scale)}
+          <div
+            class="resize-handle resize-corner"
+            style="left:{pos.left}px;top:{pos.top}px;cursor:{pos.cursor};"
+            onpointerdown={e => startMultiResize(e, handle)}
+            role="none"
+          ></div>
+        {/each}
+      {/if}
+    {:else}
+      {#each $elementsStore.filter(el => $selectedStore.has(el.id)) as el (el.id)}
+        {#each RESIZE_HANDLES as handle}
+          {@const pos = resizeHandlePos(el, handle, scale)}
+          {@const isCorner = handle === 'nw' || handle === 'ne' || handle === 'sw' || handle === 'se'}
+          <div
+            class="resize-handle"
+            class:resize-corner={isCorner}
+            class:resize-edge={!isCorner}
+            style="left:{pos.left}px;top:{pos.top}px;cursor:{pos.cursor};"
+            onpointerdown={e => startResize(e, el.id, handle)}
+            role="none"
+          ></div>
+        {/each}
       {/each}
-    {/each}
+    {/if}
   {/if}
 
   <!-- Floating tag picker (Shift+right-click on an element) -->
@@ -2822,6 +2950,13 @@
     z-index: 900;
   }
 
+  .multi-bbox {
+    position: absolute;
+    z-index: 1199;
+    pointer-events: none;
+    border: 1px dashed var(--sel, #6aa9ff);
+    border-radius: 2px;
+  }
   /* ── Resize handles ── */
   .resize-handle {
     position: absolute;

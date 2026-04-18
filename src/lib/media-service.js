@@ -24,6 +24,16 @@ function _autoTags() {
   return out;
 }
 
+/** Scope a newly created element to the current flow canvas. Returns the
+ *  canvas key when on a flow (task/final) canvas, or null on the project view.
+ *  Elements with content.flowScope are hidden from the parent project canvas. */
+function _autoFlowScope() {
+  const key = _getStore(activeCanvasKeyStore);
+  const parsed = parseCanvasKey(key);
+  if (parsed.kind === 'task' || parsed.kind === 'final') return key;
+  return null;
+}
+
 export const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 
 // ── Tauri filesystem image store ──
@@ -343,7 +353,7 @@ export function makeImgCard(id, url, x, y, w, h, nw, nh) {
     zIndex:  Date.now(),
     pinned:  false, locked: false, votes: 0, reactions: [],
     color:   null,
-    content: { imgId: id, sourcePath: null, nativeW: nw || 0, nativeH: nh || 0 },
+    content: { imgId: id, sourcePath: null, nativeW: nw || 0, nativeH: nh || 0, flowScope: _autoFlowScope() },
     tags: _autoTags(),
   };
   elementsStore.update(els => [...els, el]);
@@ -369,7 +379,7 @@ export function makeVideoCard(id, url, x, y, w) {
     zIndex:  Date.now(),
     pinned:  false, locked: false, votes: 0, reactions: [],
     color:   null,
-    content: { imgId: id, sourcePath: null, nativeW: 0, nativeH: 0 },
+    content: { imgId: id, sourcePath: null, nativeW: 0, nativeH: 0, flowScope: _autoFlowScope() },
     tags: _autoTags(),
   };
   elementsStore.update(els => [...els, el]);
@@ -392,7 +402,7 @@ export function makeAudioCard(id, url, x, y, filename) {
     zIndex:  Date.now(),
     pinned:  false, locked: false, votes: 0, reactions: [],
     color:   null,
-    content: { imgId: id, sourcePath: filename || null, nativeW: 0, nativeH: 0 },
+    content: { imgId: id, sourcePath: filename || null, nativeW: 0, nativeH: 0, flowScope: _autoFlowScope() },
     tags: _autoTags(),
   };
   elementsStore.update(els => [...els, el]);
@@ -528,6 +538,7 @@ export async function placeImageBlob(blob, wx, wy, sourcePath) {
       nativeW:  nw,
       nativeH:  nh,
       sourcePath: refPath,  // keep legacy compat
+      flowScope: _autoFlowScope(),
     },
   };
   elementsStore.update(els => [...els, el]);
@@ -570,6 +581,7 @@ export async function placeMediaFromPath(filePath, wx, wy, mediaType, mimeType) 
       embedded:   false,
       sourcePath: filePath,
       nativeW: 0, nativeH: 0,
+      flowScope: _autoFlowScope(),
     },
   };
   elementsStore.update(els => [...els, el]);

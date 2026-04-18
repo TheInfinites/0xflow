@@ -21,6 +21,7 @@ export const snapEnabledStore = writable(false);
 export const isLightStore     = writable(false);
 export const minimapVisibleStore   = writable(false);
 export const activeEditorIdStore   = writable(null);  // id of note currently being edited
+export const hoveredElIdStore      = writable(null);  // id of element currently hovered (for tag peek, etc.)
 
 // Bridge getters/setters for legacy JS
 export function getScale()             { return get(scaleStore); }
