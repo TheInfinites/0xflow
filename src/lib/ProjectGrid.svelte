@@ -139,14 +139,6 @@
     </div>
   {/each}
 
-  {#if filtered.length === 0 && folderCards.length === 0 && !searchQuery.trim()}
-    <div id="empty-state" style="display:flex">
-      <svg viewBox="0 0 40 40"><rect x="4" y="4" width="32" height="32" rx="4"/><line x1="12" y1="14" x2="28" y2="14"/><line x1="12" y1="20" x2="28" y2="20"/><line x1="12" y1="26" x2="20" y2="26"/></svg>
-      <h3>no canvases here</h3>
-      <p>create a new canvas or drag one in</p>
-    </div>
-  {/if}
-
   {#each filtered as p (p.id)}
     {@const isDeletingThis = deletingId === p.id}
     {@const isRenamingThis = renamingId === p.id}

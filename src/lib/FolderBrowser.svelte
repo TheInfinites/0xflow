@@ -474,6 +474,26 @@
     closeAll();
   }
 
+  // ── Open tag picker for the right-clicked element ────────────────────────
+  // Called on hover — keep the context menu open; anchor the picker to the
+  // right of the menu like a submenu.
+  function openTagsForCtxEl() {
+    if (!ctxElId) return;
+    const menu = document.getElementById('fb-img-ctx-menu');
+    const rect = menu?.getBoundingClientRect();
+    const PICKER_W = 240;
+    const GAP = 4;
+    let x = menuX, y = menuY;
+    if (rect) {
+      const spaceRight = window.innerWidth - rect.right;
+      x = spaceRight >= PICKER_W + GAP
+        ? rect.right + GAP
+        : rect.left - PICKER_W - GAP;
+      y = rect.top;
+    }
+    window._pixiCanvas?.openTagPicker?.(x, y, ctxElId);
+  }
+
   // ── Outside click ────────────────────────────────────────────────────────
   function onDocMousedown(e) {
     if (!visible) return;
@@ -594,6 +614,22 @@
       <span class="ictx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><polyline points="1,4.5 1,1 4.5,1"/><polyline points="9.5,1 13,1 13,4.5"/><polyline points="13,9.5 13,13 9.5,13"/><polyline points="4.5,13 1,13 1,9.5"/><rect x="4" y="4" width="6" height="6" rx="0.5" stroke-dasharray="1.5,1"/></svg></span>
       zoom to
     </button>
+
+    <div class="ictx-sep"></div>
+
+    <!-- Tags -->
+    <div
+      class="ictx-item"
+      class:ictx-hov={hoveredItemId==='tags'}
+      data-iid="tags"
+      onmouseenter={() => { if (menuReady()) openTagsForCtxEl(); }}
+      role="menuitem"
+      tabindex="-1"
+    >
+      <span class="ictx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 1.5h4a1 1 0 011 1v4L7 11l-5-5z"/><circle cx="9.5" cy="4.5" r="0.6" fill="currentColor" stroke="none"/></svg></span>
+      tags
+      <span class="ictx-chevron">›</span>
+    </div>
 
     <div class="ictx-sep"></div>
 

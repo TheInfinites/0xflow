@@ -2504,6 +2504,20 @@
       groupSelected, ungroupSelected,
       masonryLayout,
       snapshot, clearSelection,
+      openTagPicker: (clientX, clientY, elId) => {
+        if (elId && !selected.has(elId)) {
+          selected = new Set([elId]);
+          setSelected(new Set(selected));
+          elementsStore.update(els => { renderElements(get(visibleElementsStore)); return els; });
+        }
+        if (selected.size === 0) return;
+        tagPicker = {
+          x: clientX,
+          y: clientY,
+          elementIds: new Set(selected),
+        };
+        canvasTagPickerOpenStore.set(true);
+      },
       doZoom: (factor, cx, cy) => doZoom(factor, cx ?? app?.screen.width/2 ?? 600, cy ?? app?.screen.height/2 ?? 400),
       toggleSnap: () => { snapEnabled = !snapEnabled; snapEnabledStore.set(snapEnabled); },
       setTool: (t) => { curTool = t; setCurTool(t); },
@@ -2628,10 +2642,66 @@
       {#if mbbox}
         {@const bx = (mbbox.x - WORLD_OFFSET) * scale + px}
         {@const by = (mbbox.y - WORLD_OFFSET) * scale + py}
+        {@const bw = mbbox.w * scale}
+        {@const bh = mbbox.h * scale}
         <div
           class="multi-bbox"
-          style="left:{bx}px;top:{by}px;width:{mbbox.w * scale}px;height:{mbbox.h * scale}px;"
-        ></div>
+          style="left:{bx - 8}px;top:{by - 8}px;width:{bw + 16}px;height:{bh + 16}px;"
+        >
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            class="mb-hit"
+            onpointerdown={e => {
+              if (e.button === 0) {
+                const firstId = [...selected][0];
+                if (firstId != null) onElPointerDown(e, firstId);
+                return;
+              }
+              // Forward non-left-button presses (right/middle) through to
+              // whatever sits underneath — typically the Pixi canvas, which
+              // owns the right-click / radial menu logic.
+              const hit = e.currentTarget;
+              const prevPE = hit.style.pointerEvents;
+              hit.style.pointerEvents = 'none';
+              const below = document.elementFromPoint(e.clientX, e.clientY);
+              hit.style.pointerEvents = prevPE;
+              if (!below) return;
+              const types = ['pointerdown', 'mousedown'];
+              for (const type of types) {
+                const ev = new PointerEvent(type, {
+                  bubbles: true, cancelable: true, composed: true,
+                  clientX: e.clientX, clientY: e.clientY,
+                  button: e.button, buttons: e.buttons,
+                  pointerId: e.pointerId, pointerType: e.pointerType,
+                  shiftKey: e.shiftKey, ctrlKey: e.ctrlKey,
+                  altKey: e.altKey, metaKey: e.metaKey,
+                });
+                below.dispatchEvent(ev);
+              }
+            }}
+            oncontextmenu={e => {
+              e.preventDefault();
+              const hit = e.currentTarget;
+              const prevPE = hit.style.pointerEvents;
+              hit.style.pointerEvents = 'none';
+              const below = document.elementFromPoint(e.clientX, e.clientY);
+              hit.style.pointerEvents = prevPE;
+              below?.dispatchEvent(new MouseEvent('contextmenu', {
+                bubbles: true, cancelable: true,
+                clientX: e.clientX, clientY: e.clientY,
+                button: 2, buttons: 2,
+                shiftKey: e.shiftKey, ctrlKey: e.ctrlKey,
+                altKey: e.altKey, metaKey: e.metaKey,
+              }));
+            }}
+          ></div>
+          <span class="mb-corner mb-nw"></span>
+          <span class="mb-corner mb-ne"></span>
+          <span class="mb-corner mb-sw"></span>
+          <span class="mb-corner mb-se"></span>
+          <span class="mb-count">{$selectedStore.size}</span>
+          <span class="mb-dims">{Math.round(mbbox.w)} × {Math.round(mbbox.h)}</span>
+        </div>
         {#each ['nw','ne','sw','se'] as handle}
           {@const pos = bboxHandlePos(mbbox, handle, scale)}
           <div
@@ -2954,8 +3024,69 @@
     position: absolute;
     z-index: 1199;
     pointer-events: none;
-    border: 1px dashed var(--sel, #6aa9ff);
-    border-radius: 2px;
+    border-radius: 6px;
+  }
+  .multi-bbox::before {
+    content: '';
+    position: absolute;
+    inset: 0 14px;
+    background:
+      linear-gradient(to right, rgba(232,68,10,0.55) 33%, transparent 0%) top    / 8px 1px repeat-x,
+      linear-gradient(to right, rgba(232,68,10,0.55) 33%, transparent 0%) bottom / 8px 1px repeat-x;
+    pointer-events: none;
+  }
+  .multi-bbox::after {
+    content: '';
+    position: absolute;
+    inset: 14px 0;
+    background:
+      linear-gradient(to bottom, rgba(232,68,10,0.55) 33%, transparent 0%) left  / 1px 8px repeat-y,
+      linear-gradient(to bottom, rgba(232,68,10,0.55) 33%, transparent 0%) right / 1px 8px repeat-y;
+    pointer-events: none;
+  }
+  .mb-hit {
+    position: absolute;
+    inset: 8px;
+    pointer-events: auto;
+    cursor: move;
+  }
+  .mb-corner {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border-color: #e8440a;
+    border-style: solid;
+    border-width: 0;
+  }
+  .mb-nw { top: -2px; left: -2px; border-top-width: 1.5px; border-left-width: 1.5px; border-top-left-radius: 6px; }
+  .mb-ne { top: -2px; right: -2px; border-top-width: 1.5px; border-right-width: 1.5px; border-top-right-radius: 6px; }
+  .mb-sw { bottom: -2px; left: -2px; border-bottom-width: 1.5px; border-left-width: 1.5px; border-bottom-left-radius: 6px; }
+  .mb-se { bottom: -2px; right: -2px; border-bottom-width: 1.5px; border-right-width: 1.5px; border-bottom-right-radius: 6px; }
+  .mb-count {
+    position: absolute;
+    top: -10px;
+    left: 12px;
+    padding: 2px 7px;
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    color: rgba(255,255,255,0.95);
+    background: #e8440a;
+    border-radius: 3px;
+    line-height: 1.2;
+  }
+  .mb-dims {
+    position: absolute;
+    top: -16px;
+    right: 0;
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    color: rgba(232,68,10,0.85);
+    line-height: 1.2;
+    white-space: nowrap;
   }
   /* ── Resize handles ── */
   .resize-handle {

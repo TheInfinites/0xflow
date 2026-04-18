@@ -41,7 +41,7 @@
   function _tagColor(tag) {
     if (tag.color) return tag.color;
     const hue = _hashHue(tag.id || tag.name || '');
-    return `hsl(${hue}, 55%, 55%)`;
+    return `hsl(${hue}, 32%, 52%)`;
   }
   function _tagLabel(tag) {
     if (tag.kind === 'task') {
@@ -74,10 +74,12 @@
   {@const isEditing = !isSecondary && el.id === activeId}
   {@const badges = badgesFor(el)}
   {#if badges.length > 0 && !isEditing}
+    {@const flipBelow = r.top < 32}
     <div
       class="el-tag-tabs"
       class:visible={hoveredId === el.id}
-      style="left:{r.left}px;top:{r.top}px;width:{r.width * scale}px;"
+      class:below={flipBelow}
+      style="left:{r.left}px;top:{flipBelow ? r.top + r.height * scale : r.top}px;width:{r.width * scale}px;"
     >
       {#each badges as tag, i (tag.id)}
         <span
@@ -93,6 +95,7 @@
     class:editing={isEditing}
     class:no-clip={isVideo}
     class:read-only={readOnly}
+    class:hovered={hoveredId === el.id}
     style="left:{r.left}px;top:{r.top}px;width:{r.width}px;height:{r.height}px;transform:scale({scale});transform-origin:top left;"
   >
     {#if el.type === 'note' || el.type === 'ai-note'}
@@ -119,6 +122,9 @@
     border-radius: 6px;
     overflow: hidden;
     z-index: 2;
+  }
+  .media-overlay-item.hovered {
+    z-index: 11;
   }
   .media-overlay-item.no-clip {
     overflow: visible;
@@ -156,14 +162,22 @@
     transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 160ms ease-out;
   }
   .el-tag-tabs.visible {
-    transform: translateY(-75%);
+    transform: translateY(calc(-100% + 10px));
     opacity: 1;
+    z-index: 10;
+  }
+  .el-tag-tabs.below {
+    align-items: flex-start;
+  }
+  .el-tag-tabs.below.visible {
+    transform: translateY(-10px);
   }
   .el-tag-tab {
     font-family: 'Geist Mono', monospace;
     font-size: 10px;
     font-weight: 500;
-    color: rgba(20,20,22,0.85);
+    letter-spacing: 0.02em;
+    color: rgba(255,255,255,0.92);
     padding: 4px 10px 10px 10px;
     border-radius: 6px 6px 0 0;
     box-shadow: 0 -1px 3px rgba(0,0,0,0.15);
@@ -171,5 +185,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
     flex-shrink: 1;
+  }
+  .el-tag-tabs.below .el-tag-tab {
+    padding: 10px 10px 4px 10px;
+    border-radius: 0 0 6px 6px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
   }
 </style>

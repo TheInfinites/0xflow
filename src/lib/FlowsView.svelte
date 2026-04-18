@@ -522,7 +522,7 @@
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 8px;
     padding: 4px;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+    box-shadow: none;
     display: flex;
     flex-direction: column;
     gap: 1px;
