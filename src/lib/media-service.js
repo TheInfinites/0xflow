@@ -5,6 +5,24 @@ import { get as _getStore } from 'svelte/store';
 import { elementsStore, snapshot } from '../stores/elements.js';
 import { scaleStore, pxStore, pyStore } from '../stores/canvas.js';
 import { projectDirStore } from '../stores/ui.js';
+import { activeCanvasKeyStore, projectFlowsStore, projectTagsStore, parseCanvasKey } from '../stores/projects.js';
+
+/** Auto-tags for newly created elements based on the active canvas view. */
+function _autoTags() {
+  const key = _getStore(activeCanvasKeyStore);
+  const parsed = parseCanvasKey(key);
+  if (parsed.kind === 'project') return [];
+  const flows = _getStore(projectFlowsStore);
+  const flow = flows.find(t => t.id === parsed.flowId);
+  if (!flow || !flow.tagId) return [];
+  const out = [flow.tagId];
+  if (parsed.kind === 'final') {
+    const tags = _getStore(projectTagsStore);
+    const finalTag = tags.find(t => t.kind === 'builtin' && t.slug === 'final');
+    if (finalTag) out.push(finalTag.id);
+  }
+  return out;
+}
 
 export const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 
@@ -326,6 +344,7 @@ export function makeImgCard(id, url, x, y, w, h, nw, nh) {
     pinned:  false, locked: false, votes: 0, reactions: [],
     color:   null,
     content: { imgId: id, sourcePath: null, nativeW: nw || 0, nativeH: nh || 0 },
+    tags: _autoTags(),
   };
   elementsStore.update(els => [...els, el]);
   const proxy = { dataset: { imgId: id, nw, nh }, _elId: el.id };
@@ -351,6 +370,7 @@ export function makeVideoCard(id, url, x, y, w) {
     pinned:  false, locked: false, votes: 0, reactions: [],
     color:   null,
     content: { imgId: id, sourcePath: null, nativeW: 0, nativeH: 0 },
+    tags: _autoTags(),
   };
   elementsStore.update(els => [...els, el]);
   const proxy = { dataset: { imgId: id, mediaType: 'video' }, _elId: el.id };
@@ -373,6 +393,7 @@ export function makeAudioCard(id, url, x, y, filename) {
     pinned:  false, locked: false, votes: 0, reactions: [],
     color:   null,
     content: { imgId: id, sourcePath: filename || null, nativeW: 0, nativeH: 0 },
+    tags: _autoTags(),
   };
   elementsStore.update(els => [...els, el]);
   const proxy = { dataset: { imgId: id, mediaType: 'audio' }, _elId: el.id };
@@ -468,9 +489,6 @@ export async function placeImageBlob(blob, wx, wy, sourcePath) {
     tmp.src = dataURL;
   });
 
-  const id = await saveImgBlob(blob);
-  blobURLCache[id] = dataURL;
-
   const dispW = Math.min(nw, 600);
   const dispH = Math.round(nh * (dispW / nw));
 
@@ -479,37 +497,52 @@ export async function placeImageBlob(blob, wx, wy, sourcePath) {
     wx = p.x - dispW / 2; wy = p.y - dispH / 2;
   }
 
-  let resolvedSourcePath = sourcePath;
-  if (!resolvedSourcePath && IS_TAURI) {
-    resolvedSourcePath = await saveImgToProjectDir(blob, id);
-  }
+  // Reference-only by default: store the file path (Tauri) or an object URL (browser)
+  // without copying the blob into the app. User can later choose "Embed file" to copy it in.
+  const refPath = sourcePath
+    ? sourcePath
+    : IS_TAURI ? null   // Tauri: sourcePath must be provided by caller (drag path)
+    : URL.createObjectURL(blob); // browser: use an object URL as reference
+
+  // Use the dataURL as a transient preview URL in the blobURLCache
+  // (not persisted — refPath is what survives saves)
+  const tempId = 'ref_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+  if (dataURL) blobURLCache[tempId] = dataURL;
 
   snapshot();
-  const card = makeImgCard(id, dataURL, wx, wy, dispW, dispH, nw, nh);
-  if (resolvedSourcePath) card.dataset.sourcePath = resolvedSourcePath;
-  else if (!IS_TAURI) card.dataset.sourcePath = 'D:\\art\\test\\' + (blob.name || id + '.png');
+  const el = {
+    id:      'img_' + tempId,
+    type:    'image',
+    x: wx, y: wy,
+    width:   dispW,
+    height:  dispH,
+    zIndex:  Date.now(),
+    pinned:  false, locked: false, votes: 0, reactions: [],
+    color:   null,
+    tags:    _autoTags(),
+    viewPositions: {},
+    content: {
+      imgId:    null,       // null = not embedded
+      refPath:  refPath,    // original file path / object URL
+      embedded: false,
+      nativeW:  nw,
+      nativeH:  nh,
+      sourcePath: refPath,  // keep legacy compat
+    },
+  };
+  elementsStore.update(els => [...els, el]);
+
+  // For in-session display, put the dataURL in blobURLCache keyed to the element id
+  if (dataURL) blobURLCache['ref_display_' + el.id] = dataURL;
 }
 
 export async function placeMediaFromPath(filePath, wx, wy, mediaType, mimeType) {
+  // Reference-only by default: use Tauri's asset protocol to serve the file directly
+  // without copying it into AppData. User can embed later via "Embed file".
   const { convertFileSrc } = window.__TAURI__.core;
   const assetURL = convertFileSrc(filePath);
-  const id = 'media_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
-
-  try {
-    const ext = '.' + filePath.split('.').pop().toLowerCase();
-    const { copyFile, stat } = window.__TAURI__.fs;
-    const { join } = window.__TAURI__.path;
-    const dir = await getTauriImagesDir();
-    const destPath = await join(dir, id + ext);
-    if (!filePath.startsWith(dir)) {
-      const fileStat = await stat(filePath).catch(() => null);
-      const sizeBytes = fileStat?.size ?? 0;
-      const MB100 = 100 * 1024 * 1024;
-      if (sizeBytes < MB100) await copyFile(filePath, destPath);
-    }
-  } catch (e) { console.warn('placeMediaFromPath: copy failed', e); }
-
-  blobURLCache[id] = assetURL;
+  const tempId = 'media_ref_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+  blobURLCache[tempId] = assetURL;
 
   if (wx === undefined) {
     const p = _canvasCentre();
@@ -517,10 +550,29 @@ export async function placeMediaFromPath(filePath, wx, wy, mediaType, mimeType) 
   }
 
   snapshot();
-  const card = mediaType === 'video'
-    ? makeVideoCard(id, assetURL, wx, wy, 300)
-    : makeAudioCard(id, assetURL, wx, wy, filePath.split(/[\\/]/).pop());
-  card.dataset.sourcePath = filePath;
+  const isVideo = mediaType === 'video';
+  const isAudio = mediaType === 'audio';
+  const elType  = isVideo ? 'video' : isAudio ? 'audio' : 'image';
+  const el = {
+    id:      elType + '_' + tempId,
+    type:    elType,
+    x: wx, y: wy,
+    width:   isVideo ? 300 : isAudio ? 320 : 300,
+    height:  isVideo ? Math.round(300 * 9 / 16) : isAudio ? 100 : 200,
+    zIndex:  Date.now(),
+    pinned:  false, locked: false, votes: 0, reactions: [],
+    color:   null,
+    tags:    _autoTags(),
+    viewPositions: {},
+    content: {
+      imgId:      null,
+      refPath:    filePath,   // original OS path — served via convertFileSrc
+      embedded:   false,
+      sourcePath: filePath,
+      nativeW: 0, nativeH: 0,
+    },
+  };
+  elementsStore.update(els => [...els, el]);
 }
 
 export async function placeMediaBlob(blob, wx, wy, sourcePath, mediaType) {
@@ -684,6 +736,81 @@ export async function placePdf(file, sourcePath, wx, wy) {
   } catch (err) {
     console.error('PDF render failed:', err);
     window.showToast?.('could not read pdf: ' + (err.message || err));
+  }
+}
+
+// ── embedMediaElement: copy a referenced file into app storage ──
+// Called when user right-clicks an image/video/audio element and chooses "Embed file".
+// Reads refPath → saves blob into AppData (Tauri) or IndexedDB (browser) → updates element.
+export async function embedMediaElement(elementId) {
+  const els = _getStore(elementsStore);
+  const el  = els.find(e => e.id === elementId);
+  if (!el) return;
+
+  const { refPath, embedded, imgId } = el.content ?? {};
+  if (embedded && imgId) { window.showToast?.('Already embedded'); return; }
+  if (!refPath)           { window.showToast?.('No source file to embed'); return; }
+
+  try {
+    let blob;
+    if (IS_TAURI) {
+      const { readFile } = window.__TAURI__.fs;
+      const data = await readFile(refPath);
+      // Infer mime from extension
+      const ext  = refPath.split('.').pop().toLowerCase();
+      const mime = { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', gif:'image/gif',
+                     webp:'image/webp', mp4:'video/mp4', webm:'video/webm', mp3:'audio/mpeg',
+                     wav:'audio/wav', ogg:'audio/ogg' }[ext] || 'application/octet-stream';
+      blob = new Blob([data], { type: mime });
+    } else {
+      // In browser mode refPath is an object URL — fetch it
+      const resp = await fetch(refPath);
+      if (!resp.ok) throw new Error('fetch failed');
+      blob = await resp.blob();
+    }
+
+    const newId = await saveImgBlob(blob);
+    const url   = URL.createObjectURL(blob);
+    blobURLCache[newId] = url;
+
+    elementsStore.update(els => els.map(e => e.id === elementId
+      ? { ...e, content: { ...e.content, imgId: newId, embedded: true, refPath: null } }
+      : e
+    ));
+    snapshot();
+    window.showToast?.('File embedded in app');
+  } catch (err) {
+    console.error('embedMediaElement failed:', err);
+    window.showToast?.('Could not embed file: ' + (err.message || err));
+  }
+}
+
+// ── releaseMediaElement: remove a stored blob and go back to reference-only ──
+// Called when user right-clicks and chooses "Release from app".
+export async function releaseMediaElement(elementId) {
+  const els = _getStore(elementsStore);
+  const el  = els.find(e => e.id === elementId);
+  if (!el) return;
+
+  const { imgId, embedded, sourcePath, refPath } = el.content ?? {};
+  if (!embedded || !imgId) { window.showToast?.('Not embedded'); return; }
+
+  try {
+    await deleteImgBlob(imgId);
+    delete blobURLCache[imgId];
+
+    // Restore refPath from sourcePath if available
+    const restoredRef = sourcePath || null;
+
+    elementsStore.update(els => els.map(e => e.id === elementId
+      ? { ...e, content: { ...e.content, imgId: null, embedded: false, refPath: restoredRef } }
+      : e
+    ));
+    snapshot();
+    window.showToast?.('File released from app');
+  } catch (err) {
+    console.error('releaseMediaElement failed:', err);
+    window.showToast?.('Could not release file: ' + (err.message || err));
   }
 }
 

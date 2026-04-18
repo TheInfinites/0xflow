@@ -1,11 +1,17 @@
 <script>
   import { selectedStore, scaleStore, pxStore, pyStore } from '../stores/canvas.js';
-  import { elementsStore, snapshot } from '../stores/elements.js';
+  import { elementsStore, visibleElementsStore, snapshot } from '../stores/elements.js';
+  import {
+    projectTagsStore, projectFlowsStore,
+    activeProjectIdStore, projectsStore,
+  } from '../stores/projects.js';
+  import { canvasTagPickerOpenStore } from '../stores/ui.js';
 
   const WORLD_OFFSET = 3000;
 
   let selected = $derived($selectedStore);
-  let hasSelection = $derived(selected.size > 0);
+  let tagPickerOpen = $derived($canvasTagPickerOpenStore);
+  let hasSelection = $derived(selected.size > 0 && !tagPickerOpen);
 
   function deleteSelected()    { window._pixiCanvas?.deleteSelected?.(); }
   function duplicateSelected() { window._pixiCanvas?.duplicateSelected?.(); }
@@ -43,7 +49,7 @@
     });
   }
 
-  let els = $derived($elementsStore);
+  let els = $derived($visibleElementsStore);
   let selEls = $derived(els.filter(e => selected.has(e.id)));
   let allLocked = $derived(selEls.length > 0 && selEls.every(e => e.locked));
   let allPinned = $derived(selEls.length > 0 && selEls.every(e => e.pinned));
@@ -102,6 +108,53 @@
     snapshot();
     elementsStore.update(all => all.map(e => e.id === id ? { ...e, content: { ...e.content, frameColor: idx } } : e));
     snapshot();
+  }
+
+  // ── Tags (v3 projects) ───────────────────────
+  let activeProject = $derived($projectsStore.find(p => p.id === $activeProjectIdStore) ?? null);
+  let isV3Project   = $derived(activeProject?.schemaVersion === 3);
+  let allTags       = $derived($projectTagsStore);
+  let allFlows      = $derived($projectFlowsStore);
+
+  let tagsOpen     = $state(false);
+  let newTagName   = $state('');
+
+  function _tagLabel(tag) {
+    if (tag.kind === 'task') {
+      const t = allFlows.find(t => t.tagId === tag.id);
+      return t ? t.title : tag.name;
+    }
+    return tag.name;
+  }
+
+  // How many selected elements have this tag
+  function tagCount(tagId) {
+    let n = 0;
+    for (const el of selEls) if (Array.isArray(el.tags) && el.tags.includes(tagId)) n++;
+    return n;
+  }
+
+  function toggleTag(tagId) {
+    const ids = new Set(selected);
+    const count = tagCount(tagId);
+    const addToAll = count < selEls.length; // if not all have it, add; else remove
+    snapshot();
+    elementsStore.update(els => els.map(e => {
+      if (!ids.has(e.id)) return e;
+      const cur = Array.isArray(e.tags) ? e.tags : [];
+      const has = cur.includes(tagId);
+      if (addToAll && !has) return { ...e, tags: [...cur, tagId] };
+      if (!addToAll && has) return { ...e, tags: cur.filter(t => t !== tagId) };
+      return e;
+    }));
+  }
+
+  async function createAndApplyTag() {
+    const name = newTagName.trim();
+    if (!name) return;
+    const tag = await window.createProjectTag?.($activeProjectIdStore, name);
+    if (tag?.id) toggleTag(tag.id);
+    newTagName = '';
   }
 
   // Position near selected elements
@@ -210,6 +263,48 @@
       <span>{allLocked ? 'unlock' : 'lock'}</span>
     </button>
 
+    {#if isV3Project}
+      <div class="sel-divider"></div>
+      <div class="sel-tags-wrap">
+        <button class="sel-btn" class:active={tagsOpen} title="tags" onclick={() => tagsOpen = !tagsOpen}>
+          <svg viewBox="0 0 12 12"><path d="M1 6l5-5h5v5l-5 5z"/><circle cx="8.5" cy="3.5" r="0.8"/></svg>tags
+        </button>
+        {#if tagsOpen}
+          <div
+            class="sel-tags-pop"
+            onclick={e => e.stopPropagation()}
+            onkeydown={e => e.stopPropagation()}
+            role="menu"
+            tabindex="-1"
+          >
+            {#if allTags.length === 0}
+              <div class="sel-tags-empty">no tags yet</div>
+            {:else}
+              {#each allTags as tag (tag.id)}
+                {@const count = tagCount(tag.id)}
+                {@const state = count === 0 ? 'none' : count === selEls.length ? 'all' : 'some'}
+                <button class="sel-tag-row" onclick={() => toggleTag(tag.id)}>
+                  <span class="sel-tag-check" data-state={state}>{state === 'all' ? '✓' : state === 'some' ? '–' : ''}</span>
+                  <span class="sel-tag-name">{_tagLabel(tag)}</span>
+                  <span class="sel-tag-kind">{tag.kind}</span>
+                </button>
+              {/each}
+            {/if}
+            <div class="sel-tag-new">
+              <input
+                type="text"
+                placeholder="new tag…"
+                bind:value={newTagName}
+                onkeydown={e => { if (e.key === 'Enter') { createAndApplyTag(); } e.stopPropagation(); }}
+                onclick={e => e.stopPropagation()}
+              />
+              <button class="sel-btn" onclick={createAndApplyTag}>+</button>
+            </div>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
     <div class="sel-divider"></div>
 
     <button class="sel-btn danger" title="delete  Del" onclick={deleteSelected}>
@@ -245,7 +340,7 @@
   .sel-divider { width: 1px; height: 14px; background: rgba(255,255,255,0.08); margin: 0 2px; }
   .sel-btn {
     height: 26px; padding: 0 9px;
-    background: none; border: 1px solid transparent; border-radius: 0;
+    background: none; border: 1px solid transparent;
     font-family: 'Geist Mono', monospace; font-size: 9px;
     letter-spacing: 0.08em; text-transform: uppercase;
     color: rgba(255,255,255,0.35);
@@ -288,4 +383,80 @@
   }
   .sel-frame-swatch:hover { transform: scale(1.25); }
   .sel-frame-swatch.active { outline: 2px solid rgba(255,255,255,0.55); outline-offset: 1px; }
+
+  .sel-tags-wrap { position: relative; }
+  .sel-tags-pop {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    min-width: 220px;
+    max-height: 280px;
+    overflow-y: auto;
+    background: rgba(16,16,18,0.98);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px;
+    padding: 4px;
+    z-index: 1300;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  }
+  .sel-tags-empty {
+    font-family: 'Geist Mono', monospace;
+    font-size: 9px;
+    color: rgba(255,255,255,0.3);
+    padding: 10px 8px;
+    text-align: center;
+  }
+  .sel-tag-row {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%;
+    padding: 6px 8px;
+    background: transparent;
+    border: none;
+    color: rgba(255,255,255,0.75);
+    font-family: 'Geist', sans-serif;
+    font-size: 11px;
+    cursor: pointer;
+    border-radius: 4px;
+    text-align: left;
+  }
+  .sel-tag-row:hover { background: rgba(255,255,255,0.06); }
+  .sel-tag-check {
+    width: 14px; height: 14px;
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 3px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    color: rgba(255,255,255,0.9);
+    flex-shrink: 0;
+  }
+  .sel-tag-check[data-state="all"]  { background: rgba(74,158,255,0.35); border-color: rgba(74,158,255,0.6); }
+  .sel-tag-check[data-state="some"] { background: rgba(255,255,255,0.1); }
+  .sel-tag-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sel-tag-kind {
+    font-family: 'Geist Mono', monospace;
+    font-size: 8px;
+    color: rgba(255,255,255,0.3);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .sel-tag-new {
+    display: flex; gap: 4px;
+    padding: 6px 4px 2px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    margin-top: 4px;
+  }
+  .sel-tag-new input {
+    flex: 1;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 4px;
+    color: rgba(255,255,255,0.9);
+    padding: 4px 8px;
+    font-family: 'Geist', sans-serif;
+    font-size: 11px;
+    outline: none;
+  }
+  .sel-tag-new input:focus { border-color: rgba(74,158,255,0.5); }
 </style>

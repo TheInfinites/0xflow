@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": ["main"],
+  "windows": ["main", "splash"],
   "permissions": [
     "core:default",
     "fs:default",
@@ -47,6 +47,8 @@
     "core:window:allow-destroy",
     "core:window:allow-start-dragging",
     "core:window:allow-set-focus",
+    "core:window:allow-show",
+    "core:window:allow-hide",
     "core:window:allow-is-maximized",
     "updater:default",
     "process:allow-restart",

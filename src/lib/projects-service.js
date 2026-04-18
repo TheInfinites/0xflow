@@ -8,16 +8,33 @@
 // ════════════════════════════════════════════
 import { get } from 'svelte/store';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { initDB, dbGetAllSettings, dbLoadProjects, dbLoadFolders, dbSaveProject, dbDeleteProject, dbSaveFolder, dbDeleteFolder } from './db.js';
+import {
+  initDB, dbGetAllSettings, dbLoadProjects, dbLoadFolders,
+  dbSaveProject, dbDeleteProject, dbSaveFolder, dbDeleteFolder,
+  dbLoadFlows, dbSaveFlow, dbDeleteFlow,
+  dbLoadTags, dbSaveTag, dbDeleteTag,
+  dbLoadProjectCanvases, dbSaveProjectCanvas, dbDeleteProjectCanvas,
+} from './db.js';
 import {
   projectsStore, foldersStore,
   setProjects, setFolders,
   setActiveProjectId, getActiveProjectId,
   setCurrentFolderId, getCurrentFolderId,
+  projectFlowsStore, projectTagsStore,
+  setProjectFlows, setProjectTags,
+  getProjectFlows, getProjectTags,
+  activeCanvasKeyStore, setActiveCanvasKey,
+  makeCanvasKey, parseCanvasKey,
+  projectCanvasesStore, setProjectCanvases, getProjectCanvases,
 } from '../stores/projects.js';
 import { elementsStore } from '../stores/elements.js';
-import { toastMsgStore, toastVisibleStore, isOnCanvasStore } from '../stores/ui.js';
-import { saveCanvasV2, loadCanvasV2, applyCanvasState, clearCanvasState, migrateV1ToV2 } from './canvas-persistence.js';
+import { toastMsgStore, toastVisibleStore, isOnCanvasStore, activeViewStore, setActiveView, splitModeStore, setSplitMode, secondaryCanvasKeyStore, setSecondaryCanvasKey } from '../stores/ui.js';
+import {
+  saveCanvasV2, loadCanvasV2, saveCanvasV3, loadCanvasV3,
+  saveNamedCanvas, loadNamedCanvas,
+  applyCanvasState, clearCanvasState, migrateV1ToV2,
+  stashCurrentViewport, restoreViewport,
+} from './canvas-persistence.js';
 import { store, markDbReady, setStorageFullCallback, isDbReady } from './kv-store.js';
 export { store };
 
@@ -74,6 +91,102 @@ const ACCENT_COLORS = [null, null, null,
   'rgba(120,160,120,0.8)', 'rgba(160,120,80,0.8)', 'rgba(130,100,170,0.8)',
 ];
 
+// Bundled default cover images — shipped with the app under src/assets/covers/.
+// Vite picks them up at build time, fingerprints them, and gives us URLs we can fetch.
+const DEFAULT_COVER_MODULES = import.meta.glob('../assets/covers/*.{png,jpg,jpeg,gif,webp}', {
+  eager: true, query: '?url', import: 'default',
+});
+const DEFAULT_COVER_URLS = Object.values(DEFAULT_COVER_MODULES);
+
+// Shuffled-queue picker: each image is used once before any repeats, so a batch
+// of new projects/folders (or the first-run backfill) gets maximum variety.
+// We also avoid repeating the last-used image when the queue wraps.
+let _coverQueue = [];
+let _lastCoverUrl = null;
+
+function _fisherYates(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function _nextCoverUrl() {
+  if (!DEFAULT_COVER_URLS.length) return null;
+  if (_coverQueue.length === 0) {
+    _coverQueue = _fisherYates(DEFAULT_COVER_URLS);
+    // Avoid back-to-back repeat across the seam when refilling
+    if (_lastCoverUrl && _coverQueue.length > 1 && _coverQueue[0] === _lastCoverUrl) {
+      [_coverQueue[0], _coverQueue[1]] = [_coverQueue[1], _coverQueue[0]];
+    }
+  }
+  const url = _coverQueue.shift();
+  _lastCoverUrl = url;
+  return url;
+}
+
+async function _pickRandomDefaultCoverBlob() {
+  const url = _nextCoverUrl();
+  if (!url) return null;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return await res.blob();
+  } catch (e) {
+    console.warn('[projects-service] default cover fetch failed:', e);
+    return null;
+  }
+}
+
+async function _assignDefaultProjectCover(projectId) {
+  const blob = await _pickRandomDefaultCoverBlob();
+  if (!blob) return;
+  const { saveImgBlob } = await import('./media-service.js');
+  const newId = await saveImgBlob(blob);
+  if (!newId) return;
+  const projects = loadProjects();
+  const p = projects.find(x => x.id === projectId);
+  if (!p || p.coverImageId) return; // user may have already set one
+  p.coverImageId = newId;
+  saveProjects(projects);
+}
+
+async function _assignDefaultFolderCover(folderId) {
+  const blob = await _pickRandomDefaultCoverBlob();
+  if (!blob) return;
+  const { saveImgBlob } = await import('./media-service.js');
+  const newId = await saveImgBlob(blob);
+  if (!newId) return;
+  const folders = loadFolders();
+  const f = folders.find(x => x.id === folderId);
+  if (!f || f.coverImageId) return;
+  f.coverImageId = newId;
+  saveFolders(folders);
+}
+
+// One-time backfill: give every existing project/folder without a cover one of
+// the bundled default images. Runs after init, awaited sequentially to avoid
+// thrashing the blob store on first run.
+async function _backfillDefaultCovers() {
+  if (!DEFAULT_COVER_URLS.length) return;
+  try {
+    const projects = loadProjects();
+    for (const p of projects) {
+      if (p.coverImageId) continue;
+      await _assignDefaultProjectCover(p.id);
+    }
+    const folders = loadFolders();
+    for (const f of folders) {
+      if (f.coverImageId) continue;
+      await _assignDefaultFolderCover(f.id);
+    }
+  } catch (e) {
+    console.warn('[projects-service] default-cover backfill failed:', e);
+  }
+}
+
 function createProject(name) {
   const id = 'proj_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
   const fid = getCurrentFolderId() === '__unfiled__' ? null : (getCurrentFolderId() || null);
@@ -83,11 +196,32 @@ function createProject(name) {
     noteCount: 0,
     accent: ACCENT_COLORS[Math.floor(Math.random() * ACCENT_COLORS.length)],
     folderId: fid,
+    schemaVersion: 3,   // new projects are v3 (Flows hub + tags)
   };
   const projects = loadProjects();
   projects.unshift(p);
   saveProjects(projects);
+
+  // Seed the builtin 'final' tag for v3 projects so flow final canvases can filter on it.
+  const finalTag = _makeTag(id, 'final', 'builtin', null, '#e0b84a');
+  _persistTag(finalTag);
+
+  // Assign a random default cover (fire-and-forget). User can replace it later.
+  _assignDefaultProjectCover(id);
+
   return p;
+}
+
+function createFolder(name, parentId = null) {
+  const trimmed = (name || '').trim() || 'new folder';
+  const f = { id: 'fold_' + Date.now(), name: trimmed, parentId: parentId || null };
+  const folders = [...loadFolders(), f];
+  saveFolders(folders);
+
+  // Assign a random default cover (fire-and-forget). User can replace it later.
+  _assignDefaultFolderCover(f.id);
+
+  return f;
 }
 
 function dupProject(id) {
@@ -113,6 +247,40 @@ function renameProject(id, name) {
   saveProjects(projects);
 }
 
+async function setProjectCover(id, file) {
+  const { saveImgBlob, deleteImgBlob } = await import('./media-service.js');
+  const projects = loadProjects();
+  const p = projects.find(x => x.id === id); if (!p) return;
+  if (p.coverImageId) { try { await deleteImgBlob(p.coverImageId); } catch {} }
+  const newId = file ? await saveImgBlob(file) : null;
+  p.coverImageId = newId;
+  p.updatedAt = Date.now();
+  saveProjects(projects);
+  showToast(file ? 'cover set' : 'cover cleared');
+}
+
+async function setFolderCover(id, file) {
+  const { saveImgBlob, deleteImgBlob } = await import('./media-service.js');
+  const folders = loadFolders();
+  const f = folders.find(x => x.id === id); if (!f) return;
+  if (f.coverImageId) { try { await deleteImgBlob(f.coverImageId); } catch {} }
+  const newId = file ? await saveImgBlob(file) : null;
+  f.coverImageId = newId;
+  saveFolders(folders);
+  showToast(file ? 'cover set' : 'cover cleared');
+}
+
+// File picker helper — triggers a hidden input and resolves the selected File
+function pickCoverImage() {
+  return new Promise(resolve => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = () => resolve(input.files?.[0] || null);
+    input.click();
+  });
+}
+
 function deleteProject(id) {
   let projects = loadProjects();
   const p = projects.find(x => x.id === id);
@@ -124,6 +292,241 @@ function deleteProject(id) {
   if (p) showToast(`"${p.name}" deleted`);
 }
 
+// ── v3: Flows & Tags CRUD ─────────────────────
+// Flows and tags live alongside canvas state. Both persist to SQLite (Tauri) or
+// localStorage (browser). Flow CRUD (for kind='flow') auto-creates a matching tag
+// on the fly so the flow canvas can filter by that tag. Renaming a flow updates
+// the tag's display name but keeps its id/slug stable so element associations
+// survive. Non-'flow' kinds (text/note/checklist/link) are list-only — no tag,
+// no canvas, no sub-items.
+
+const FLOWS_KEY = (pid) => `freeflow_flows_${pid}`;
+const LEGACY_TASKS_KEY = (pid) => `freeflow_tasks_${pid}`; // for localStorage migration
+const TAGS_KEY  = (pid) => `freeflow_tags_${pid}`;
+
+function _slugify(s) {
+  return (s || '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'tag';
+}
+
+function _newId(prefix) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function _makeTag(projectId, name, kind = 'project', ownerFlowId = null, color = null) {
+  return {
+    id: _newId('tag'),
+    projectId,
+    name,
+    slug: _slugify(name),
+    kind,              // 'project' | 'task' | 'builtin' (kind='task' retained for legacy tag records)
+    ownerFlowId,
+    color,
+    createdAt: Date.now(),
+  };
+}
+
+function _persistTag(tag) {
+  // Update in-memory store (if this tag's project is the active one)
+  if (getActiveProjectId() === tag.projectId || get(projectTagsStore).some(t => t.projectId === tag.projectId)) {
+    const all = get(projectTagsStore);
+    const idx = all.findIndex(t => t.id === tag.id);
+    if (idx >= 0) {
+      all[idx] = tag;
+      projectTagsStore.set([...all]);
+    } else {
+      projectTagsStore.set([...all, tag]);
+    }
+  }
+  // Persist
+  if (IS_TAURI_STORAGE && isDbReady()) {
+    dbSaveTag(tag).catch(e => console.warn('[store] dbSaveTag:', e));
+  } else {
+    try {
+      const raw = store.get(TAGS_KEY(tag.projectId));
+      const arr = raw ? JSON.parse(raw) : [];
+      const idx = arr.findIndex(t => t.id === tag.id);
+      if (idx >= 0) arr[idx] = tag; else arr.push(tag);
+      store.set(TAGS_KEY(tag.projectId), JSON.stringify(arr));
+    } catch {}
+  }
+}
+
+function _persistFlow(flow) {
+  if (getActiveProjectId() === flow.projectId || get(projectFlowsStore).some(t => t.projectId === flow.projectId)) {
+    const all = get(projectFlowsStore);
+    const idx = all.findIndex(t => t.id === flow.id);
+    if (idx >= 0) {
+      all[idx] = flow;
+      projectFlowsStore.set([...all]);
+    } else {
+      projectFlowsStore.set([...all, flow]);
+    }
+  }
+  if (IS_TAURI_STORAGE && isDbReady()) {
+    dbSaveFlow(flow).catch(e => console.warn('[store] dbSaveFlow:', e));
+  } else {
+    try {
+      const raw = store.get(FLOWS_KEY(flow.projectId));
+      const arr = raw ? JSON.parse(raw) : [];
+      const idx = arr.findIndex(t => t.id === flow.id);
+      if (idx >= 0) arr[idx] = flow; else arr.push(flow);
+      store.set(FLOWS_KEY(flow.projectId), JSON.stringify(arr));
+    } catch {}
+  }
+}
+
+async function _loadFlowsAndTagsFor(projectId) {
+  if (IS_TAURI_STORAGE && isDbReady()) {
+    const [flows, tags] = await Promise.all([
+      dbLoadFlows(projectId),
+      dbLoadTags(projectId),
+    ]);
+    setProjectFlows(flows);
+    setProjectTags(tags);
+  } else {
+    try {
+      // Prefer flows key; fall back to legacy tasks key (one-time migration for browser mode).
+      let tRaw = store.get(FLOWS_KEY(projectId));
+      if (!tRaw) {
+        const legacy = store.get(LEGACY_TASKS_KEY(projectId));
+        if (legacy) {
+          try {
+            const migrated = JSON.parse(legacy).map(r => ({
+              ...r,
+              parentFlowId: r.parentFlowId ?? r.parentTaskId ?? null,
+              flowTagIds:   r.flowTagIds   ?? r.taskTagIds   ?? [],
+              kind: r.kind || 'flow',
+            }));
+            store.set(FLOWS_KEY(projectId), JSON.stringify(migrated));
+            tRaw = JSON.stringify(migrated);
+          } catch { tRaw = legacy; }
+        }
+      }
+      setProjectFlows(tRaw ? JSON.parse(tRaw) : []);
+    } catch { setProjectFlows([]); }
+    try {
+      const gRaw = store.get(TAGS_KEY(projectId));
+      setProjectTags(gRaw ? JSON.parse(gRaw) : []);
+    } catch { setProjectTags([]); }
+  }
+  // If no 'final' builtin tag exists (e.g. project created before this ran), seed one.
+  if (!get(projectTagsStore).some(t => t.kind === 'builtin' && t.slug === 'final')) {
+    _persistTag(_makeTag(projectId, 'final', 'builtin', null, '#e0b84a'));
+  }
+}
+
+/**
+ * Create a flow under an optional parent. For kind='flow', auto-creates a
+ * flow-scoped tag whose id is attached to the flow; that tag filters the flow's
+ * canvas view. Other kinds (text/note/checklist/link) are list-only — no tag,
+ * no canvas, no sub-items.
+ */
+function createFlow({ projectId, parentFlowId = null, title = 'new flow', kind = 'flow', payload = null }) {
+  const isCanvasFlow = kind === 'flow';
+  const tag = isCanvasFlow ? _makeTag(projectId, title, 'task', null, null) : null;
+  const flow = {
+    id: _newId('flow'),
+    projectId,
+    parentFlowId: isCanvasFlow ? parentFlowId : null,
+    kind,
+    title,
+    tagId: tag?.id || null,
+    startDate: null,
+    endDate: null,
+    status: 'todo',
+    order: get(projectFlowsStore).filter(t => (t.parentFlowId || null) === (isCanvasFlow ? parentFlowId : null)).length,
+    flowTagIds: [],
+    comments: [],
+    description: '',
+    payload,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  if (tag) {
+    // Back-link the tag to the flow before persisting.
+    tag.ownerFlowId = flow.id;
+    _persistTag(tag);
+  }
+  _persistFlow(flow);
+  return flow;
+}
+
+function updateFlow(flowId, patch) {
+  const all = get(projectFlowsStore);
+  const flow = all.find(t => t.id === flowId);
+  if (!flow) return null;
+  const updated = { ...flow, ...patch, updatedAt: Date.now() };
+  _persistFlow(updated);
+  // If title changed, keep the associated tag's name in sync (slug/id stay stable).
+  if (patch.title && patch.title !== flow.title && flow.tagId) {
+    const tag = get(projectTagsStore).find(t => t.id === flow.tagId);
+    if (tag) _persistTag({ ...tag, name: patch.title });
+  }
+  return updated;
+}
+
+/**
+ * Delete a flow. `mode === 'untag'` also strips the flow's tag from every element.
+ * `mode === 'keep'` leaves tags in place (orphaned but harmless).
+ * Sub-flows cascade with the same mode.
+ */
+function deleteFlow(flowId, mode = 'keep') {
+  const all = get(projectFlowsStore);
+  const flow = all.find(t => t.id === flowId);
+  if (!flow) return;
+
+  // Cascade sub-flows first
+  const subs = all.filter(t => t.parentFlowId === flowId);
+  for (const s of subs) deleteFlow(s.id, mode);
+
+  // Strip the flow's tag from elements if requested
+  if (mode === 'untag' && flow.tagId) {
+    const els = get(elementsStore).map(e => {
+      if (!Array.isArray(e.tags) || !e.tags.includes(flow.tagId)) return e;
+      return { ...e, tags: e.tags.filter(t => t !== flow.tagId) };
+    });
+    elementsStore.set(els);
+  }
+
+  // Remove flow's tag
+  if (flow.tagId) {
+    const tag = get(projectTagsStore).find(t => t.id === flow.tagId);
+    if (tag) {
+      projectTagsStore.set(get(projectTagsStore).filter(t => t.id !== flow.tagId));
+      if (IS_TAURI_STORAGE && isDbReady()) {
+        dbDeleteTag(flow.tagId).catch(() => {});
+      } else {
+        try {
+          const raw = store.get(TAGS_KEY(flow.projectId));
+          const arr = raw ? JSON.parse(raw) : [];
+          store.set(TAGS_KEY(flow.projectId), JSON.stringify(arr.filter(t => t.id !== flow.tagId)));
+        } catch {}
+      }
+    }
+  }
+
+  // Remove the flow
+  projectFlowsStore.set(get(projectFlowsStore).filter(t => t.id !== flowId));
+  if (IS_TAURI_STORAGE && isDbReady()) {
+    dbDeleteFlow(flowId).catch(() => {});
+  } else {
+    try {
+      const raw = store.get(FLOWS_KEY(flow.projectId));
+      const arr = raw ? JSON.parse(raw) : [];
+      store.set(FLOWS_KEY(flow.projectId), JSON.stringify(arr.filter(t => t.id !== flowId)));
+    } catch {}
+  }
+}
+
+/** Create a free-form project tag (not owned by any flow). */
+function createProjectTag(projectId, name, color = null) {
+  const tag = _makeTag(projectId, name, 'project', null, color);
+  _persistTag(tag);
+  return tag;
+}
+
 // ── Canvas save (v2) ──────────────────────────
 
 let _loadingCanvas = false;
@@ -132,11 +535,25 @@ let _debounceSaveTimer = null;
 async function _saveCurrentCanvas() {
   const id = getActiveProjectId();
   if (!id) return;
-  await saveCanvasV2(id);
-  // Update note count from elements store
-  const els = get(elementsStore);
+
+  const activeKey = get(activeCanvasKeyStore);
+  const parsed = parseCanvasKey(activeKey);
+
+  // If on a named canvas, save the named canvas state (isolated)
+  if (parsed.kind === 'named') {
+    await saveNamedCanvas(parsed.canvasId);
+    return;
+  }
+
   const projects = loadProjects();
   const p = projects.find(x => x.id === id);
+  if (p && p.schemaVersion === 3) {
+    await saveCanvasV3(id);
+  } else {
+    await saveCanvasV2(id);
+  }
+  // Update note count from elements store
+  const els = get(elementsStore);
   if (p) {
     p.noteCount = els.filter(e => e.type === 'note' || e.type === 'ai-note').length;
     p.updatedAt = Date.now();
@@ -176,17 +593,44 @@ async function openProject(id, e) {
   saveProjects(projects);
   setActiveProjectId(id);
 
-  document.body.classList.add('on-canvas');
-  isOnCanvasStore.set(true);
-
   clearTimeout(_debounceSaveTimer);
   _debounceSaveTimer = null;
 
-  // Load canvas state — try v2 first, then attempt v1→v2 migration, else DOM restore
   _loadingCanvas = true;
   clearCanvasState();
+
+  // v3 projects: load flows/tags first, then canvas state
+  if (p.schemaVersion === 3) {
+    await _loadFlowsAndTagsFor(id);
+  } else {
+    setProjectFlows([]);
+    setProjectTags([]);
+  }
+
+  // Load named canvases for this project (all schema versions)
+  if (IS_TAURI_STORAGE && isDbReady()) {
+    const canvases = await dbLoadProjectCanvases(id);
+    setProjectCanvases(canvases);
+  } else {
+    // Browser: load from localStorage index
+    try {
+      const raw = localStorage.getItem('freeflow_canvases_' + id);
+      setProjectCanvases(raw ? JSON.parse(raw) : []);
+    } catch { setProjectCanvases([]); }
+  }
+
+  // Always start v3 projects on the project canvas view key (so filters pass-through
+  // to all elements until the user explicitly navigates to a flow canvas).
+  setActiveCanvasKey('__project__');
+
   try {
-    const state = await loadCanvasV2(id);
+    // Prefer v3 load for v3 projects, fall back to v2 for safety
+    let state = null;
+    if (p.schemaVersion === 3) {
+      state = await loadCanvasV3(id);
+    }
+    if (!state) state = await loadCanvasV2(id);
+
     if (state) {
       applyCanvasState(state);
     } else {
@@ -196,25 +640,111 @@ async function openProject(id, e) {
         applyCanvasState(migrated);
         // Persist as v2 so we never need to migrate again
         await saveCanvasV2(id);
-        // Remove v1 key so migration doesn't re-trigger
         try { localStorage.removeItem('freeflow_canvas_' + id); } catch {}
       }
-      // No canvas data — blank canvas, nothing to show
     }
   } finally {
     _loadingCanvas = false;
+  }
+
+  // Routing: v3 projects land on split view (flows + canvas); v2 projects go straight to canvas.
+  if (p.schemaVersion === 3) {
+    setActiveView('canvas');
+    setSplitMode('split');
+    document.body.classList.remove('on-flows', 'split-left', 'split-right');
+    document.body.classList.add('on-canvas', 'on-split');
+    requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+  } else {
+    document.body.classList.remove('on-flows');
+    document.body.classList.add('on-canvas');
+    setActiveView('canvas');
   }
 
   // Restore project directory button (was previously done in legacy loadCanvasState)
   window.loadProjectDir?.();
 }
 
+/**
+ * Switch the active canvas view key. Stashes the current viewport under the
+ * previous key, applies the new key, then restores that key's saved viewport
+ * (if any). Assumes we're already rendering the canvas — does not toggle views.
+ */
+function setCanvasView(newKey) {
+  const prev = get(activeCanvasKeyStore);
+  if (prev === newKey) return;
+  stashCurrentViewport(prev);
+  setActiveCanvasKey(newKey);
+  restoreViewport(newKey);
+}
+
+/**
+ * Navigate from the Flows hub into a canvas view. If flowId is null, opens the
+ * project canvas. If kind === 'final', opens the parent flow's Final canvas.
+ * Note: internal canvas-key kind retains 'task' prefix for backward-compat.
+ */
+function openCanvasView(flowId = null, kind = 'task') {
+  const key = flowId ? makeCanvasKey(kind, flowId) : '__project__';
+  setCanvasView(key);
+  const sm = get(splitModeStore);
+  if (sm) {
+    // In split mode, canvas is already visible — just switch the key.
+    // If flows are fullscreen (split-left), switch to split to show canvas.
+    if (sm === 'left') {
+      setSplitPanel('split');
+    }
+    setActiveView('canvas');
+  } else {
+    document.body.classList.remove('on-flows');
+    document.body.classList.add('on-canvas');
+    setActiveView('canvas');
+  }
+}
+
+/** Return from canvas back to Flows hub (v3 projects only). */
+function backToFlows() {
+  const id = getActiveProjectId();
+  const projects = loadProjects();
+  const p = projects.find(x => x.id === id);
+  if (!p || p.schemaVersion !== 3) return;
+  // Save current viewport + canvas state before leaving.
+  stashCurrentViewport(get(activeCanvasKeyStore));
+  _saveCurrentCanvas();
+  const sm = get(splitModeStore);
+  if (sm) {
+    // In split mode, expand flows to full screen
+    setSplitPanel('left');
+    setActiveView('flows');
+  } else {
+    document.body.classList.remove('on-canvas');
+    document.body.classList.add('on-flows');
+    setActiveView('flows');
+  }
+}
+
+/** Toggle split mode panels: 'left' = flows full, 'right' = canvas full, 'split' = 50/50 */
+function setSplitPanel(mode) {
+  setSplitMode(mode);
+  document.body.classList.remove('split-left', 'split-right');
+  if (mode === 'left')  document.body.classList.add('split-left');
+  if (mode === 'right') document.body.classList.add('split-right');
+  // Trigger Pixi resize after layout change
+  requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+}
+
 async function goToDashboard() {
   clearTimeout(_debounceSaveTimer);
   _debounceSaveTimer = null;
+  _clearSecondaryUnsubs();
   await _saveCurrentCanvas();
-  document.body.classList.remove('on-canvas');
-  isOnCanvasStore.set(false);
+  document.body.classList.remove('on-canvas', 'on-flows', 'on-split', 'split-left', 'split-right', 'dual-canvas');
+  setSplitMode(false);
+  setActiveView('dashboard');
+  // Clear stores so the dashboard doesn't show stale flow/tag/canvas data.
+  setProjectFlows([]);
+  setProjectTags([]);
+  setProjectCanvases([]);
+  setActiveCanvasKey('__project__');
+  setSecondaryCanvasKey(null);
   dashRender();
 }
 
@@ -270,6 +800,247 @@ function deleteFolderById(fid) {
   if (f) showToast(`"${f.name}" deleted, canvases moved to unfiled`);
 }
 
+// ── Named canvas CRUD ─────────────────────────
+
+function _canvasesLocalKey(projectId) { return `freeflow_canvases_${projectId}`; }
+
+function _saveProjectCanvasesList(projectId, canvases) {
+  setProjectCanvases(canvases);
+  if (IS_TAURI_STORAGE && isDbReady()) {
+    canvases.forEach(c => dbSaveProjectCanvas(c).catch(e => console.warn('[store] dbSaveProjectCanvas:', e)));
+  } else {
+    try { localStorage.setItem(_canvasesLocalKey(projectId), JSON.stringify(canvases)); } catch {}
+  }
+}
+
+async function createNamedCanvas(projectId, name) {
+  if (!projectId) return null;
+  const id = 'cnv_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+  const canvas = {
+    id,
+    projectId,
+    name: (name || '').trim() || 'untitled canvas',
+    order: get(projectCanvasesStore).length,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  const updated = [...get(projectCanvasesStore), canvas];
+  _saveProjectCanvasesList(projectId, updated);
+  return canvas;
+}
+
+async function renameNamedCanvas(canvasId, name) {
+  const projectId = getActiveProjectId();
+  if (!projectId) return;
+  const canvases = get(projectCanvasesStore).map(c =>
+    c.id === canvasId ? { ...c, name: (name || '').trim() || 'untitled canvas', updatedAt: Date.now() } : c
+  );
+  _saveProjectCanvasesList(projectId, canvases);
+}
+
+async function deleteNamedCanvas(canvasId) {
+  const projectId = getActiveProjectId();
+  if (!projectId) return;
+  // If we're on this canvas, switch to project canvas first
+  if (get(activeCanvasKeyStore) === 'canvas:' + canvasId) {
+    await switchToCanvas('__project__');
+  }
+  // If secondary is showing this canvas, close it
+  if (get(secondaryCanvasKeyStore) === 'canvas:' + canvasId) {
+    setSecondaryCanvas(null);
+  }
+  // Remove from store and DB
+  const canvases = get(projectCanvasesStore).filter(c => c.id !== canvasId);
+  setProjectCanvases(canvases);
+  if (IS_TAURI_STORAGE && isDbReady()) {
+    dbDeleteProjectCanvas(canvasId).catch(e => console.warn('[store] dbDeleteProjectCanvas:', e));
+  } else {
+    try {
+      localStorage.removeItem('freeflow_canvas_named_' + canvasId);
+      const projectId2 = getActiveProjectId();
+      if (projectId2) localStorage.setItem(_canvasesLocalKey(projectId2), JSON.stringify(canvases));
+    } catch {}
+  }
+}
+
+/**
+ * Switch the active canvas to a new key. Handles both named canvases (isolated
+ * element stores) and flow/project canvases (tag-filtered shared pool).
+ */
+async function switchToCanvas(newKey) {
+  const prevKey = get(activeCanvasKeyStore);
+  if (prevKey === newKey) return;
+
+  const projectId = getActiveProjectId();
+  const projects = loadProjects();
+  const p = projects.find(x => x.id === projectId);
+  if (!projectId || !p) return;
+
+  // 1. Save current canvas before switching
+  const prevParsed = parseCanvasKey(prevKey);
+  if (prevParsed.kind === 'named') {
+    await saveNamedCanvas(prevParsed.canvasId);
+  } else {
+    // Save the project pool (flows/project canvas)
+    if (p.schemaVersion === 3) {
+      stashCurrentViewport(prevKey);
+      await saveCanvasV3(projectId);
+    } else {
+      await saveCanvasV2(projectId);
+    }
+  }
+
+  // 2. Stash viewport for the previous key
+  stashCurrentViewport(prevKey);
+
+  // 3. Load the target canvas
+  const newParsed = parseCanvasKey(newKey);
+  if (newParsed.kind === 'named') {
+    // Named canvas: load its isolated element pool
+    const state = await loadNamedCanvas(newParsed.canvasId);
+    if (state) {
+      applyCanvasState(state);
+    } else {
+      // Brand new canvas — start empty
+      clearCanvasState();
+    }
+  } else if (prevParsed.kind === 'named') {
+    // Switching from named → flow/project: reload the project pool
+    let state = p.schemaVersion === 3 ? await loadCanvasV3(projectId) : null;
+    if (!state) state = await loadCanvasV2(projectId);
+    if (state) applyCanvasState(state);
+    else clearCanvasState();
+  }
+  // flow ↔ project switches: no reload needed, visibleElementsStore handles filtering
+
+  // 4. Switch the key and restore viewport
+  setActiveCanvasKey(newKey);
+  restoreViewport(newKey);
+
+  // 5. Ensure canvas is visible
+  const sm = get(splitModeStore);
+  if (sm) {
+    if (sm === 'left') setSplitPanel('split');
+    setActiveView('canvas');
+  } else {
+    document.body.classList.remove('on-flows');
+    document.body.classList.add('on-canvas');
+    setActiveView('canvas');
+  }
+}
+
+/**
+ * Open a canvas in the secondary (right) panel for dual-canvas split view.
+ * Pass null to close the secondary panel.
+ */
+// Live-sync unsub for project/flow secondary canvases
+let _secondaryUnsubs = [];
+function _clearSecondaryUnsubs() {
+  _secondaryUnsubs.forEach(u => u());
+  _secondaryUnsubs = [];
+}
+
+async function setSecondaryCanvas(key) {
+  const { setSecondaryElements, setSecondaryStrokes, setSecondaryRelations } = await import('../stores/secondary-canvas.js');
+  _clearSecondaryUnsubs();
+
+  if (!key) {
+    setSecondaryCanvasKey(null);
+    setSecondaryElements([]);
+    setSecondaryStrokes([]);
+    setSecondaryRelations([]);
+    document.body.classList.remove('dual-canvas');
+    requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+    return;
+  }
+
+  // Refuse to put the same canvas on both sides — caller must swap or pick a different key.
+  if (key === get(activeCanvasKeyStore)) return;
+
+  const parsed       = parseCanvasKey(key);
+  const activeParsed = parseCanvasKey(get(activeCanvasKeyStore));
+
+  if (parsed.kind === 'named') {
+    // Named canvas: load snapshot once (isolated store — no live sync needed)
+    const state = await loadNamedCanvas(parsed.canvasId);
+    setSecondaryElements(state?.elements || []);
+    setSecondaryStrokes(state?.strokes || []);
+    setSecondaryRelations(state?.relations || []);
+  } else if (activeParsed.kind === 'named') {
+    // Secondary is project/flow but primary is a named canvas — primary owns elementsStore,
+    // so we can't live-mirror it. Load the project pool from disk as a snapshot instead.
+    const projectId = getActiveProjectId();
+    const projects  = loadProjects();
+    const p         = projects.find(x => x.id === projectId);
+    let state = p?.schemaVersion === 3 ? await loadCanvasV3(projectId) : null;
+    if (!state) state = await loadCanvasV2(projectId);
+    setSecondaryElements(state?.elements || []);
+    setSecondaryStrokes(state?.strokes || []);
+    setSecondaryRelations(state?.relations || []);
+  } else {
+    // Project / flow canvas with project/flow primary: live-mirror the shared pool
+    // so edits appear in real time. Tag-based filtering happens in secondaryVisibleElementsStore.
+    const { elementsStore: els, strokesStore: stk, relationsStore: rel } = await import('../stores/elements.js');
+    _secondaryUnsubs.push(els.subscribe(v => setSecondaryElements(v)));
+    _secondaryUnsubs.push(stk.subscribe(v => setSecondaryStrokes(v)));
+    _secondaryUnsubs.push(rel.subscribe(v => setSecondaryRelations(v)));
+  }
+
+  setSecondaryCanvasKey(key);
+  document.body.classList.add('dual-canvas');
+  // Two rAF passes: first lets CSS apply, second lets PixiJS measure new bounds
+  requestAnimationFrame(() => requestAnimationFrame(() => window.dispatchEvent(new Event('resize'))));
+}
+
+/**
+ * Explicitly assign a canvas to the LEFT (primary/active) panel.
+ * If it's already the secondary, swaps. If it equals the current active, no-op.
+ * Used by the L/R picker on canvas tabs.
+ */
+async function setLeftCanvas(key) {
+  if (!key) return;
+  const activeKey    = get(activeCanvasKeyStore);
+  const secondaryKey = get(secondaryCanvasKeyStore);
+  if (key === activeKey) return;
+  if (key === secondaryKey) {
+    // Already on right — swap so it lands on left
+    await swapSplitCanvases();
+    return;
+  }
+  // Brand new pick: just switch primary to it. Leave secondary alone (or clear if it matches).
+  await switchToCanvas(key);
+}
+
+/**
+ * Explicitly assign a canvas to the RIGHT (secondary) panel.
+ */
+async function setRightCanvas(key) {
+  if (!key) return;
+  const activeKey    = get(activeCanvasKeyStore);
+  const secondaryKey = get(secondaryCanvasKeyStore);
+  if (key === secondaryKey) return;
+  if (key === activeKey) {
+    // It's currently on the left — swap so it lands on right
+    if (secondaryKey) await swapSplitCanvases();
+    return;
+  }
+  await setSecondaryCanvas(key);
+}
+
+/**
+ * Swap primary (left) and secondary (right) canvases.
+ * Makes the secondary canvas become the active/primary one, and the
+ * current active canvas becomes the secondary.
+ */
+async function swapSplitCanvases() {
+  const secondaryKey = get(secondaryCanvasKeyStore);
+  const activeKey    = get(activeCanvasKeyStore);
+  if (!secondaryKey) return;
+  // Switch primary to what was secondary, then set secondary to what was primary
+  await switchToCanvas(secondaryKey);
+  await setSecondaryCanvas(activeKey);
+}
+
 // ── showNewModal — creates project, then triggers inline rename via ProjectGrid.svelte ──
 
 function showNewModal() {
@@ -296,10 +1067,12 @@ function initProjectsService() {
         const p = { id: 'demo_0', name: 'untitled', createdAt: Date.now(), updatedAt: Date.now(), noteCount: 0, accent: null, folderId: null };
         saveProjects([p]);
       }
-      // Restore theme
-      if (store.get('freeflow_dash_theme') === 'light') {
-        document.body.classList.add('dash-light');
+      // Restore theme (unified — same key as canvas)
+      if (store.get('freeflow_theme') === 'light') {
+        document.body.classList.add('light', 'dash-light');
       }
+      // Backfill default covers for any existing items without one
+      _backfillDefaultCovers();
     }).catch(e => console.error('[projects-service] DB init failed:', e));
   } else {
     // Browser mode — load from localStorage immediately
@@ -312,13 +1085,15 @@ function initProjectsService() {
       const p = { id: 'demo_0', name: 'untitled', createdAt: Date.now(), updatedAt: Date.now(), noteCount: 0, accent: null, folderId: null };
       saveProjects([p]);
     }
-    // Restore theme
-    if (store.get('freeflow_dash_theme') === 'light') {
-      document.body.classList.add('dash-light');
+    // Restore theme (unified — same key as canvas)
+    if (store.get('freeflow_theme') === 'light') {
+      document.body.classList.add('light', 'dash-light');
     }
+    // Backfill default covers for any existing items without one
+    _backfillDefaultCovers();
   }
 
-  // Auto-save canvas every 30s when on canvas (v2 format)
+  // Auto-save canvas every 30s when on canvas (version-aware)
   setInterval(() => {
     if (get(isOnCanvasStore)) {
       _saveCurrentCanvas();
@@ -335,8 +1110,7 @@ function initProjectsService() {
   // Save on page unload (browser)
   window.addEventListener('beforeunload', () => {
     if (get(isOnCanvasStore)) {
-      const id = getActiveProjectId();
-      if (id) saveCanvasV2(id).catch(() => {});
+      _saveCurrentCanvas().catch(() => {});
     }
   });
 
@@ -348,8 +1122,7 @@ function initProjectsService() {
         tauriWindow.onCloseRequested(async (event) => {
           event.preventDefault();
           if (get(isOnCanvasStore)) {
-            const id = getActiveProjectId();
-            if (id) await saveCanvasV2(id).catch(() => {});
+            await _saveCurrentCanvas().catch(() => {});
           }
           tauriWindow.destroy();
         });
@@ -408,16 +1181,37 @@ export function mountProjectsBridge() {
     // Svelte sidebar/theme render reactively — these are no-ops
     renderSidebar: () => {},
     toggleDashTheme: () => {
-      const isLight = document.body.classList.toggle('dash-light');
-      store.set('freeflow_dash_theme', isLight ? 'light' : 'dark');
+      window.toggleTheme?.();
     },
     createProject,
+    createFolder,
     renameProject,
+    setProjectCover,
+    setFolderCover,
+    pickCoverImage,
     dupProject,
     deleteProject,
     openProject,
     goToDashboard,
     toggleDashboard,
+    // v3 flows/tags
+    createFlow,
+    updateFlow,
+    deleteFlow,
+    createProjectTag,
+    setCanvasView,
+    openCanvasView,
+    backToFlows,
+    setSplitPanel,
+    // named canvases
+    createNamedCanvas,
+    renameNamedCanvas,
+    deleteNamedCanvas,
+    switchToCanvas,
+    setSecondaryCanvas,
+    setLeftCanvas,
+    setRightCanvas,
+    swapSplitCanvases,
     saveProjects,
     saveFolders,
     loadProjects,

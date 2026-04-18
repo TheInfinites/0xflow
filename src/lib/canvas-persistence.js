@@ -7,6 +7,7 @@
 // ════════════════════════════════════════════
 import { get } from 'svelte/store';
 import { elementsStore, strokesStore, relationsStore } from '../stores/elements.js';
+import { activeCanvasKeyStore } from '../stores/projects.js';
 import { scaleStore, pxStore, pyStore, setScale, setPx, setPy } from '../stores/canvas.js';
 import { dbSaveCanvasState, dbLoadCanvasState, waitForDB } from './db.js';
 import { registerBlobURLs } from './media-service.js';
@@ -14,6 +15,35 @@ import { store } from './kv-store.js';
 
 const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 const FORMAT_VERSION = 2;
+const FORMAT_VERSION_V3 = 3;
+
+// In-memory cache of per-view viewports for the currently loaded project.
+// Keyed by activeCanvasKey ('__project__' | 'task:xxx' | 'task:xxx:final').
+// Persisted inside the canvas state JSON as `viewports`.
+let _viewports = {};
+
+export function getViewports() { return _viewports; }
+export function setViewports(v) { _viewports = v || {}; }
+export function clearViewports() { _viewports = {}; }
+
+/** Remember the current viewport under a canvas key (called before switching views). */
+export function stashCurrentViewport(canvasKey) {
+  if (!canvasKey) return;
+  _viewports[canvasKey] = {
+    scale: get(scaleStore),
+    px: get(pxStore),
+    py: get(pyStore),
+  };
+}
+
+/** Restore a previously-stashed viewport for the given key. Returns true if applied. */
+export function restoreViewport(canvasKey) {
+  const v = _viewports[canvasKey];
+  if (!v) return false;
+  setScale(v.scale); setPx(v.px); setPy(v.py);
+  window._applyViewportTo?.(v.scale, v.px, v.py);
+  return true;
+}
 
 // ── Save ─────────────────────────────────────
 
@@ -44,6 +74,53 @@ export async function saveCanvasV2(projectId) {
     await dbSaveCanvasState(projectId, json);
   } else {
     try { localStorage.setItem('freeflow_canvas_v2_' + projectId, json); } catch {}
+  }
+}
+
+// ── v3 Save ──────────────────────────────────
+// v3 projects (Tasks hub + tags). Same schema as v2 but bumps version, ensures
+// each element carries a `tags` array, and persists the per-view `viewports` map.
+// Before calling, the caller must stash the current viewport under the active key.
+
+export async function saveCanvasV3(projectId) {
+  if (!projectId) return;
+
+  // Ensure current viewport is stashed under the active key before we snapshot.
+  const activeKey = get(activeCanvasKeyStore) || '__project__';
+  stashCurrentViewport(activeKey);
+
+  // Ensure every element has a tags array and viewPositions map.
+  const elements = get(elementsStore).map(e => ({
+    ...e,
+    tags: Array.isArray(e.tags) ? e.tags : [],
+    viewPositions: e.viewPositions || {},
+  }));
+
+  const state = {
+    version:   FORMAT_VERSION_V3,
+    savedAt:   Date.now(),
+    elements,
+    strokes:   get(strokesStore),
+    relations: get(relationsStore),
+    viewport:  { scale: get(scaleStore), px: get(pxStore), py: get(pyStore) },
+    viewports: _viewports,
+    activeCanvasKey: activeKey,
+  };
+
+  const json = JSON.stringify(state);
+
+  const filePath = store.get('freeflow_filepath_' + projectId);
+  if (filePath && IS_TAURI) {
+    window.__TAURI__?.fs?.writeTextFile(filePath, json).catch(e =>
+      console.warn('[canvas-persistence] file write failed:', e)
+    );
+  }
+
+  if (IS_TAURI) {
+    await waitForDB();
+    await dbSaveCanvasState(projectId, json);
+  } else {
+    try { localStorage.setItem('freeflow_canvas_v3_' + projectId, json); } catch {}
   }
 }
 
@@ -87,16 +164,63 @@ export async function loadCanvasV2(projectId) {
   return parsed;
 }
 
+/**
+ * Load v3 canvas state for a project. Same storage as v2 (canvas_states row /
+ * localStorage) but the JSON blob has `version: 3` and a `viewports` map.
+ */
+export async function loadCanvasV3(projectId) {
+  if (!projectId) return null;
+
+  let raw = null;
+
+  const filePath = store.get('freeflow_filepath_' + projectId);
+  if (filePath && IS_TAURI) {
+    try { raw = await window.__TAURI__?.fs?.readTextFile(filePath); } catch {}
+  }
+
+  if (!raw && IS_TAURI) {
+    await waitForDB();
+    raw = await dbLoadCanvasState(projectId);
+  }
+
+  if (!raw) {
+    try { raw = localStorage.getItem('freeflow_canvas_v3_' + projectId); } catch {}
+  }
+
+  if (!raw) return null;
+
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { return null; }
+
+  if (!parsed || parsed.version !== FORMAT_VERSION_V3) return null;
+  return parsed;
+}
+
 // ── Apply to stores ───────────────────────────
 
 export function applyCanvasState(state) {
   if (!state) return false;
-  if (Array.isArray(state.elements))  elementsStore.set(state.elements);
+  if (Array.isArray(state.elements)) {
+    // Ensure every element has a tags array and viewPositions map.
+    const els = state.elements.map(e => ({
+      ...e,
+      tags: Array.isArray(e.tags) ? e.tags : [],
+      viewPositions: e.viewPositions || {},
+    }));
+    elementsStore.set(els);
+  }
   if (Array.isArray(state.strokes))   strokesStore.set(state.strokes);
   if (Array.isArray(state.relations)) relationsStore.set(state.relations);
 
   // Restore blobs if present (shared canvas)
   if (state.blobs) registerBlobURLs(state.blobs);
+
+  // v3: restore per-view viewports map
+  if (state.viewports && typeof state.viewports === 'object') {
+    _viewports = { ...state.viewports };
+  } else {
+    _viewports = {};
+  }
 
   // Restore viewport — push to stores first (works even before Canvas mounts),
   // then animate via bridge if already mounted.
@@ -113,6 +237,69 @@ export function clearCanvasState() {
   elementsStore.set([]);
   strokesStore.set([]);
   relationsStore.set([]);
+  _viewports = {};
+}
+
+// ── Named canvas (isolated) save/load ────────
+// Named canvases use the canvas UUID as the storage key instead of the project ID.
+// They reuse the v3 format but without the viewports map (each named canvas has its own viewport).
+
+export async function saveNamedCanvas(canvasId) {
+  if (!canvasId) return;
+
+  const elements = get(elementsStore).map(e => ({
+    ...e,
+    tags: Array.isArray(e.tags) ? e.tags : [],
+    viewPositions: e.viewPositions || {},
+  }));
+
+  const state = {
+    version:   FORMAT_VERSION_V3,
+    savedAt:   Date.now(),
+    elements,
+    strokes:   get(strokesStore),
+    relations: get(relationsStore),
+    viewport:  { scale: get(scaleStore), px: get(pxStore), py: get(pyStore) },
+    viewports: {},
+    activeCanvasKey: 'canvas:' + canvasId,
+  };
+
+  const json = JSON.stringify(state);
+
+  if (IS_TAURI) {
+    await waitForDB();
+    await dbSaveCanvasState(canvasId, json);
+  } else {
+    try { localStorage.setItem('freeflow_canvas_named_' + canvasId, json); } catch {}
+  }
+}
+
+/**
+ * Load a named canvas state. Returns the raw parsed object (does NOT apply to stores).
+ * Caller decides whether to push into elementsStore or secondaryElementsStore.
+ */
+export async function loadNamedCanvas(canvasId) {
+  if (!canvasId) return null;
+
+  let raw = null;
+
+  if (IS_TAURI) {
+    await waitForDB();
+    raw = await dbLoadCanvasState(canvasId);
+  }
+
+  if (!raw) {
+    try { raw = localStorage.getItem('freeflow_canvas_named_' + canvasId); } catch {}
+  }
+
+  if (!raw) return null;
+
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { return null; }
+
+  if (!parsed) return null;
+  // Accept both v3 format and empty canvases
+  return parsed;
 }
 
 // ── v1 → v2 migration ────────────────────────

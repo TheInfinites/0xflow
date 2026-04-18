@@ -33,9 +33,12 @@ window._pdfJsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.1
 
   <!-- Svelte Pixi canvas + toolbar mounts (Phase 5) -->
   <div id="pixi-canvas-mount" style="position:fixed;inset:0;z-index:2;"></div>
+  <!-- Secondary canvas for dual-canvas split view (read-only, shown when secondaryCanvasKeyStore is set) -->
+  <div id="pixi-canvas-mount-secondary" style="position:fixed;top:76px;bottom:28px;z-index:2;display:none;"></div>
   <div id="svelte-toolbar-mount"></div>
   <div id="svelte-canvas-bar-mount" style="position:fixed;top:0;left:0;right:0;z-index:1100;pointer-events:none;"></div>
   <div id="svelte-selection-bar-mount"></div>
+  <div id="svelte-shape-options-bar-mount"></div>
   <div id="svelte-status-bar-mount"></div>
   <div id="svelte-minimap-mount"></div>
   <div id="svelte-cmd-palette-mount"></div>

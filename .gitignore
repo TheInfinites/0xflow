@@ -10,3 +10,6 @@ app-icon.png
 release.sh
 IMPLEMENTATION_PLAN.md
 CLAUDE.md
+
+# tauri icon source (large working file, not needed at runtime)
+src-tauri/icons/_source_logo.png

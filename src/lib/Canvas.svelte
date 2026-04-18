@@ -1,18 +1,23 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, setContext } from 'svelte';
   import { get } from 'svelte/store';
   import { Application, Graphics, Text, TextStyle, Container, Sprite, Texture, Assets } from 'pixi.js';
-  import { elementsStore, strokesStore, relationsStore, snapshot, undo, redo, canUndo, canRedo } from '../stores/elements.js';
-  import { scaleStore, pxStore, pyStore, setCurTool, getCurTool, setSelected, setScale, setPx, setPy, activeEditorIdStore, setActiveEditorId, snapEnabledStore, isLightStore } from '../stores/canvas.js';
+  import { elementsStore, visibleElementsStore, strokesStore, relationsStore, snapshot, undo, redo, canUndo, canRedo } from '../stores/elements.js';
+  import { activeCanvasKeyStore, projectFlowsStore, projectTagsStore, projectsStore, parseCanvasKey } from '../stores/projects.js';
+  import { scaleStore, pxStore, pyStore, setCurTool, getCurTool, setSelected, selectedStrokeIdsStore, setSelectedStrokeIds, shapeDefaultsStore, setScale, setPx, setPy, activeEditorIdStore, setActiveEditorId, snapEnabledStore, isLightStore } from '../stores/canvas.js';
   import { activeProjectIdStore } from '../stores/projects.js';
-  import { brainstormOpenStore } from '../stores/ui.js';
+  import { brainstormOpenStore, canvasTagPickerOpenStore, secondaryCanvasKeyStore } from '../stores/ui.js';
+  import { secondaryVisibleElementsStore, secondaryStrokesStore, secondaryRelationsStore } from '../stores/secondary-canvas.js';
   import { store } from './projects-service.js';
+  import { embedMediaElement, releaseMediaElement } from './media-service.js';
   import NoteOverlay   from './NoteOverlay.svelte';
   import MediaOverlay  from './MediaOverlay.svelte';
   import BrainstormPanel from './BrainstormPanel.svelte';
 
   // ── Props / callbacks ────────────────────────
-  let { onBack = () => {} } = $props();
+  let { onBack = () => {}, slot = 'primary' } = $props();
+  const isPrimary   = slot === 'primary';
+  const isSecondary = slot === 'secondary';
 
   // ── State ────────────────────────────────────
   let canvasEl;    // <canvas> element
@@ -24,11 +29,26 @@
   let relLayer;    // relation lines
   let domOverlay;  // positioned DOM elements (notes, videos, etc.)
 
-  // Viewport — seeded from stores so applyCanvasState pre-seeding is picked up on cold load
-  let scale = $state(get(scaleStore) || 1);
-  let px    = $state(get(pxStore)    || 0);
-  let py    = $state(get(pyStore)    || 0);
+  // Viewport — primary reads from stores (so applyCanvasState pre-seeding is picked up on cold load);
+  // secondary has its own independent viewport that never touches the global stores.
+  let scale = $state(isPrimary ? (get(scaleStore) || 1) : 1);
+  let px    = $state(isPrimary ? (get(pxStore)    || 0) : 0);
+  let py    = $state(isPrimary ? (get(pyStore)    || 0) : 0);
   const WORLD_OFFSET = 3000; // world origin offset
+
+  // Expose this canvas instance's viewport + element store to DOM-overlay children
+  // (MediaOverlay, NoteOverlay). Without this, those overlays read from the global
+  // primary stores and mirror the active canvas on both split panels.
+  setContext('canvas-slot', {
+    slot,
+    isPrimary,
+    isSecondary,
+    readOnly: isSecondary, // secondary is preview-only for now
+    get scale() { return scale; },
+    get px()    { return px; },
+    get py()    { return py; },
+    elementsStore: isSecondary ? secondaryVisibleElementsStore : visibleElementsStore,
+  });
 
   // Interaction
   let curTool = $state('select');
@@ -74,9 +94,105 @@
   // Selected relations (supports multi-select via marquee)
   let selectedRelIds = $state(new Set());
 
+  // Selected strokes / shapes (pen + rect/ellipse/line)
+  let selectedStrokeIds = $state(new Set());
+
+  // Eraser drag state — on button-down we flip this on; every subsequent
+  // move that hits a stroke removes it from strokesStore.
+  let eraserActive = false;
+
   // Context menu state
   let ctxMenu = $state(null); // { x, y, elId } or null
   let ctxFrameNameInput = $state(''); // live-bound name input for group frame
+
+  // Floating tag picker (Shift+right-click on an element)
+  let tagPicker = $state(null); // { x, y, elementIds: Set<string> } or null
+  let tagPickerNewName = $state('');
+  function _closeTagPicker() {
+    tagPicker = null;
+    tagPickerNewName = '';
+    canvasTagPickerOpenStore.set(false);
+    // Clear selection so SelectionBar doesn't reappear
+    selected = new Set();
+    setSelected(new Set());
+    elementsStore.update(els => { renderElements(get(visibleElementsStore)); return els; });
+  }
+  function _tagPickerCount(tagId) {
+    if (!tagPicker) return 0;
+    const ids = tagPicker.elementIds;
+    let n = 0;
+    for (const el of $elementsStore) {
+      if (!ids.has(el.id)) continue;
+      if (Array.isArray(el.tags) && el.tags.includes(tagId)) n++;
+    }
+    return n;
+  }
+  function _tagPickerToggle(tagId) {
+    if (!tagPicker) return;
+    const ids = tagPicker.elementIds;
+    const selCount = ids.size;
+    const has = _tagPickerCount(tagId);
+    const addToAll = has < selCount;
+    snapshot();
+    elementsStore.update(els => els.map(e => {
+      if (!ids.has(e.id)) return e;
+      const cur = Array.isArray(e.tags) ? e.tags : [];
+      const hasIt = cur.includes(tagId);
+      if (addToAll && !hasIt) return { ...e, tags: [...cur, tagId] };
+      if (!addToAll && hasIt) return { ...e, tags: cur.filter(t => t !== tagId) };
+      return e;
+    }));
+  }
+  async function _tagPickerCreate() {
+    const name = tagPickerNewName.trim();
+    if (!name) return;
+    const tag = await window.createProjectTag?.(get(activeProjectIdStore), name);
+    if (tag?.id) _tagPickerToggle(tag.id);
+    tagPickerNewName = '';
+  }
+  function _tagLabelForPicker(tag) {
+    if (tag.kind === 'task') {
+      const t = $projectFlowsStore.find(t => t.tagId === tag.id);
+      if (t) return t.title;
+    }
+    return tag.name;
+  }
+  function _tagColorForPicker(tag) {
+    if (tag.color) return tag.color;
+    const str = tag.id || tag.name || '';
+    let h = 0;
+    for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
+    return `hsl(${Math.abs(h) % 360}, 55%, 55%)`;
+  }
+
+  // ── Per-view position helpers ──────────────
+  // On task/final canvases, position changes write to viewPositions[canvasKey]
+  // instead of the base x/y, keeping positions independent per view.
+  // Named canvases have their own isolated element pool, so they edit x/y directly.
+  function _isPerViewCanvas() {
+    const key = get(activeCanvasKeyStore);
+    if (!key || key === '__project__') return false;
+    if (key.startsWith('canvas:')) return false;
+    return true;
+  }
+  function _activeKey() {
+    return get(activeCanvasKeyStore) || '__project__';
+  }
+  /** Update element position, routing to viewPositions when on a task canvas. */
+  function _setElPos(el, nx, ny) {
+    if (!_isPerViewCanvas()) return { ...el, x: nx, y: ny };
+    const key = _activeKey();
+    const vp = { ...(el.viewPositions || {}), [key]: { x: nx, y: ny } };
+    return { ...el, viewPositions: vp };
+  }
+  /** Read the effective position for an element on the current canvas. */
+  function _getElPos(el) {
+    if (_isPerViewCanvas()) {
+      const vp = el.viewPositions?.[_activeKey()];
+      if (vp) return { x: vp.x, y: vp.y };
+    }
+    return { x: el.x, y: el.y };
+  }
 
   // Radial drag menu state (right-drag on empty canvas)
   let radialMenu = $state(null); // { x, y } origin or null
@@ -104,13 +220,28 @@
   function _closeRadialMenu() { radialMenu = null; _radialHovered = -1; _radialMouseDown = false; _radialSubmenuLocked = false; }
   const RADIAL_RADIUS = 82;
   const RADIAL_DRAG_THRESHOLD = 6;
-  const RADIAL_ITEMS = [
+  const _RADIAL_BASE = [
     { label: 'Note',      icon: '<rect x="2" y="2" width="11" height="11" rx="1.5"/><line x1="4.5" y1="5.5" x2="10.5" y2="5.5"/><line x1="4.5" y1="7.5" x2="10.5" y2="7.5"/><line x1="4.5" y1="9.5" x2="8" y2="9.5"/>',   angleDeg: -90 },
     { label: 'Draw',      icon: '<path d="M3 12 Q5 8 8 7 Q11 6 12 3"/><circle cx="3" cy="12" r="1" fill="currentColor" stroke="none"/>',                                                                                         angleDeg: -35 },
     { label: 'Import',    icon: '<path d="M7.5 2v8M4 7l3.5 3.5L11 7"/><rect x="2" y="11" width="11" height="2" rx="0.8"/>',                                                                                                      angleDeg:  35 },
     { label: 'Dashboard', icon: '<rect x="1" y="1" width="5" height="5" rx="0.8"/><rect x="9" y="1" width="5" height="5" rx="0.8"/><rect x="1" y="9" width="5" height="5" rx="0.8"/><rect x="9" y="9" width="5" height="5" rx="0.8"/>', angleDeg: 145 },
     { label: 'Bookmark',  icon: '<path d="M3 2h9v11l-4.5-3L3 13z"/>',                                                                                                                                                            angleDeg: 215 },
   ];
+  const _ICON_FLOWS = '<path d="M2 3h11M2 7.5h11M2 12h11"/><circle cx="13" cy="3" r="1.2" fill="currentColor" stroke="none"/><circle cx="13" cy="7.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="13" cy="12" r="1.2" fill="currentColor" stroke="none"/>';
+
+  // Dynamic radial items — v3 projects replace Dashboard with Flows, keep Bookmark
+  let RADIAL_ITEMS = $derived.by(() => {
+    const proj = $projectsStore.find(p => p.id === $activeProjectIdStore);
+    if (!proj || proj.schemaVersion !== 3) return _RADIAL_BASE;
+
+    return [
+      _RADIAL_BASE[0], // Note
+      _RADIAL_BASE[1], // Draw
+      _RADIAL_BASE[2], // Import
+      { label: '☰ Flows', action: 'flows', icon: _ICON_FLOWS, angleDeg: 145 },
+      _RADIAL_BASE[4], // Bookmark
+    ];
+  });
 
   // Last known mouse position (client coords) for placing new nodes
   let lastMouseClient = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
@@ -119,7 +250,7 @@
   let _clipboard = [];
 
   // Store unsubscribers (set in onMount, cleaned up in onDestroy)
-  let _unsubEl, _unsubSt, _unsubTheme, _docRadialCleanup;
+  let _unsubEl, _unsubSt, _unsubTheme, _unsubSecKey, _unsubStrokeSel, _docRadialCleanup;
 
   // Element color palette
   const EL_COLORS = [null, '#1e1e1e', '#2a2a1e', '#1e2a1e', '#1e1e2e', '#2e1e1e', '#1e2a2a', '#2a1e2a'];
@@ -184,33 +315,59 @@
     // Ticker: re-render relations each frame
     app.ticker.add(tickRelations);
 
-    // Expose legacy bridge for canvas.js compatibility
-    window._pixiApp  = app;
-    window._pixiElemLayer   = elemLayer;
-    window._pixiStrokeLayer = strokeLayer;
-    window._applyViewport   = applyViewport;
-    window._applyViewportTo = (newScale, newPx, newPy) => {
-      zoomTarget = { scale: newScale, px: newPx, py: newPy };
-      if (!zoomRaf) zoomRaf = requestAnimationFrame(animateZoom);
-    };
+    // Expose legacy bridge for canvas.js compatibility — primary only, secondary must not clobber these
+    if (isPrimary) {
+      window._pixiApp  = app;
+      window._pixiElemLayer   = elemLayer;
+      window._pixiStrokeLayer = strokeLayer;
+      window._applyViewport   = applyViewport;
+      window._applyViewportTo = (newScale, newPx, newPy) => {
+        zoomTarget = { scale: newScale, px: newPx, py: newPy };
+        if (!zoomRaf) zoomRaf = requestAnimationFrame(animateZoom);
+      };
+    }
 
-    // Subscribe to store changes — unsubs collected for top-level onDestroy
-    _unsubEl    = elementsStore.subscribe(renderElements);
-    _unsubSt    = strokesStore.subscribe(renderStrokes);
+    // Subscribe to store changes — unsubs collected for top-level onDestroy.
+    // Secondary canvas reads from secondaryVisibleElementsStore / secondaryStrokesStore.
+    // Primary canvas reads from visibleElementsStore / strokesStore (v3-filtered).
+    const _elStore  = isSecondary ? secondaryVisibleElementsStore : visibleElementsStore;
+    const _stStore  = isSecondary ? secondaryStrokesStore          : strokesStore;
+    const _getEls   = () => get(_elStore);
+    const _getSts   = () => get(_stStore);
+
+    _unsubEl    = _elStore.subscribe(renderElements);
+    _unsubSt    = _stStore.subscribe(renderStrokes);
+    // Keep local stroke-selection mirror in sync — the ShapeOptionsBar
+    // writes directly to the store (delete button), so we can't assume
+    // Canvas is the only writer.
+    if (!isSecondary) {
+      _unsubStrokeSel = selectedStrokeIdsStore.subscribe(ids => {
+        selectedStrokeIds = new Set(ids);
+        renderStrokeSelection();
+      });
+    }
     _unsubTheme = isLightStore.subscribe((isLight) => {
       if (app) app.renderer.background.color = isLight ? 0xf0ede8 : 0x0e0e0f;
       drawDotGrid();
-      renderElements($elementsStore);
-      renderStrokes($strokesStore);
+      renderElements(_getEls());
+      renderStrokes(_getSts());
     });
 
+    // Secondary: reset viewport to default when a new canvas is loaded into the panel
+    if (isSecondary) {
+      _unsubSecKey = secondaryCanvasKeyStore.subscribe(() => {
+        scale = 1; px = 0; py = 0;
+        applyViewport();
+      });
+    }
+
     // Initial render from any loaded state
-    renderElements($elementsStore);
-    renderStrokes($strokesStore);
+    renderElements(_getEls());
+    renderStrokes(_getSts());
   });
 
   onDestroy(() => {
-    _unsubEl?.(); _unsubSt?.(); _unsubTheme?.();
+    _unsubEl?.(); _unsubSt?.(); _unsubTheme?.(); _unsubSecKey?.(); _unsubStrokeSel?.();
     _docRadialCleanup?.();
     app?.destroy(false, { children: true });
   });
@@ -221,7 +378,8 @@
     stage.x = px;
     stage.y = py;
     stage.scale.set(scale);
-    setScale(scale); setPx(px); setPy(py);
+    // Only the primary canvas owns the global viewport stores — secondary is isolated
+    if (isPrimary) { setScale(scale); setPx(px); setPy(py); }
     drawDotGrid();
     positionDomOverlays();
     updateRelations();
@@ -285,7 +443,7 @@
   }
 
   function zoomToFit() {
-    const els = $elementsStore;
+    const els = get(visibleElementsStore);
     if (!els.length) { scale = 1; px = 0; py = 0; applyViewport(); return; }
     const xs = els.map(e => e.x - WORLD_OFFSET);
     const ys = els.map(e => e.y - WORLD_OFFSET);
@@ -370,6 +528,23 @@
     c.on('rightdown', e => {
       e.stopPropagation();
       const native = e.nativeEvent ?? e;
+      // Shift+right-click on an element → open floating tag picker
+      if (native.shiftKey) {
+        // If the element isn't selected, select just it first so the picker
+        // applies to something sensible.
+        if (!selected.has(el.id)) {
+          selected = new Set([el.id]);
+          setSelected(new Set(selected));
+          elementsStore.update(els => { renderElements(get(visibleElementsStore)); return els; });
+        }
+        tagPicker = {
+          x: native.clientX,
+          y: native.clientY,
+          elementIds: new Set(selected),
+        };
+        canvasTagPickerOpenStore.set(true);
+        return;
+      }
       const elData = $elementsStore.find(x => x.id === el.id);
       const isMedia = elData?.type === 'image' || elData?.type === 'video' || elData?.type === 'audio';
       const startX = native.clientX, startY = native.clientY;
@@ -596,25 +771,166 @@
     return { color: hex, alpha: parseFloat(m[4] ?? 1) };
   }
 
+  // ── Stroke hit-testing ───────────────────────
+  // wp = world point; s = stroke record; tol = world-space tolerance in px.
+  // Tolerance is inflated by 1/scale by callers so the hit area stays
+  // consistent regardless of zoom level.
+  function strokeHit(s, wp, tol) {
+    if (s.type === 'stroke' && s.points?.length >= 2) {
+      const t2 = tol * tol;
+      for (let i = 1; i < s.points.length; i++) {
+        const a = s.points[i - 1], b = s.points[i];
+        if (_distSqToSeg(wp, a, b) <= t2) return true;
+      }
+      return false;
+    }
+    if (s.type === 'shape' && s.points?.length === 2) {
+      const [a, b] = s.points;
+      const x1 = Math.min(a.x, b.x), y1 = Math.min(a.y, b.y);
+      const x2 = Math.max(a.x, b.x), y2 = Math.max(a.y, b.y);
+      if (s.shapeType === 'rect') {
+        const inside = wp.x >= x1 && wp.x <= x2 && wp.y >= y1 && wp.y <= y2;
+        if (s.fill && inside) return true;
+        // Hit if within tol of any edge
+        const nearLeft   = Math.abs(wp.x - x1) <= tol && wp.y >= y1 - tol && wp.y <= y2 + tol;
+        const nearRight  = Math.abs(wp.x - x2) <= tol && wp.y >= y1 - tol && wp.y <= y2 + tol;
+        const nearTop    = Math.abs(wp.y - y1) <= tol && wp.x >= x1 - tol && wp.x <= x2 + tol;
+        const nearBottom = Math.abs(wp.y - y2) <= tol && wp.x >= x1 - tol && wp.x <= x2 + tol;
+        return nearLeft || nearRight || nearTop || nearBottom;
+      }
+      if (s.shapeType === 'ellipse') {
+        const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+        const rx = (x2 - x1) / 2 || 1, ry = (y2 - y1) / 2 || 1;
+        const nx = (wp.x - cx) / rx, ny = (wp.y - cy) / ry;
+        const r = Math.sqrt(nx * nx + ny * ny);
+        if (s.fill && r <= 1) return true;
+        // Approximate: distance from the point to the ellipse outline ≈ |r-1| * min(rx,ry)
+        return Math.abs(r - 1) * Math.min(rx, ry) <= tol;
+      }
+      if (s.shapeType === 'line') {
+        return _distSqToSeg(wp, a, b) <= tol * tol;
+      }
+    }
+    return false;
+  }
+
+  function _distSqToSeg(p, a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    if (len2 === 0) { const ex = p.x - a.x, ey = p.y - a.y; return ex*ex + ey*ey; }
+    let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const qx = a.x + t * dx, qy = a.y + t * dy;
+    const ex = p.x - qx, ey = p.y - qy;
+    return ex * ex + ey * ey;
+  }
+
+  function strokeBounds(s) {
+    if (!s.points?.length) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of s.points) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+    return { minX, minY, maxX, maxY };
+  }
+
+  function pickStrokeAt(wp) {
+    // Search top-down; `strokesStore` ordering is insertion order so iterate
+    // in reverse so the most-recently-drawn stroke wins ties.
+    const tol = Math.max(6, 10 / (scale || 1));
+    const ss = $strokesStore;
+    for (let i = ss.length - 1; i >= 0; i--) {
+      const s = ss[i];
+      if (s.type === 'stroke' || s.type === 'shape') {
+        if (strokeHit(s, wp, tol)) return s;
+      }
+    }
+    return null;
+  }
+
+  function eraseAt(wp) {
+    const hit = pickStrokeAt(wp);
+    if (!hit) return false;
+    strokesStore.update(ss => ss.filter(s => s.id !== hit.id));
+    // Drop it from any pending selection too.
+    if (selectedStrokeIds.has(hit.id)) {
+      const next = new Set(selectedStrokeIds);
+      next.delete(hit.id);
+      selectedStrokeIds = next;
+      setSelectedStrokeIds(new Set(next));
+    }
+    return true;
+  }
+
+  // ── Stroke selection halo ────────────────────
+  let _strokeSelG = null;
+
+  function renderStrokeSelection() {
+    if (!strokeLayer) return;
+    if (!_strokeSelG) { _strokeSelG = new Graphics(); strokeLayer.addChild(_strokeSelG); }
+    _strokeSelG.clear();
+    if (!selectedStrokeIds.size) return;
+    const color = 0xE8440A;
+    const pad = 4;
+    for (const s of $strokesStore) {
+      if (!selectedStrokeIds.has(s.id)) continue;
+      const b = strokeBounds(s);
+      if (!b) continue;
+      const x = b.minX - WORLD_OFFSET - pad;
+      const y = b.minY - WORLD_OFFSET - pad;
+      const w = b.maxX - b.minX + pad * 2;
+      const h = b.maxY - b.minY + pad * 2;
+      _strokeSelG.roundRect(x, y, w, h, 4).stroke({ color, width: 1.25, alpha: 0.85 });
+    }
+  }
+
   // ── Stroke rendering ─────────────────────────
   const _strokeGraphics = new Map();
+
+  // Cache last-rendered record per id so we can detect prop changes (color,
+  // width, fill, cornerRadius) and rebuild the graphic when they differ.
+  const _strokeRecords = new Map();
+
+  function _strokeDirty(prev, next) {
+    if (!prev) return true;
+    return prev.stroke !== next.stroke
+      || prev.strokeWidth !== next.strokeWidth
+      || prev.fill !== next.fill
+      || prev.cornerRadius !== next.cornerRadius
+      || prev.points !== next.points;
+  }
 
   function renderStrokes(strokes) {
     if (!strokeLayer) return;
     const existing = new Set(_strokeGraphics.keys());
     for (const s of strokes) {
       existing.delete(s.id);
+      const prev = _strokeRecords.get(s.id);
       if (!_strokeGraphics.has(s.id)) {
         const g = buildStrokeGraphic(s);
         _strokeGraphics.set(s.id, g);
         strokeLayer.addChild(g);
+      } else if (_strokeDirty(prev, s)) {
+        const old = _strokeGraphics.get(s.id);
+        if (old) { strokeLayer.removeChild(old); old.destroy(); }
+        const g = buildStrokeGraphic(s);
+        _strokeGraphics.set(s.id, g);
+        strokeLayer.addChild(g);
       }
+      _strokeRecords.set(s.id, s);
     }
     for (const id of existing) {
       const g = _strokeGraphics.get(id);
       if (g) { strokeLayer.removeChild(g); g.destroy(); }
       _strokeGraphics.delete(id);
+      _strokeRecords.delete(id);
     }
+    // Keep halo on top and synced with the latest bounds.
+    if (_strokeSelG) strokeLayer.addChild(_strokeSelG);
+    renderStrokeSelection();
   }
 
   function buildStrokeGraphic(s) {
@@ -657,8 +973,14 @@
       if (s.shapeType === 'rect') {
         const rx = Math.min(x1,x2), ry = Math.min(y1,y2);
         const rw = Math.abs(x2-x1), rh = Math.abs(y2-y1);
-        if (fill) g.rect(rx,ry,rw,rh).fill(fill);
-        g.rect(rx,ry,rw,rh).stroke(strokeStyle);
+        const cr = Math.max(0, Math.min(s.cornerRadius || 0, Math.min(rw, rh) / 2));
+        if (cr > 0) {
+          if (fill) g.roundRect(rx,ry,rw,rh,cr).fill(fill);
+          g.roundRect(rx,ry,rw,rh,cr).stroke(strokeStyle);
+        } else {
+          if (fill) g.rect(rx,ry,rw,rh).fill(fill);
+          g.rect(rx,ry,rw,rh).stroke(strokeStyle);
+        }
       } else if (s.shapeType === 'ellipse') {
         const ex = (x1+x2)/2, ey = (y1+y2)/2;
         const ew = Math.abs(x2-x1)/2, eh = Math.abs(y2-y1)/2;
@@ -724,10 +1046,11 @@
       const elB = $elementsStore.find(e => e.id === rel.elBId);
       if (!elA || !elB) continue;
 
-      const ax = elA.x + elA.width/2 - WORLD_OFFSET;
-      const ay = elA.y + elA.height/2 - WORLD_OFFSET;
-      const bx = elB.x + elB.width/2 - WORLD_OFFSET;
-      const by = elB.y + elB.height/2 - WORLD_OFFSET;
+      const posA = _getElPos(elA), posB = _getElPos(elB);
+      const ax = posA.x + elA.width/2 - WORLD_OFFSET;
+      const ay = posA.y + elA.height/2 - WORLD_OFFSET;
+      const bx = posB.x + elB.width/2 - WORLD_OFFSET;
+      const by = posB.y + elB.height/2 - WORLD_OFFSET;
 
       let g = relGraphics.get(rel.id);
       if (!g) {
@@ -799,6 +1122,16 @@
 
   // ── Pointer event handlers ───────────────────
   function onPointerDown(e) {
+    // Secondary (preview) panel: allow pan only, drop everything else.
+    if (isSecondary) {
+      if (e.button === 1 || (e.button === 0 && e.altKey)) {
+        zoomTarget = null; zoomRaf = null;
+        isPanning = true;
+        panStart = { x: e.clientX, y: e.clientY, px, py };
+      }
+      return;
+    }
+
     // Suppress if a Pixi element was hit (walk up ancestors — hitTest returns deepest child)
     const r = canvasEl.getBoundingClientRect();
     const hit = app?.renderer?.events?.rootBoundary?.hitTest?.(e.clientX - r.left, e.clientY - r.top);
@@ -835,7 +1168,12 @@
       penActive = true;
       return;
     }
-    if (curTool === 'eraser') return;
+    if (curTool === 'eraser') {
+      snapshot();
+      eraserActive = true;
+      eraseAt(wp);
+      return;
+    }
     if (curTool === 'arrow') {
       arrowStart = wp; return;
     }
@@ -849,6 +1187,27 @@
       makeLabel(wp.x, wp.y); return;
     }
     if (curTool === 'select') {
+      // Before starting a marquee, see if the click landed on a pen
+      // stroke / shape — those aren't elements so they don't get pixi
+      // hit-tests; we test them ourselves.
+      const hitStroke = pickStrokeAt(wp);
+      if (hitStroke) {
+        selectedRelIds = new Set();
+        clearSelection();
+        const next = e.shiftKey ? new Set(selectedStrokeIds) : new Set();
+        if (next.has(hitStroke.id)) next.delete(hitStroke.id);
+        else next.add(hitStroke.id);
+        selectedStrokeIds = next;
+        setSelectedStrokeIds(new Set(next));
+        renderStrokeSelection();
+        return;
+      }
+      // Empty canvas: drop any stroke selection.
+      if (selectedStrokeIds.size) {
+        selectedStrokeIds = new Set();
+        setSelectedStrokeIds(new Set());
+        renderStrokeSelection();
+      }
       // Marquee start on empty canvas — clear relation selection
       selectedRelIds = new Set();
       marqueeActive = true;
@@ -909,13 +1268,15 @@
           const o = dragOrigins.find(o => o.id === el.id);
           if (!o) return el;
           const { x: sx, y: sy } = snapXY(o.origX + dx, o.origY + dy);
-          return { ...el, x: sx, y: sy };
+          return _setElPos(el, sx, sy);
         });
       });
       return;
     }
 
     if (penActive) { extendPenStroke(wp.x, wp.y); return; }
+
+    if (eraserActive) { eraseAt(wp); return; }
 
     if (arrowStart) {
       // Preview line on pixi
@@ -971,6 +1332,11 @@
       return;
     }
 
+    if (eraserActive) {
+      eraserActive = false;
+      return;
+    }
+
     if (arrowStart) {
       finishArrow(arrowStart, wp);
       arrowStart = null;
@@ -1005,6 +1371,7 @@
   }
 
   function onDblClick(e) {
+    if (isSecondary) return; // read-only preview: no editors
     const r = canvasEl.getBoundingClientRect();
     const hit = app?.renderer?.events?.rootBoundary?.hitTest?.(e.clientX - r.left, e.clientY - r.top);
     if (!hit?.label) return;
@@ -1035,6 +1402,11 @@
     dragMoved = false;
 
     selectedRelIds = new Set();
+    if (selectedStrokeIds.size) {
+      selectedStrokeIds = new Set();
+      setSelectedStrokeIds(new Set());
+      renderStrokeSelection();
+    }
 
     if (e.shiftKey) {
       // Shift: toggle this element in/out of selection
@@ -1064,7 +1436,8 @@
         .filter(sid => !els.find(e => e.id === sid)?.pinned)
         .map(sid => {
           const el = els.find(e => e.id === sid);
-          return { id: sid, origX: el?.x || 0, origY: el?.y || 0, startClientX: e.clientX, startClientY: e.clientY };
+          const pos = el ? _getElPos(el) : { x: 0, y: 0 };
+          return { id: sid, origX: pos.x, origY: pos.y, startClientX: e.clientX, startClientY: e.clientY };
         });
       dragOrigins.forEach(o => { o.startClientX = e.clientX; o.startClientY = e.clientY; });
     }
@@ -1074,7 +1447,12 @@
   function clearSelection() {
     selected = new Set();
     setSelected(new Set());
-    elementsStore.update(els => { renderElements(els); return els; });
+    if (selectedStrokeIds.size) {
+      selectedStrokeIds = new Set();
+      setSelectedStrokeIds(new Set());
+      renderStrokeSelection();
+    }
+    elementsStore.update(els => { renderElements(get(visibleElementsStore)); return els; });
   }
 
   function toggleSelect(id) {
@@ -1082,13 +1460,13 @@
     else selected.add(id);
     selected = new Set(selected);
     setSelected(new Set(selected));
-    elementsStore.update(els => { renderElements(els); return els; });
+    elementsStore.update(els => { renderElements(get(visibleElementsStore)); return els; });
   }
 
   function selectAll() {
     selected = new Set($elementsStore.map(e => e.id));
     setSelected(new Set(selected));
-    elementsStore.update(els => { renderElements(els); return els; });
+    elementsStore.update(els => { renderElements(get(visibleElementsStore)); return els; });
   }
 
   // ── Marquee ──────────────────────────────────
@@ -1119,8 +1497,9 @@
     relDragSourceId = sourceId;
     relDragActive = true;
     _relDragConnected = false;
-    const cx = (src.x + src.width/2 - WORLD_OFFSET) * scale + px;
-    const cy = (src.y + src.height/2 - WORLD_OFFSET) * scale + py;
+    const pos = _getElPos(src);
+    const cx = (pos.x + src.width/2 - WORLD_OFFSET) * scale + px;
+    const cy = (pos.y + src.height/2 - WORLD_OFFSET) * scale + py;
     const cur = _toOverlay(clientX, clientY);
     relDragLine = { x1: cx, y1: cy, x2: cur.x, y2: cur.y };
   }
@@ -1129,8 +1508,9 @@
     if (!relDragActive || !relDragSourceId) return;
     const src = $elementsStore.find(e => e.id === relDragSourceId);
     if (!src) return;
-    const cx = (src.x + src.width/2 - WORLD_OFFSET) * scale + px;
-    const cy = (src.y + src.height/2 - WORLD_OFFSET) * scale + py;
+    const pos = _getElPos(src);
+    const cx = (pos.x + src.width/2 - WORLD_OFFSET) * scale + px;
+    const cy = (pos.y + src.height/2 - WORLD_OFFSET) * scale + py;
     const cur = _toOverlay(clientX, clientY);
     relDragLine = { x1: cx, y1: cy, x2: cur.x, y2: cur.y };
   }
@@ -1191,14 +1571,15 @@
     const minX = Math.min(start.x, end.x), maxX = Math.max(start.x, end.x);
     const minY = Math.min(start.y, end.y), maxY = Math.max(start.y, end.y);
     const newSel = new Set();
-    for (const el of $elementsStore) {
+    const visEls = get(visibleElementsStore);
+    for (const el of visEls) {
       // Select if element rect intersects marquee rect (any overlap)
       if (el.x < maxX && el.x + el.width > minX &&
           el.y < maxY && el.y + el.height > minY) newSel.add(el.id);
     }
     selected = newSel;
     setSelected(new Set(selected));
-    elementsStore.update(els => { renderElements(els); return els; });
+    elementsStore.update(els => { renderElements(get(visibleElementsStore)); return els; });
 
     // Also select relation lines whose midpoint falls within the marquee
     const newRelSel = new Set();
@@ -1206,8 +1587,9 @@
       const elA = $elementsStore.find(e => e.id === rel.elAId);
       const elB = $elementsStore.find(e => e.id === rel.elBId);
       if (!elA || !elB) continue;
-      const ax = elA.x + elA.width/2, ay = elA.y + elA.height/2;
-      const bx = elB.x + elB.width/2, by = elB.y + elB.height/2;
+      const posA = _getElPos(elA), posB = _getElPos(elB);
+      const ax = posA.x + elA.width/2, ay = posA.y + elA.height/2;
+      const bx = posB.x + elB.width/2, by = posB.y + elB.height/2;
       // Sample points along the cubic bezier (matches rendering curve)
       const dx = bx - ax, dy = by - ay;
       const len = Math.sqrt(dx*dx + dy*dy);
@@ -1227,6 +1609,20 @@
       }
     }
     selectedRelIds = newRelSel;
+
+    // Strokes / shapes whose bounding box intersects the marquee.
+    const newStrokeSel = new Set();
+    for (const s of $strokesStore) {
+      if (s.type !== 'stroke' && s.type !== 'shape') continue;
+      const b = strokeBounds(s);
+      if (!b) continue;
+      if (b.minX < maxX && b.maxX > minX && b.minY < maxY && b.maxY > minY) {
+        newStrokeSel.add(s.id);
+      }
+    }
+    selectedStrokeIds = newStrokeSel;
+    setSelectedStrokeIds(new Set(newStrokeSel));
+    renderStrokeSelection();
   }
 
   // ── Arrow tool ───────────────────────────────
@@ -1267,13 +1663,29 @@
     shapePreviewG.clear();
     const x1 = start.x - WORLD_OFFSET, y1 = start.y - WORLD_OFFSET;
     const x2 = cur.x   - WORLD_OFFSET, y2 = cur.y   - WORLD_OFFSET;
-    const color = $isLightStore ? 0x000000 : 0xffffff;
+    const defs = $shapeDefaultsStore;
+    const color = parseInt((defs.stroke || ($isLightStore ? '#000000' : '#ffffff')).replace('#',''), 16);
+    const width = defs.strokeWidth ?? 1.5;
+    const fill = defs.fill ? { color: parseInt(defs.fill.replace('#',''), 16), alpha: 0.5 } : null;
+    const stroke = { color, width, alpha: 0.7 };
     if (curTool === 'rect') {
-      shapePreviewG.rect(Math.min(x1,x2), Math.min(y1,y2), Math.abs(x2-x1), Math.abs(y2-y1)).stroke({ color, width: 1.5, alpha: 0.6 });
+      const rx = Math.min(x1,x2), ry = Math.min(y1,y2);
+      const rw = Math.abs(x2-x1), rh = Math.abs(y2-y1);
+      const cr = Math.max(0, Math.min(defs.cornerRadius || 0, Math.min(rw, rh) / 2));
+      if (cr > 0) {
+        if (fill) shapePreviewG.roundRect(rx,ry,rw,rh,cr).fill(fill);
+        shapePreviewG.roundRect(rx,ry,rw,rh,cr).stroke(stroke);
+      } else {
+        if (fill) shapePreviewG.rect(rx,ry,rw,rh).fill(fill);
+        shapePreviewG.rect(rx,ry,rw,rh).stroke(stroke);
+      }
     } else if (curTool === 'ellipse') {
-      shapePreviewG.ellipse((x1+x2)/2, (y1+y2)/2, Math.abs(x2-x1)/2, Math.abs(y2-y1)/2).stroke({ color, width: 1.5, alpha: 0.6 });
+      const ex = (x1+x2)/2, ey = (y1+y2)/2;
+      const ew = Math.abs(x2-x1)/2, eh = Math.abs(y2-y1)/2;
+      if (fill) shapePreviewG.ellipse(ex,ey,ew,eh).fill(fill);
+      shapePreviewG.ellipse(ex,ey,ew,eh).stroke(stroke);
     } else if (curTool === 'line') {
-      shapePreviewG.moveTo(x1,y1).lineTo(x2,y2).stroke({ color, width: 1.5, alpha: 0.6 });
+      shapePreviewG.moveTo(x1,y1).lineTo(x2,y2).stroke(stroke);
     }
   }
 
@@ -1284,14 +1696,23 @@
   function finishShape(start, end) {
     const dx = end.x - start.x, dy = end.y - start.y;
     if (Math.abs(dx) + Math.abs(dy) < 4) return;
-    const id = 'shape_' + Date.now();
+    const id = 'shape_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
     const isLight = $isLightStore;
+    const defs = $shapeDefaultsStore;
+    const stroke = defs.stroke || (isLight ? '#000000' : '#ffffff');
+    const newId = id;
     strokesStore.update(ss => [...ss, {
-      id, type: 'shape', shapeType: curTool,
+      id: newId, type: 'shape', shapeType: curTool,
       points: [{ x: start.x, y: start.y }, { x: end.x, y: end.y }],
-      stroke: isLight ? '#000000' : '#ffffff',
-      strokeWidth: 1.5, fill: null,
+      stroke,
+      strokeWidth: defs.strokeWidth ?? 1.5,
+      fill: defs.fill ?? null,
+      cornerRadius: curTool === 'rect' ? (defs.cornerRadius ?? 0) : 0,
     }]);
+    // Auto-select the freshly drawn shape so the options bar appears.
+    selectedStrokeIds = new Set([newId]);
+    setSelectedStrokeIds(new Set([newId]));
+    renderStrokeSelection();
   }
 
   // ── Frame tool ───────────────────────────────
@@ -1320,11 +1741,33 @@
       width: w, height: h, zIndex: 0,
       pinned: false, locked: false, votes: 0, reactions: [],
       color: null, content: { frameColor: 0, frameLabel: '' },
+      tags: _autoTags(),
     }]);
     setCurTool('select'); curTool = 'select';
   }
 
   // ── Element creation ─────────────────────────
+
+  /**
+   * Return the tag IDs a newly created element should inherit based on the
+   * active canvas view. On the project canvas, returns []. On a task canvas,
+   * returns that task's tagId. On a final canvas, also returns the builtin
+   * 'final' tag id so the element immediately shows in the final view.
+   */
+  function _autoTags() {
+    const key = $activeCanvasKeyStore;
+    const parsed = parseCanvasKey(key);
+    if (parsed.kind === 'project') return [];
+    const task = $projectFlowsStore.find(t => t.id === parsed.flowId);
+    if (!task || !task.tagId) return [];
+    const out = [task.tagId];
+    if (parsed.kind === 'final') {
+      const finalTag = $projectTagsStore.find(t => t.kind === 'builtin' && t.slug === 'final');
+      if (finalTag) out.push(finalTag.id);
+    }
+    return out;
+  }
+
   function makeNote(wx, wy) {
     snapshot();
     const id = 'note_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
@@ -1334,6 +1777,7 @@
       x, y, width: 240, height: 180, zIndex: Date.now(),
       pinned: false, locked: false, votes: 0, reactions: [],
       color: null, content: { blocks: [], fontSize: 14 },
+      tags: _autoTags(),
     }]);
     return id;
   }
@@ -1347,6 +1791,7 @@
       x, y, width: 320, height: 260, zIndex: Date.now(),
       pinned: false, locked: false, votes: 0, reactions: [],
       color: null, content: { blocks: [], aiHistory: [], aiModel: 'claude' },
+      tags: _autoTags(),
     }]);
     return id;
   }
@@ -1360,6 +1805,7 @@
       x: wx, y: wy, width: 160, height: 32, zIndex: Date.now(),
       pinned: false, locked: false, votes: 0, reactions: [],
       color: null, content: { text: '', fontSize: 14 },
+      tags: _autoTags(),
     }]);
     return id;
   }
@@ -1373,6 +1819,7 @@
       x, y, width: 400, height: 300, zIndex: Date.now(),
       pinned: false, locked: false, votes: 0, reactions: [],
       color: null, content: { strokes: [] },
+      tags: _autoTags(),
     }]);
     return id;
   }
@@ -1386,24 +1833,50 @@
       x, y, width: 220, height: 200, zIndex: Date.now(),
       pinned: false, locked: false, votes: 0, reactions: [],
       color: null, content: { todoTitle: '', todoItems: [] },
+      tags: _autoTags(),
     }]);
     setActiveEditorId(id);
     return id;
   }
 
   // ── Delete selected ──────────────────────────
-  function deleteSelected() {
+  // v3: on a task canvas view, Backspace only *untags* elements (removes the
+  // active task's tag) so the element vanishes from this view but survives in
+  // the project pool. Shift+Backspace (fullDelete=true) always fully removes.
+  // On the project canvas and for v2 projects, behavior is always fullDelete.
+  function deleteSelected(fullDelete = false) {
     if (!selected.size) return;
+    const key = $activeCanvasKeyStore;
+    const parsed = parseCanvasKey(key);
+
+    // Project canvas or explicit full delete → remove elements entirely.
+    if (fullDelete || parsed.kind === 'project') {
+      snapshot();
+      const ids = new Set(selected);
+      elementsStore.update(els => els.filter(e => !ids.has(e.id)));
+      relationsStore.update(rs => rs.filter(r => !ids.has(r.elAId) && !ids.has(r.elBId)));
+      clearSelection();
+      return;
+    }
+
+    // Task canvas → strip the active task's tag from selected elements.
+    const task = $projectFlowsStore.find(t => t.id === parsed.flowId);
+    if (!task || !task.tagId) return;
+    const tagId = task.tagId;
     snapshot();
     const ids = new Set(selected);
-    elementsStore.update(els => els.filter(e => !ids.has(e.id)));
-    // Also delete strokes whose source element was deleted (for relations)
-    relationsStore.update(rs => rs.filter(r => !ids.has(r.elAId) && !ids.has(r.elBId)));
+    elementsStore.update(els => els.map(e => {
+      if (!ids.has(e.id)) return e;
+      if (!Array.isArray(e.tags)) return e;
+      return { ...e, tags: e.tags.filter(t => t !== tagId) };
+    }));
     clearSelection();
   }
 
   // ── Keyboard shortcuts ───────────────────────
   function onKeydown(e) {
+    // Tag picker: Escape closes, otherwise let it handle its own keys.
+    if (tagPicker && e.key === 'Escape') { _closeTagPicker(); return; }
     // Don't steal from inputs/editors
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' ||
         e.target.isContentEditable) return;
@@ -1421,8 +1894,19 @@
     if (e.key === 'Escape')   { clearSelection(); selectedRelIds = new Set(); return; }
     if (e.key === 'z' && !e.ctrlKey && !e.metaKey) { if (selected.size) zoomToSelection(); else zoomToFit(); return; }
     if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (selectedStrokeIds.size) {
+        snapshot();
+        const ids = new Set(selectedStrokeIds);
+        strokesStore.update(ss => ss.filter(s => !ids.has(s.id)));
+        selectedStrokeIds = new Set();
+        setSelectedStrokeIds(new Set());
+        renderStrokeSelection();
+        return;
+      }
       if (selectedRelIds.size) { snapshot(); relationsStore.update(rs => rs.filter(r => !selectedRelIds.has(r.id))); selectedRelIds = new Set(); return; }
-      deleteSelected(); return;
+      // Shift+Backspace (or Delete key) = full delete even in task views.
+      deleteSelected(e.shiftKey || e.key === 'Delete');
+      return;
     }
     if (e.key === '0')        { zoomToFit(); return; }
     if (e.key === '+' || e.key === '=') { doZoom(1/0.92, app.screen.width/2, app.screen.height/2); return; }
@@ -1496,8 +1980,9 @@
     resizing = true;
     resizeHandle = handle;
     resizeEl = id;
+    const pos = _getElPos(el);
     resizeOrigin = {
-      x: el.x, y: el.y, w: el.width, h: el.height,
+      x: pos.x, y: pos.y, w: el.width, h: el.height,
       startX: e.clientX, startY: e.clientY,
     };
     window.addEventListener('pointermove', onResizeMove);
@@ -1548,7 +2033,7 @@
     if (snapEnabled) { w = snap(w); ht = snap(ht); x = snap(x); y = snap(y); }
 
     elementsStore.update(els =>
-      els.map(el => el.id === resizeEl ? { ...el, x, y, width: w, height: ht } : el)
+      els.map(el => el.id === resizeEl ? { ..._setElPos(el, x, y), width: w, height: ht } : el)
     );
   }
 
@@ -1596,7 +2081,9 @@
     const newEls = _clipboard.map((el, i) => {
       const newId = el.id.split('_')[0] + '_' + (now + i) + '_' + Math.random().toString(36).slice(2,6);
       newIds.add(newId);
-      return { ...structuredClone(el), id: newId, x: el.x + 20, y: el.y + 20, zIndex: now + i };
+      const pos = _getElPos(el);
+      const cloned = { ...structuredClone(el), id: newId, zIndex: now + i };
+      return _setElPos(cloned, pos.x + 20, pos.y + 20);
     });
     elementsStore.update(els => [...els, ...newEls]);
     selected = newIds;
@@ -1611,29 +2098,33 @@
     snapshot();
     const els = get(elementsStore).filter(e => selected.has(e.id));
     if (!els.length) return;
-    const minX = Math.min(...els.map(e => e.x));
-    const maxX = Math.max(...els.map(e => e.x + (e.width  || 0)));
-    const minY = Math.min(...els.map(e => e.y));
-    const maxY = Math.max(...els.map(e => e.y + (e.height || 0)));
+    const positions = els.map(e => ({ ...e, ..._getElPos(e) }));
+    const minX = Math.min(...positions.map(e => e.x));
+    const maxX = Math.max(...positions.map(e => e.x + (e.width  || 0)));
+    const minY = Math.min(...positions.map(e => e.y));
+    const maxY = Math.max(...positions.map(e => e.y + (e.height || 0)));
     const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
 
     elementsStore.update(all => all.map(el => {
       if (!selected.has(el.id)) return el;
-      let nx = el.x, ny = el.y;
+      const pos = _getElPos(el);
+      let nx = pos.x, ny = pos.y;
       if (dir === 'left')    nx = minX;
       if (dir === 'right')   nx = maxX - (el.width  || 0);
       if (dir === 'centerH') nx = cx   - (el.width  || 0) / 2;
       if (dir === 'top')     ny = minY;
       if (dir === 'bottom')  ny = maxY - (el.height || 0);
       if (dir === 'centerV') ny = cy   - (el.height || 0) / 2;
-      return { ...el, x: nx, y: ny };
+      return _setElPos(el, nx, ny);
     }));
   }
 
   function distributeSelected(axis) {
     if (selected.size < 3) return;
     snapshot();
-    const sorted = [...get(elementsStore).filter(e => selected.has(e.id))];
+    const raw = get(elementsStore).filter(e => selected.has(e.id));
+    // Build with effective positions for calculations
+    const sorted = raw.map(e => ({ ...e, ..._getElPos(e) }));
     const newPositions = new Map();
     if (axis === 'H') {
       sorted.sort((a, b) => a.x - b.x);
@@ -1642,7 +2133,8 @@
       const gap = (total - sumW) / (sorted.length - 1);
       let cx = sorted[0].x + (sorted[0].width||0);
       for (let i = 1; i < sorted.length - 1; i++) {
-        newPositions.set(sorted[i].id, { x: cx + gap });
+        const pos = _getElPos(sorted[i]);
+        newPositions.set(sorted[i].id, { x: cx + gap, y: pos.y });
         cx += gap + (sorted[i].width||0);
       }
     } else {
@@ -1652,13 +2144,14 @@
       const gap = (total - sumH) / (sorted.length - 1);
       let cy = sorted[0].y + (sorted[0].height||0);
       for (let i = 1; i < sorted.length - 1; i++) {
-        newPositions.set(sorted[i].id, { y: cy + gap });
+        const pos = _getElPos(sorted[i]);
+        newPositions.set(sorted[i].id, { x: pos.x, y: cy + gap });
         cy += gap + (sorted[i].height||0);
       }
     }
     elementsStore.update(all => all.map(el => {
       const np = newPositions.get(el.id);
-      return np ? { ...el, ...np } : el;
+      return np ? _setElPos(el, np.x, np.y) : el;
     }));
   }
 
@@ -1668,6 +2161,8 @@
     else if (item.label === 'Draw')      { curTool = 'pen'; setCurTool('pen'); }
     else if (item.label === 'Dashboard') { onBack(); }
     else if (item.label === 'Bookmark')  { _addBookmark(); }
+    // v3 canvas navigation
+    else if (item.action === 'flows')          { window.backToFlows?.(); }
   }
 
   // ── Context menu ─────────────────────────────
@@ -1807,7 +2302,7 @@
 
   function zoomToSelection() {
     if (!selected.size) return;
-    const els = $elementsStore.filter(e => selected.has(e.id));
+    const els = get(visibleElementsStore).filter(e => selected.has(e.id));
     if (!els.length) return;
     const minX = Math.min(...els.map(e => e.x - WORLD_OFFSET));
     const minY = Math.min(...els.map(e => e.y - WORLD_OFFSET));
@@ -1822,7 +2317,7 @@
   }
 
   function zoomToElement(id) {
-    const el = $elementsStore.find(e => e.id === id);
+    const el = get(visibleElementsStore).find(e => e.id === id);
     if (!el) return;
     const fw = app?.screen.width || 1200, fh = app?.screen.height || 800;
     const ex = el.x - WORLD_OFFSET, ey = el.y - WORLD_OFFSET;
@@ -1854,12 +2349,13 @@
     const widths = [...targets].map(e => e.width || 240).sort((a, b) => a - b);
     const COL_W = widths[Math.floor(widths.length / 2)];
 
-    // Anchor at top-left of current bounding box
-    const anchorX = Math.min(...targets.map(e => e.x));
-    const anchorY = Math.min(...targets.map(e => e.y));
+    // Anchor at top-left of current bounding box (use per-view positions)
+    const withPos = targets.map(e => ({ ...e, ..._getElPos(e) }));
+    const anchorX = Math.min(...withPos.map(e => e.x));
+    const anchorY = Math.min(...withPos.map(e => e.y));
 
     // Sort reading order: top-to-bottom, left-to-right
-    const sorted = [...targets].sort((a, b) => {
+    const sorted = [...withPos].sort((a, b) => {
       const rowA = Math.round(a.y / 40), rowB = Math.round(b.y / 40);
       return rowA !== rowB ? rowA - rowB : a.x - b.x;
     });
@@ -1880,7 +2376,7 @@
 
     elementsStore.update(els => els.map(el => {
       const u = updates.find(u => u.id === el.id);
-      return u ? { ...el, x: u.x, y: u.y, width: u.width, height: u.height } : el;
+      return u ? { ..._setElPos(el, u.x, u.y), width: u.width, height: u.height } : el;
     }));
 
     snapshot();
@@ -1889,6 +2385,7 @@
 
   // ── Expose to legacy bridge ──────────────────
   $effect(() => {
+    if (!isPrimary) return; // secondary canvas doesn't register globals
     window._pixiCanvas = {
       serializePixiCanvas, restorePixiCanvas,
       makeNote, makeAiNote, makeLabel, makeTodo, makeDrawCard,
@@ -1954,18 +2451,22 @@
       }
     }
     function onDocContextMenu(e) { e.preventDefault(); }
-    document.addEventListener('pointerup', onDocRadialUp);
-    document.addEventListener('pointermove', onDocRadialMove);
-    document.addEventListener('contextmenu', onDocContextMenu);
-    _docRadialCleanup = () => {
-      document.removeEventListener('pointerup', onDocRadialUp);
-      document.removeEventListener('pointermove', onDocRadialMove);
-      document.removeEventListener('contextmenu', onDocContextMenu);
-    };
+    // Primary canvas owns document-level radial + contextmenu handlers.
+    // Secondary must not duplicate them (would fire twice per event).
+    if (isPrimary) {
+      document.addEventListener('pointerup', onDocRadialUp);
+      document.addEventListener('pointermove', onDocRadialMove);
+      document.addEventListener('contextmenu', onDocContextMenu);
+      _docRadialCleanup = () => {
+        document.removeEventListener('pointerup', onDocRadialUp);
+        document.removeEventListener('pointermove', onDocRadialMove);
+        document.removeEventListener('contextmenu', onDocContextMenu);
+      };
+    }
   });
 </script>
 
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydown={isPrimary ? onKeydown : undefined} />
 
 <div
   class="pixi-canvas-wrap"
@@ -2030,6 +2531,52 @@
     {/each}
   {/if}
 
+  <!-- Floating tag picker (Shift+right-click on an element) -->
+  {#if tagPicker}
+    <div
+      class="tag-picker-backdrop"
+      onpointerdown={e => { if (e.target === e.currentTarget) _closeTagPicker(); }}
+      oncontextmenu={e => e.preventDefault()}
+      role="none"
+    ></div>
+    <div
+      class="tag-picker-pop"
+      style="left:{Math.min(tagPicker.x, window.innerWidth - 240)}px;top:{Math.min(tagPicker.y, window.innerHeight - 320)}px;"
+      onpointerdown={e => e.stopPropagation()}
+      oncontextmenu={e => e.preventDefault()}
+      role="menu"
+      tabindex="-1"
+    >
+      <div class="tag-picker-header">
+        tag {tagPicker.elementIds.size} item{tagPicker.elementIds.size === 1 ? '' : 's'}
+      </div>
+      {#if $projectTagsStore.length === 0}
+        <div class="tag-picker-empty">no tags yet</div>
+      {:else}
+        {#each $projectTagsStore as tag (tag.id)}
+          {@const count = _tagPickerCount(tag.id)}
+          {@const state = count === 0 ? 'none' : count === tagPicker.elementIds.size ? 'all' : 'some'}
+          <button class="tag-picker-row" onclick={() => _tagPickerToggle(tag.id)}>
+            <span class="tag-picker-check" data-state={state}>{state === 'all' ? '✓' : state === 'some' ? '–' : ''}</span>
+            <span class="tag-picker-dot" style="background:{_tagColorForPicker(tag)};"></span>
+            <span class="tag-picker-name">{_tagLabelForPicker(tag)}</span>
+            <span class="tag-picker-kind">{tag.kind}</span>
+          </button>
+        {/each}
+      {/if}
+      <div class="tag-picker-new">
+        <input
+          type="text"
+          placeholder="new tag…"
+          bind:value={tagPickerNewName}
+          onkeydown={e => { if (e.key === 'Enter') _tagPickerCreate(); if (e.key === 'Escape') _closeTagPicker(); e.stopPropagation(); }}
+        />
+        <button onclick={_tagPickerCreate}>+</button>
+      </div>
+      <div class="tag-picker-footer">esc to close</div>
+    </div>
+  {/if}
+
   <!-- Radial drag menu -->
   {#if radialMenu}
     <!-- backdrop to capture pointer release anywhere -->
@@ -2065,6 +2612,48 @@
       {/each}
       <div class="radial-center"></div>
     </div>
+    {#if _radialHovered >= 0 && RADIAL_ITEMS[_radialHovered]?.action === 'flows'}
+      {@const flowsRect = _bmItemElAll[_radialHovered]?.getBoundingClientRect()}
+      {@const parsed = parseCanvasKey($activeCanvasKeyStore)}
+      {@const parentFlows = $projectFlowsStore.filter(t => !t.parentFlowId).sort((a, b) => (a.order || 0) - (b.order || 0))}
+      <div
+        class="radial-bm-submenu radial-tasks-submenu"
+        style="left:{flowsRect ? flowsRect.left - 8 : 0}px; top:{flowsRect ? flowsRect.top - 4 : 0}px; transform: translateX(-100%);"
+        onclick={e => e.stopPropagation()}
+        onpointerenter={e => { e.stopPropagation(); _radialSubmenuLocked = true; }}
+        onpointerleave={e => { if (!e.currentTarget.contains(/** @type {Node} */(e.relatedTarget))) { _radialSubmenuLocked = false; } }}
+        role="none"
+      >
+        <button
+          class="radial-bm-jump radial-nav-item"
+          class:active={parsed.kind === 'project'}
+          onclick={e => { e.stopPropagation(); _closeRadialMenu(); window.openCanvasView?.(null, 'task'); }}
+        >⬡ Project canvas</button>
+        {#if parentFlows.length > 0}
+          <div class="radial-import-sep"></div>
+          {#each parentFlows as pt (pt.id)}
+            {@const subs = $projectFlowsStore.filter(t => t.parentFlowId === pt.id).sort((a, b) => (a.order || 0) - (b.order || 0))}
+            <button
+              class="radial-bm-jump radial-nav-item"
+              class:active={parsed.flowId === pt.id && parsed.kind === 'task'}
+              onclick={e => { e.stopPropagation(); _closeRadialMenu(); window.openCanvasView?.(pt.id, 'task'); }}
+            >{pt.title}</button>
+            {#each subs as sub (sub.id)}
+              <button
+                class="radial-bm-jump radial-nav-item radial-nav-sub"
+                class:active={parsed.flowId === sub.id}
+                onclick={e => { e.stopPropagation(); _closeRadialMenu(); window.openCanvasView?.(sub.id, 'task'); }}
+              >{sub.title}</button>
+            {/each}
+          {/each}
+        {/if}
+        <div class="radial-import-sep"></div>
+        <button
+          class="radial-bm-jump radial-nav-item radial-nav-hub"
+          onclick={e => { e.stopPropagation(); _closeRadialMenu(); window.backToFlows?.(); }}
+        >☰ Flows hub</button>
+      </div>
+    {/if}
     {#if _radialHovered === 2}
       {@const impRect = _bmItemElAll[2]?.getBoundingClientRect()}
       <div
@@ -2190,6 +2779,19 @@
           <span class="ctx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><rect x="1" y="1" width="5" height="5" rx="0.5" opacity="0.4"/><rect x="8" y="1" width="5" height="5" rx="0.5" opacity="0.4"/><rect x="1" y="8" width="5" height="5" rx="0.5" opacity="0.4"/><rect x="8" y="8" width="5" height="5" rx="0.5" opacity="0.4"/><line x1="1" y1="13" x2="13" y2="1" stroke-width="1.4" stroke-linecap="round"/></svg></span>
           ungroup
         </button>
+      {/if}
+      {#if ctxEl?.type === 'image' || ctxEl?.type === 'video' || ctxEl?.type === 'audio'}
+        {#if !ctxEl?.content?.embedded}
+          <button class="ctx-item" onclick={() => { embedMediaElement(ctxMenu.elId); closeCtxMenu(); }}>
+            <span class="ctx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 2v7M4 6l3 3 3-3"/><rect x="2" y="10" width="10" height="2" rx="0.5"/></svg></span>
+            embed file
+          </button>
+        {:else}
+          <button class="ctx-item" onclick={() => { releaseMediaElement(ctxMenu.elId); closeCtxMenu(); }}>
+            <span class="ctx-icon"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 12V5M4 8l3-3 3 3"/><rect x="2" y="2" width="10" height="2" rx="0.5"/></svg></span>
+            release from app
+          </button>
+        {/if}
       {/if}
       <div class="ctx-sep"></div>
       <button class="ctx-item danger" onclick={() => ctxDelete(ctxMenu.elId)}>
@@ -2321,6 +2923,11 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .radial-bm-jump:hover { background: rgba(255,255,255,0.06); color: #fff; }
+  .radial-nav-item { padding: 5px 12px; }
+  .radial-nav-item.active { color: #ff6b2b; font-weight: 600; }
+  .radial-nav-sub { padding-left: 24px; font-size: 10px; }
+  .radial-nav-hub { color: rgba(255,255,255,0.5); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .radial-tasks-submenu { min-width: 180px; max-height: 320px; overflow-y: auto; }
   .radial-bm-del {
     background: none; border: none; cursor: pointer;
     color: rgba(255,255,255,0.2); font-size: 9px; padding: 4px 6px;
@@ -2408,4 +3015,127 @@
   .ctx-item:hover .ctx-icon { color: #E8440A; }
   .ctx-item.danger .ctx-icon { color: rgba(232,68,10,0.5); }
   .ctx-chevron { margin-left: auto; color: rgba(255,255,255,0.2); font-size: 14px; }
+
+  /* Floating tag picker (Shift+right-click on an element) */
+  .tag-picker-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 9100;
+    background: transparent;
+  }
+  .tag-picker-pop {
+    position: fixed;
+    z-index: 9101;
+    min-width: 220px;
+    max-width: 260px;
+    max-height: 320px;
+    overflow-y: auto;
+    background: rgba(16,16,18,0.98);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px;
+    padding: 4px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.55);
+    color: #e5e5e7;
+  }
+  .tag-picker-header {
+    font-family: 'Geist Mono', monospace;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: rgba(255,255,255,0.4);
+    padding: 8px 10px 4px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    margin-bottom: 3px;
+  }
+  .tag-picker-empty {
+    font-family: 'Geist Mono', monospace;
+    font-size: 9px;
+    color: rgba(255,255,255,0.3);
+    padding: 10px 8px;
+    text-align: center;
+  }
+  .tag-picker-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 8px;
+    background: transparent;
+    border: none;
+    color: rgba(255,255,255,0.8);
+    font-family: 'Geist', sans-serif;
+    font-size: 11px;
+    cursor: pointer;
+    border-radius: 4px;
+    text-align: left;
+  }
+  .tag-picker-row:hover { background: rgba(255,255,255,0.06); }
+  .tag-picker-check {
+    width: 14px; height: 14px;
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 3px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    color: rgba(255,255,255,0.9);
+    flex-shrink: 0;
+  }
+  .tag-picker-check[data-state="all"]  { background: rgba(74,158,255,0.35); border-color: rgba(74,158,255,0.6); }
+  .tag-picker-check[data-state="some"] { background: rgba(255,255,255,0.1); }
+  .tag-picker-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .tag-picker-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tag-picker-kind {
+    font-family: 'Geist Mono', monospace;
+    font-size: 8px;
+    color: rgba(255,255,255,0.3);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .tag-picker-new {
+    display: flex;
+    gap: 4px;
+    padding: 6px 4px 2px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    margin-top: 4px;
+  }
+  .tag-picker-new input {
+    flex: 1;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 4px;
+    color: rgba(255,255,255,0.9);
+    padding: 4px 8px;
+    font-family: 'Geist', sans-serif;
+    font-size: 11px;
+    outline: none;
+  }
+  .tag-picker-new input:focus { border-color: rgba(74,158,255,0.5); }
+  .tag-picker-new button {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: rgba(255,255,255,0.9);
+    padding: 4px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+  }
+  .tag-picker-new button:hover { background: rgba(255,255,255,0.14); }
+  .tag-picker-footer {
+    font-family: 'Geist Mono', monospace;
+    font-size: 8px;
+    color: rgba(255,255,255,0.25);
+    padding: 4px 8px 2px;
+    text-align: right;
+  }
 </style>

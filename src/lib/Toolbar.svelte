@@ -139,7 +139,7 @@
     content: attr(data-tip); position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%);
     background: #111; border: 1px solid rgba(255,255,255,0.12); color: rgba(255,255,255,0.55);
     font-family: 'Geist Mono', monospace; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
-    padding: 4px 9px; border-radius: 0; white-space: nowrap;
+    padding: 4px 9px; border-radius: 6px; white-space: nowrap;
     opacity: 0; pointer-events: none; transition: opacity 0.12s;
   }
   .t:hover::after { opacity: 1; }

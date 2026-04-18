@@ -1,6 +1,5 @@
 <script>
-  import { projectsStore, foldersStore, activeProjectIdStore, currentFolderIdStore } from '../stores/projects.js';
-  import Sidebar from './Sidebar.svelte';
+  import { projectsStore, foldersStore, currentFolderIdStore } from '../stores/projects.js';
   import TopBar from './TopBar.svelte';
   import ProjectGrid from './ProjectGrid.svelte';
 
@@ -31,39 +30,17 @@
   // Context menu state
   let ctxOpen    = $state(false);
   let ctxId      = $state(null);
+  let ctxKind    = $state('project'); // 'project' | 'folder'
   let ctxX       = $state(0);
   let ctxY       = $state(0);
 
   // Delete confirm (inline on card, handled in ProjectGrid)
 
   // ── helpers ─────────────────────────────────
-  function getFolderName(fid) {
-    if (!fid || fid === '__unfiled__') return 'unfiled';
-    const f = folders.find(x => x.id === fid);
-    return f ? f.name : 'folder';
-  }
-
   function getFolderProjects(fid) {
     if (fid === null) return projects;
     if (fid === '__unfiled__') return projects.filter(p => !p.folderId);
     return projects.filter(p => p.folderId === fid);
-  }
-
-  function fmtDate(ts) {
-    const d = new Date(ts), now = new Date(), diff = (now - d) / 1000;
-    if (diff < 60)     return 'just now';
-    if (diff < 3600)   return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400)  return `${Math.floor(diff / 3600)}h ago`;
-    if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  }
-
-  function fmtDateShort(ts) {
-    const d = new Date(ts), now = new Date(), diff = (now - d) / 1000;
-    if (diff < 60)    return 'now';
-    if (diff < 3600)  return `${Math.floor(diff / 60)}m`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
 
   // ── derived display data ─────────────────────
@@ -76,19 +53,58 @@
     return result;
   })());
 
+  // Title + meta for the left hero column
   let viewTitle = $derived(
     currentFolderId === null         ? 'all canvases' :
     currentFolderId === '__unfiled__' ? 'unfiled' :
-    getFolderName(currentFolderId)
+    (folders.find(f => f.id === currentFolderId)?.name ?? 'folder')
   );
 
-  let statRecent = $derived(
-    projects.length > 0
-      ? fmtDateShort([...projects].sort((a, b) => b.updatedAt - a.updatedAt)[0].updatedAt)
-      : '—'
+  // Breadcrumb trail — root → … → current folder
+  let breadcrumbs = $derived((() => {
+    if (currentFolderId === null) return [];
+    const trail = [];
+    if (currentFolderId === '__unfiled__') {
+      trail.push({ id: '__unfiled__', name: 'unfiled' });
+    } else {
+      let f = folders.find(x => x.id === currentFolderId);
+      while (f) {
+        trail.unshift({ id: f.id, name: f.name });
+        f = f.parentId ? folders.find(x => x.id === f.parentId) : null;
+      }
+    }
+    return trail;
+  })());
+  let parentFolderId = $derived((() => {
+    if (currentFolderId === null || currentFolderId === '__unfiled__') return null;
+    const f = folders.find(x => x.id === currentFolderId);
+    return f?.parentId || null;
+  })());
+
+  // Eyebrow: index-style label above the title
+  let heroEyebrow = $derived(
+    currentFolderId === null ? '№ 00 · library' :
+    currentFolderId === '__unfiled__' ? '№ 01 · unfiled' :
+    `folder · ${(folders.findIndex(f => f.id === currentFolderId) + 1).toString().padStart(2, '0')}`
   );
 
-  let totalNotes = $derived(projects.reduce((s, p) => s + (p.noteCount || 0), 0));
+  // Stacked meta lines
+  let heroStats = $derived([
+    { k: 'canvases', v: filtered.length.toString().padStart(2, '0') },
+    { k: 'folders',  v: folders.length.toString().padStart(2, '0') },
+    { k: 'last edit', v: projects.length
+        ? fmtShort([...projects].sort((a, b) => b.updatedAt - a.updatedAt)[0].updatedAt)
+        : '—' },
+  ]);
+
+  function fmtShort(ts) {
+    const diff = (Date.now() - ts) / 1000;
+    if (diff < 60) return 'now';
+    if (diff < 3600) return `${Math.floor(diff / 60)}m`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
+    if (diff < 604800) return `${Math.floor(diff / 86400)}d`;
+    return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
 
   // ── actions ─────────────────────────────────
   function openNewModal() {
@@ -118,12 +134,6 @@
     modalValue = ''; modalTarget = null; modalOpen = true;
   }
 
-  function openNewSubfolderModal(parentId) {
-    modalMode = 'new-subfolder'; modalTitle = 'new subfolder';
-    modalDesc = 'name your subfolder.'; modalConfirm = 'create';
-    modalValue = ''; modalTarget = parentId; modalOpen = true;
-  }
-
   function openRenameFolderModal(fid) {
     const f = folders.find(x => x.id === fid); if (!f) return;
     modalMode = 'rename-folder'; modalTitle = 'rename folder';
@@ -136,16 +146,9 @@
     const val = value.trim();
     if (modalMode === 'new-folder') {
       const name = val || 'new folder';
-      const f = { id: 'fold_' + Date.now(), name, parentId: null };
-      const curFolders = [...folders, f];
-      _svc('saveFolders', curFolders);
+      const parent = (currentFolderId && currentFolderId !== '__unfiled__') ? currentFolderId : null;
+      _svc('createFolder', name, parent);
       _svc('showToast', `folder "${name}" created`);
-    } else if (modalMode === 'new-subfolder' && modalTarget) {
-      const name = val || 'new folder';
-      const f = { id: 'fold_' + Date.now(), name, parentId: modalTarget };
-      const curFolders = [...folders, f];
-      _svc('saveFolders', curFolders);
-      _svc('showToast', `subfolder "${name}" created`);
     } else if (modalMode === 'rename-folder' && modalTarget) {
       const f = folders.find(x => x.id === modalTarget);
       if (f && val) {
@@ -157,32 +160,39 @@
   }
 
   // ── context menu ─────────────────────────────
-  function openCtxMenu(id, e) {
+  function openCtxMenu(id, e, kind = 'project') {
     e.stopPropagation(); e.preventDefault();
     ctxId = id;
+    ctxKind = kind;
     const btn = e.target.closest('.card-action-btn') || e.target;
     const rect = btn.getBoundingClientRect();
     const menuW = 180, menuH = 240;
-    // Open above the button, right-aligned to it (card menus open upward from bottom-right)
     let x = rect.right - menuW;
     let y = rect.top - menuH - 6;
-    // Flip down if too close to top
     if (y < 8) y = rect.bottom + 6;
-    // Clamp to viewport
     ctxX = Math.max(8, Math.min(x, window.innerWidth - menuW - 8));
     ctxY = Math.max(8, y);
-    // Defer so onDocClick for this same event fires before we open, not after
     setTimeout(() => { ctxOpen = true; }, 0);
   }
 
   function closeCtxMenu() { ctxOpen = false; ctxId = null; }
 
-  function ctxAction(action) {
-    const id = ctxId; closeCtxMenu();
-    if      (action === 'open')    _svc('openProject', id);
-    else if (action === 'rename')  _svc('startInlineRename', id);
-    else if (action === 'dup')     _svc('dupProject', id);
-    else if (action === 'delete')  _svc('showInlineDelete', id);
+  async function ctxAction(action) {
+    const id = ctxId; const kind = ctxKind; closeCtxMenu();
+    if (kind === 'folder') {
+      if      (action === 'open')      setFolder(id);
+      else if (action === 'rename')    openRenameFolderModal(id);
+      else if (action === 'cover')     { const file = await _svc('pickCoverImage'); if (file) _svc('setFolderCover', id, file); }
+      else if (action === 'cover-clear') _svc('setFolderCover', id, null);
+      else if (action === 'delete')    _svc('deleteFolderPrompt', id);
+      return;
+    }
+    if      (action === 'open')        _svc('openProject', id);
+    else if (action === 'rename')      _svc('startInlineRename', id);
+    else if (action === 'dup')         _svc('dupProject', id);
+    else if (action === 'cover')       { const file = await _svc('pickCoverImage'); if (file) _svc('setProjectCover', id, file); }
+    else if (action === 'cover-clear') _svc('setProjectCover', id, null);
+    else if (action === 'delete')      _svc('showInlineDelete', id);
   }
 
   function ctxMoveToFolder(fid) {
@@ -193,6 +203,13 @@
   function onDocClick(e) {
     if (ctxOpen && !e.target.closest('#svelte-ctx-menu')) closeCtxMenu();
   }
+
+  // ── window bridge for ghost cards ────────────
+  import { onMount } from 'svelte';
+  onMount(() => {
+    window.showNewFolderModal = openNewFolderModal;
+    return () => { delete window.showNewFolderModal; };
+  });
 
   // ── keyboard ─────────────────────────────────
   function onKeydown(e) {
@@ -218,32 +235,56 @@
 />
 
 <div id="dash-body">
-  <Sidebar
-    {projects}
-    {folders}
-    {currentFolderId}
-    on:setFolder={e => setFolder(e.detail)}
-    on:newFolder={openNewFolderModal}
-    on:newSubfolder={e => openNewSubfolderModal(e.detail)}
-    on:renameFolder={e => openRenameFolderModal(e.detail)}
-    on:deleteFolder={e => _svc('deleteFolderPrompt', e.detail)}
-  />
-
-  <div id="dash-main">
-    <div id="dash-header-block">
-      <div class="dash-eyebrow">
-        <span class="dash-eyebrow-accent">■</span>
-        <span>workspace</span>
-        <span id="project-count-label">{filtered.length} canvas{filtered.length !== 1 ? 'es' : ''}</span>
-      </div>
-      <h1 id="view-title">{viewTitle}</h1>
-      <div id="stats-bar">
-        <div class="stat"><span class="stat-val">{projects.length}</span><span class="stat-lbl">canvases</span></div>
-        <div class="stat"><span class="stat-val">{statRecent}</span><span class="stat-lbl">last opened</span></div>
-        <div class="stat"><span class="stat-val">{totalNotes}</span><span class="stat-lbl">total notes</span></div>
+  <aside id="dash-hero">
+    {#if currentFolderId !== null}
+      <nav class="hero-breadcrumb" aria-label="folder trail">
+        <button class="bc-up" onclick={() => setFolder(parentFolderId)} title={parentFolderId ? 'up one level' : 'back to all canvases'}>
+          <svg viewBox="0 0 12 12"><polyline points="8,3 4,6 8,9"/></svg>
+        </button>
+        <button class="bc-root" onclick={() => setFolder(null)}>all</button>
+        {#each breadcrumbs as crumb, i}
+          <span class="bc-sep">/</span>
+          {#if i === breadcrumbs.length - 1}
+            <span class="bc-current">{crumb.name}</span>
+          {:else}
+            <button class="bc-link" onclick={() => setFolder(crumb.id)}>{crumb.name}</button>
+          {/if}
+        {/each}
+      </nav>
+    {/if}
+    <div class="hero-eyebrow">{heroEyebrow}</div>
+    <h1 class="hero-title">{viewTitle}</h1>
+    <div class="hero-rule"></div>
+    <dl class="hero-stats">
+      {#each heroStats as s}
+        <div class="hero-stat">
+          <dt>{s.k}</dt>
+          <dd>{s.v}</dd>
+        </div>
+      {/each}
+    </dl>
+    <div class="hero-actions">
+      <button class="hero-new-btn" onclick={openNewModal}>
+        <svg viewBox="0 0 12 12"><line x1="6" y1="1" x2="6" y2="11"/><line x1="1" y1="6" x2="11" y2="6"/></svg>
+        new project
+      </button>
+      <div class="hero-secondary-actions">
+        <button class="hero-link" onclick={openNewFolderModal}>+ new folder</button>
+        <button class="hero-link" id="hero-theme-btn" onclick={() => window.toggleDashTheme?.()}>
+          <svg id="dash-theme-icon" viewBox="0 0 12 12">
+            <circle cx="6" cy="6" r="2.5"/>
+            <line x1="6" y1="0.5" x2="6" y2="2"/><line x1="6" y1="10" x2="6" y2="11.5"/>
+            <line x1="0.5" y1="6" x2="2" y2="6"/><line x1="10" y1="6" x2="11.5" y2="6"/>
+            <line x1="2.2" y1="2.2" x2="3.2" y2="3.2"/><line x1="8.8" y1="8.8" x2="9.8" y2="9.8"/>
+            <line x1="9.8" y1="2.2" x2="8.8" y2="3.2"/><line x1="3.2" y1="8.8" x2="2.2" y2="9.8"/>
+          </svg>
+          <span id="dash-theme-label">light</span>
+        </button>
       </div>
     </div>
+  </aside>
 
+  <div id="dash-main">
     <div id="dash-content">
       <ProjectGrid
         {filtered}
@@ -252,7 +293,7 @@
         {dashView}
         {searchQuery}
         on:open={e => openProject(e.detail)}
-        on:ctxMenu={e => openCtxMenu(e.detail.id, e.detail.event)}
+        on:ctxMenu={e => openCtxMenu(e.detail.id, e.detail.event, e.detail.kind || 'project')}
       />
     </div>
   </div>
@@ -283,7 +324,9 @@
 
 <!-- Context menu -->
 {#if ctxOpen}
-  {@const ctxProject = projects.find(x => x.id === ctxId)}
+  {@const ctxProject = ctxKind === 'project' ? projects.find(x => x.id === ctxId) : null}
+  {@const ctxFolder  = ctxKind === 'folder'  ? folders.find(x => x.id === ctxId) : null}
+  {@const hasCover   = ctxKind === 'project' ? !!ctxProject?.coverImageId : !!ctxFolder?.coverImageId}
   <div id="svelte-ctx-menu" class="show" style="left:{ctxX}px;top:{ctxY}px;position:fixed;z-index:9999;">
     <button class="ctx-item" onclick={() => ctxAction('open')}>
       <svg viewBox="0 0 12 12"><path d="M2 6h8M6 3l3 3-3 3"/></svg>open
@@ -291,29 +334,43 @@
     <button class="ctx-item" onclick={() => ctxAction('rename')}>
       <svg viewBox="0 0 12 12"><path d="M2 9l1-1 5-5 1 1-5 5-2 1z"/><line x1="7" y1="3" x2="9" y2="5"/></svg>rename
     </button>
-    <button class="ctx-item" onclick={() => ctxAction('dup')}>
-      <svg viewBox="0 0 12 12"><rect x="1" y="3" width="7" height="7" rx="1"/><path d="M4 3V2a1 1 0 011-1h5a1 1 0 011 1v5a1 1 0 01-1 1H9"/></svg>duplicate
-    </button>
+    {#if ctxKind === 'project'}
+      <button class="ctx-item" onclick={() => ctxAction('dup')}>
+        <svg viewBox="0 0 12 12"><rect x="1" y="3" width="7" height="7" rx="1"/><path d="M4 3V2a1 1 0 011-1h5a1 1 0 011 1v5a1 1 0 01-1 1H9"/></svg>duplicate
+      </button>
+    {/if}
     <div class="ctx-divider"></div>
-    <div class="ctx-label">MOVE TO FOLDER</div>
-    <div class="ctx-folders-list">
-      {#if folders.length === 0}
-        <div class="ctx-folder-item" style="color:var(--text-faint);cursor:default;">no folders yet</div>
-      {:else}
-        {#each folders as f}
-          <button class="ctx-folder-item" onclick={() => ctxMoveToFolder(ctxProject?.folderId === f.id ? null : f.id)}>
-            <svg viewBox="0 0 14 14"><path d="M1 4a1 1 0 011-1h3l1.5 2H12a1 1 0 011 1v5a1 1 0 01-1 1H2a1 1 0 01-1-1V4z"/></svg>
-            {f.name}{ctxProject?.folderId === f.id ? ' ✓' : ''}
-          </button>
-        {/each}
-        {#if ctxProject?.folderId}
-          <button class="ctx-folder-item" onclick={() => ctxMoveToFolder(null)}>
-            <svg viewBox="0 0 14 14"><line x1="2" y1="2" x2="12" y2="12"/><line x1="12" y1="2" x2="2" y2="12"/></svg>
-            remove from folder
-          </button>
+    <button class="ctx-item" onclick={() => ctxAction('cover')}>
+      <svg viewBox="0 0 12 12"><rect x="1" y="2" width="10" height="8" rx="1"/><circle cx="4" cy="5" r="1"/><polyline points="1,9 4,6 7,9 11,5"/></svg>
+      {hasCover ? 'change cover' : 'set cover image'}
+    </button>
+    {#if hasCover}
+      <button class="ctx-item" onclick={() => ctxAction('cover-clear')}>
+        <svg viewBox="0 0 12 12"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>clear cover
+      </button>
+    {/if}
+    {#if ctxKind === 'project'}
+      <div class="ctx-divider"></div>
+      <div class="ctx-label">MOVE TO FOLDER</div>
+      <div class="ctx-folders-list">
+        {#if folders.length === 0}
+          <div class="ctx-folder-item" style="color:var(--text-faint);cursor:default;">no folders yet</div>
+        {:else}
+          {#each folders as f}
+            <button class="ctx-folder-item" onclick={() => ctxMoveToFolder(ctxProject?.folderId === f.id ? null : f.id)}>
+              <svg viewBox="0 0 14 14"><path d="M1 4a1 1 0 011-1h3l1.5 2H12a1 1 0 011 1v5a1 1 0 01-1 1H2a1 1 0 01-1-1V4z"/></svg>
+              {f.name}{ctxProject?.folderId === f.id ? ' ✓' : ''}
+            </button>
+          {/each}
+          {#if ctxProject?.folderId}
+            <button class="ctx-folder-item" onclick={() => ctxMoveToFolder(null)}>
+              <svg viewBox="0 0 14 14"><line x1="2" y1="2" x2="12" y2="12"/><line x1="12" y1="2" x2="2" y2="12"/></svg>
+              remove from folder
+            </button>
+          {/if}
         {/if}
-      {/if}
-    </div>
+      </div>
+    {/if}
     <div class="ctx-divider"></div>
     <button class="ctx-item danger" onclick={() => ctxAction('delete')}>
       <svg viewBox="0 0 12 12"><polyline points="1,3 11,3"/><path d="M2,3l1,8h6l1-8"/><line x1="4" y1="1" x2="8" y2="1"/></svg>delete

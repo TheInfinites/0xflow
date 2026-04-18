@@ -1,7 +1,8 @@
 // ════════════════════════════════════════════
 // elements store — single source of truth for canvas elements
 // ════════════════════════════════════════════
-import { writable, get } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
+import { activeCanvasKeyStore, projectFlowsStore, projectTagsStore, parseCanvasKey } from './projects.js';
 
 /**
  * Each element record:
@@ -35,6 +36,10 @@ import { writable, get } from 'svelte/store';
  *     frameLabel: string,
  *     // label
  *     text: string,
+ *   },
+ *   tags: string[]               // v3: array of tag IDs (from projectTagsStore)
+ *   viewPositions: {             // v3: per-view position overrides
+ *     [canvasKey: string]: { x: number, y: number }
  *   }
  * }
  *
@@ -54,6 +59,52 @@ import { writable, get } from 'svelte/store';
 export const elementsStore = writable([]);
 export const strokesStore  = writable([]);   // pen strokes, arrows, shapes
 export const relationsStore = writable([]);  // relation lines between elements
+
+// ── v3: visible elements derived store ───────
+// Filters elementsStore based on activeCanvasKeyStore.
+//   project view → all elements
+//   flow view    → elements tagged with the flow's tagId
+//   final view   → elements tagged with (parent flow tagId) AND (builtin 'final' tag)
+// v2 projects never set a non-project canvas key, so this behaves as a passthrough.
+/** Apply per-view position overrides if they exist for the given canvas key. */
+function _applyViewPos(els, canvasKey) {
+  if (!canvasKey || canvasKey === '__project__') return els;
+  return els.map(e => {
+    const vp = e.viewPositions?.[canvasKey];
+    if (!vp) return e;
+    return { ...e, x: vp.x, y: vp.y };
+  });
+}
+
+export const visibleElementsStore = derived(
+  [elementsStore, activeCanvasKeyStore, projectFlowsStore, projectTagsStore],
+  ([$els, $key, $flows, $tags]) => {
+    const parsed = parseCanvasKey($key);
+    if (parsed.kind === 'project') return $els;
+
+    const flow = $flows.find(t => t.id === parsed.flowId);
+    if (!flow) return $els; // fallback — unknown flow, show all
+    const flowTagId = flow.tagId;
+
+    if (parsed.kind === 'task') {
+      const filtered = $els.filter(e => Array.isArray(e.tags) && e.tags.includes(flowTagId));
+      return _applyViewPos(filtered, $key);
+    }
+
+    if (parsed.kind === 'final') {
+      const finalTag = $tags.find(t => t.kind === 'builtin' && t.slug === 'final');
+      if (!finalTag) return [];
+      const filtered = $els.filter(e =>
+        Array.isArray(e.tags) &&
+        e.tags.includes(flowTagId) &&
+        e.tags.includes(finalTag.id)
+      );
+      return _applyViewPos(filtered, $key);
+    }
+
+    return $els;
+  }
+);
 
 // Undo/redo stacks (kept outside store — not reactive)
 let _undoStack = [];

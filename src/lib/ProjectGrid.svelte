@@ -1,19 +1,46 @@
 <script>
   import { onMount, createEventDispatcher } from 'svelte';
+  import { getBlobURL } from './media-service.js';
+  import { projectCanvasesStore } from '../stores/projects.js';
   const dispatch = createEventDispatcher();
 
   let { filtered, folders, currentFolderId, dashView, searchQuery } = $props();
+
+  let showFolders = $derived(currentFolderId !== '__unfiled__' && !searchQuery.trim());
+  let folderCards = $derived(
+    showFolders
+      ? (currentFolderId === null
+          ? folders.filter(f => !f.parentId)
+          : folders.filter(f => f.parentId === currentFolderId))
+      : []
+  );
+  let parentFolderId = $derived((() => {
+    if (currentFolderId === null || currentFolderId === '__unfiled__') return null;
+    const f = folders.find(x => x.id === currentFolderId);
+    return f?.parentId || null;
+  })());
+  let parentFolderName = $derived((() => {
+    if (parentFolderId === null) return 'all canvases';
+    return folders.find(x => x.id === parentFolderId)?.name ?? 'back';
+  })());
+
+  // Cover image URL cache — keyed by coverImageId, resolves async
+  let coverUrls = $state({});
+  $effect(() => {
+    const ids = new Set();
+    for (const p of filtered) if (p.coverImageId) ids.add(p.coverImageId);
+    for (const f of folderCards) if (f.coverImageId) ids.add(f.coverImageId);
+    for (const id of ids) {
+      if (coverUrls[id]) continue;
+      getBlobURL(id).then(url => { if (url) coverUrls = { ...coverUrls, [id]: url }; });
+    }
+  });
 
   // Inline delete state per card
   let deletingId  = $state(null);
   // Inline rename state per card
   let renamingId  = $state(null);
   let renameVal   = $state('');
-
-  function getFolderName(fid) {
-    const f = folders.find(x => x.id === fid);
-    return f ? f.name : 'folder';
-  }
 
   function commitRename() {
     const id = renamingId;
@@ -35,15 +62,6 @@
     };
   });
 
-  function fmtDate(ts) {
-    const d = new Date(ts), now = new Date(), diff = (now - d) / 1000;
-    if (diff < 60)     return 'just now';
-    if (diff < 3600)   return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400)  return `${Math.floor(diff / 3600)}h ago`;
-    if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  }
-
   function confirmDelete(p) {
     window.deleteProject?.(p.id);
     deletingId = null;
@@ -58,17 +76,70 @@
   function onDragEnd(e) { e.target.classList.remove('dragging'); }
 </script>
 
+<!-- Back strip — thin full-width bar above the grid when inside a folder -->
+{#if currentFolderId !== null && !searchQuery.trim()}
+  <button
+    class="back-strip"
+    onclick={() => window.setFolder?.(parentFolderId)}
+    title={parentFolderId ? `up to ${parentFolderName}` : 'back to all canvases'}
+  >
+    <svg class="back-strip-arrow" viewBox="0 0 16 16"><polyline points="9,4 5,8 9,12"/><line x1="5" y1="8" x2="13" y2="8"/></svg>
+    <span class="back-strip-up">up to</span>
+    <span class="back-strip-name">{parentFolderName}</span>
+  </button>
+{/if}
+
 <div id="project-grid" class:list-view={dashView === 'list'}>
+  <!-- Create action — single split tile: top = project, bottom = folder -->
   {#if !searchQuery.trim()}
-    <div class="new-project-card" role="button" tabindex="0"
-      onclick={() => window.showNewModal?.()}
-      onkeydown={e => e.key === 'Enter' && window.showNewModal?.()}>
-      <svg viewBox="0 0 20 20"><line x1="10" y1="2" x2="10" y2="18"/><line x1="2" y1="10" x2="18" y2="10"/></svg>
-      <span>new canvas</span>
+    {@const showFolderHalf = currentFolderId !== '__unfiled__'}
+    <div class="ghost-card ghost-split" class:no-folder={!showFolderHalf}>
+      <button class="ghost-half ghost-project" onclick={() => window.showNewModal?.()} title="New project">
+        <svg viewBox="0 0 16 16"><line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/></svg>
+        <span class="ghost-half-label">new project</span>
+      </button>
+      {#if showFolderHalf}
+        <button class="ghost-half ghost-folder" onclick={() => window.showNewFolderModal?.()} title={currentFolderId === null ? 'New folder' : 'New subfolder'}>
+          <svg viewBox="0 0 16 16"><path d="M2 4.5a1 1 0 011-1h3l1.5 2H13a1 1 0 011 1v5.5a1 1 0 01-1 1H3a1 1 0 01-1-1v-7.5z"/></svg>
+          <span class="ghost-half-label">{currentFolderId === null ? 'new folder' : 'new subfolder'}</span>
+        </button>
+      {/if}
     </div>
   {/if}
 
-  {#if filtered.length === 0 && !searchQuery.trim()}
+  {#each folderCards as f (f.id)}
+    {@const coverUrl = f.coverImageId ? coverUrls[f.coverImageId] : null}
+    <div
+      class="folder-card"
+      class:has-cover={!!coverUrl}
+      role="button"
+      tabindex="0"
+      onclick={e => { if (!e.target.closest('.card-action-btn')) window.setFolder?.(f.id); }}
+      onkeydown={e => e.key === 'Enter' && window.setFolder?.(f.id)}
+      oncontextmenu={e => { e.preventDefault(); dispatch('ctxMenu', { id: f.id, event: e, kind: 'folder' }); }}
+      ondragover={e => { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }}
+      ondragleave={e => e.currentTarget.classList.remove('drag-over')}
+      ondrop={e => { e.preventDefault(); e.currentTarget.classList.remove('drag-over'); const pid = e.dataTransfer.getData('text/plain'); if (pid) window.moveToFolder?.(pid, f.id); }}
+    >
+      <div class="card-thumb">
+        {#if coverUrl}
+          <div class="card-cover" style="background-image:url({coverUrl})"></div>
+          <div class="card-scrim"></div>
+        {/if}
+        <button class="card-action-btn card-more-btn" title="more"
+          onclick={e => { e.stopPropagation(); dispatch('ctxMenu', { id: f.id, event: e, kind: 'folder' }); }}>
+          <svg viewBox="0 0 12 12">
+            <circle cx="6" cy="2.5" r="1" fill="currentColor"/>
+            <circle cx="6" cy="6" r="1" fill="currentColor"/>
+            <circle cx="6" cy="9.5" r="1" fill="currentColor"/>
+          </svg>
+        </button>
+      </div>
+      <div class="folder-card-name">{f.name}</div>
+    </div>
+  {/each}
+
+  {#if filtered.length === 0 && folderCards.length === 0 && !searchQuery.trim()}
     <div id="empty-state" style="display:flex">
       <svg viewBox="0 0 40 40"><rect x="4" y="4" width="32" height="32" rx="4"/><line x1="12" y1="14" x2="28" y2="14"/><line x1="12" y1="20" x2="28" y2="20"/><line x1="12" y1="26" x2="20" y2="26"/></svg>
       <h3>no canvases here</h3>
@@ -76,85 +147,78 @@
     </div>
   {/if}
 
-  {#each filtered as p, i}
+  {#each filtered as p (p.id)}
     {@const isDeletingThis = deletingId === p.id}
     {@const isRenamingThis = renamingId === p.id}
+    {@const coverUrl = p.coverImageId ? coverUrls[p.coverImageId] : null}
     <div
       class="project-card"
       class:confirming={isDeletingThis}
+      class:has-cover={!!coverUrl}
       role="button"
       tabindex="0"
       data-id={p.id}
-      style="animation-delay:{i * 20}ms"
       draggable="true"
       onclick={e => { if (!e.target.closest('.card-action-btn') && !isDeletingThis && !isRenamingThis) dispatch('open', p.id); }}
       onkeydown={e => { if (e.key === 'Enter' && !isDeletingThis && !isRenamingThis) dispatch('open', p.id); }}
-      oncontextmenu={e => { e.preventDefault(); dispatch('ctxMenu', { id: p.id, event: e }); }}
+      oncontextmenu={e => { e.preventDefault(); dispatch('ctxMenu', { id: p.id, event: e, kind: 'project' }); }}
       ondragstart={e => onDragStart(e, p.id)}
       ondragend={onDragEnd}
     >
       {#if isDeletingThis}
         <div class="card-delete-confirm">
-          <div class="card-delete-msg">DELETE <span>"{p.name}"</span>?</div>
-          <div class="card-delete-sub">this cannot be undone</div>
+          <div class="card-delete-msg">delete?</div>
           <div class="card-delete-btns">
-            <button class="card-del-cancel" onclick={e => { e.stopPropagation(); deletingId = null; }}>CANCEL</button>
-            <button class="card-del-confirm" onclick={e => { e.stopPropagation(); confirmDelete(p); }}>DELETE</button>
+            <button class="card-del-cancel" onclick={e => { e.stopPropagation(); deletingId = null; }}>cancel</button>
+            <button class="card-del-confirm" onclick={e => { e.stopPropagation(); confirmDelete(p); }}>delete</button>
           </div>
         </div>
       {:else}
-        <div class="card-index">
-          <span>№ {String(i + 1).padStart(2, '0')}</span>
-          <div class="card-index-line"></div>
+        <div class="card-thumb">
+          {#if coverUrl}
+            <div class="card-cover" style="background-image:url({coverUrl})"></div>
+            <div class="card-scrim"></div>
+          {/if}
+          <button class="card-action-btn card-more-btn" title="more"
+            onclick={e => { e.stopPropagation(); dispatch('ctxMenu', { id: p.id, event: e, kind: 'project' }); }}>
+            <svg viewBox="0 0 12 12">
+              <circle cx="6" cy="2.5" r="1" fill="currentColor"/>
+              <circle cx="6" cy="6" r="1" fill="currentColor"/>
+              <circle cx="6" cy="9.5" r="1" fill="currentColor"/>
+            </svg>
+          </button>
         </div>
-        <div class="card-body">
-          <div class="card-info">
-            {#if isRenamingThis}
-              <input
-                class="card-name card-rename-input"
-                type="text"
-                bind:value={renameVal}
-                placeholder="untitled canvas"
-                onblur={commitRename}
-                onkeydown={e => {
-                  e.stopPropagation();
-                  if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
-                  if (e.key === 'Escape') { renamingId = null; }
-                }}
-                use:focusOnMount
-              />
-            {:else}
-              <div class="card-name">{p.name}</div>
-            {/if}
-            <div class="card-meta">
-              <span>{fmtDate(p.updatedAt)}</span>
-              {#if p.noteCount > 0}<span>{p.noteCount} notes</span>{/if}
-              {#if p.folderId && currentFolderId === null}
-                <span class="card-folder-tag">{getFolderName(p.folderId)}</span>
-              {/if}
-            </div>
-          </div>
-          <div class="card-bottom-row">
-            <div class="card-arrow">
-              <svg viewBox="0 0 14 14"><line x1="2" y1="12" x2="12" y2="2"/><polyline points="6,2 12,2 12,8"/></svg>
-            </div>
-            <div class="card-actions">
-              <button class="card-action-btn" title="open"
-                onclick={e => { e.stopPropagation(); dispatch('open', p.id); }}>
-                <svg viewBox="0 0 12 12"><path d="M2 6h8M6 3l3 3-3 3"/></svg>
-              </button>
-              <button class="card-action-btn" title="more"
-                onclick={e => { e.stopPropagation(); dispatch('ctxMenu', { id: p.id, event: e }); }}>
-                <svg viewBox="0 0 12 12">
-                  <circle cx="6" cy="2.5" r="1" fill="currentColor"/>
-                  <circle cx="6" cy="6" r="1" fill="currentColor"/>
-                  <circle cx="6" cy="9.5" r="1" fill="currentColor"/>
-                </svg>
-              </button>
-            </div>
-          </div>
+        {#if isRenamingThis}
+          <input
+            class="card-name card-rename-input"
+            type="text"
+            bind:value={renameVal}
+            placeholder="untitled canvas"
+            onblur={commitRename}
+            onkeydown={e => {
+              e.stopPropagation();
+              if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+              if (e.key === 'Escape') { renamingId = null; }
+            }}
+            use:focusOnMount
+          />
+        {:else}
+          <div class="card-name">{p.name}</div>
+        {/if}
+        <!-- Canvas count badge + quick add (shown on hover) -->
+        {@const cardCanvases = $projectCanvasesStore.filter(c => c.projectId === p.id)}
+        <div class="card-canvas-row">
+          {#if cardCanvases.length > 0}
+            <span class="card-canvas-count">{cardCanvases.length} canvas{cardCanvases.length === 1 ? '' : 'es'}</span>
+          {/if}
+          <button
+            class="card-canvas-add"
+            title="Add a new canvas to this project"
+            onclick={e => { e.stopPropagation(); window.createNamedCanvas?.(p.id, 'untitled canvas'); window.showToast?.('Canvas added'); }}
+          >+ canvas</button>
         </div>
       {/if}
     </div>
   {/each}
+
 </div>
