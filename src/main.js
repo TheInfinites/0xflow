@@ -56,13 +56,13 @@ if (dashTarget) {
   mount(Dashboard, { target: dashTarget });
 }
 
-// ── Tasks hub (v3 projects) ─────────────────
-// Self-gated on activeViewStore === 'tasks' — renders nothing when inactive.
-import TasksView from './lib/TasksView.svelte';
-const tasksMount = document.createElement('div');
-tasksMount.id = 'view-tasks';
-document.body.appendChild(tasksMount);
-mount(TasksView, { target: tasksMount });
+// ── Flows hub (v3 projects) ─────────────────
+// Self-gated on activeViewStore === 'flows' — renders nothing when inactive.
+import FlowsView from './lib/FlowsView.svelte';
+const flowsMount = document.createElement('div');
+flowsMount.id = 'view-flows';
+document.body.appendChild(flowsMount);
+mount(FlowsView, { target: flowsMount });
 
 // ── Canvas view components ────────────────────
 import Canvas          from './lib/Canvas.svelte';
@@ -167,6 +167,23 @@ mount(Toast, { target: toastMount });
 
 // ── Tauri auto-updater: handled by UpdateBanner.svelte ────────────────────
 // ── Tauri window controls:  handled by CanvasBar.svelte onMount ───────────
+
+// ── Splash handoff: show main + close splash once the app has rendered ────
+const _IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
+if (_IS_TAURI) {
+  const _showMainCloseSplash = async () => {
+    try {
+      const { getCurrentWindow, Window } = window.__TAURI__.window;
+      const main = getCurrentWindow();
+      await main.show();
+      await main.setFocus();
+      const splash = await Window.getByLabel?.('splash');
+      if (splash) await splash.close();
+    } catch (e) { console.warn('[splash] handoff failed:', e); }
+  };
+  // Wait one frame after mount so Canvas has a chance to init.
+  requestAnimationFrame(() => setTimeout(_showMainCloseSplash, 120));
+}
 
 // ── Phase 9e: redirect new note creation to PixiJS ─────────────────────────
 // Override the global addNote/addTodo/addAiNote that toolbar buttons call.

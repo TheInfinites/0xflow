@@ -1,6 +1,6 @@
 <script>
   import { get } from 'svelte/store';
-  import { activeProjectIdStore, projectCanvasesStore, projectTasksStore, parseCanvasKey } from '../stores/projects.js';
+  import { activeProjectIdStore, projectCanvasesStore, projectFlowsStore, parseCanvasKey } from '../stores/projects.js';
   import { elementsStore, snapshot } from '../stores/elements.js';
   import { loadNamedCanvas } from './canvas-persistence.js';
 
@@ -16,7 +16,7 @@
   });
 
   let canvases = $derived($projectCanvasesStore);
-  let tasks    = $derived($projectTasksStore.filter(t => !t.parentTaskId));
+  let flows    = $derived($projectFlowsStore.filter(t => !t.parentFlowId));
 
   // Load elements from the selected source canvas (without touching global stores)
   async function selectSource(key) {
@@ -29,9 +29,9 @@
         const state = await loadNamedCanvas(parsed.canvasId);
         sourceEls = state?.elements ?? [];
       } else if (parsed.kind === 'task' || parsed.kind === 'final') {
-        const task = get(projectTasksStore).find(t => t.id === parsed.taskId);
-        sourceEls = task
-          ? get(elementsStore).filter(e => Array.isArray(e.tags) && e.tags.includes(task.tagId))
+        const flow = get(projectFlowsStore).find(t => t.id === parsed.flowId);
+        sourceEls = flow
+          ? get(elementsStore).filter(e => Array.isArray(e.tags) && e.tags.includes(flow.tagId))
           : [];
       } else {
         sourceEls = get(elementsStore);
@@ -121,15 +121,15 @@
             Project canvas
           </button>
 
-          {#each tasks as task (task.id)}
-            {@const tkey = 'task:' + task.id}
+          {#each flows as flow (flow.id)}
+            {@const tkey = 'task:' + flow.id}
             <button
               class="cip-source-item"
               class:active={sourceKey === tkey}
               onclick={() => selectSource(tkey)}
             >
               <svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="3.5"/></svg>
-              {task.title}
+              {flow.title}
             </button>
           {/each}
 

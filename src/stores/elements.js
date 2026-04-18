@@ -2,7 +2,7 @@
 // elements store — single source of truth for canvas elements
 // ════════════════════════════════════════════
 import { writable, derived, get } from 'svelte/store';
-import { activeCanvasKeyStore, projectTasksStore, projectTagsStore, parseCanvasKey } from './projects.js';
+import { activeCanvasKeyStore, projectFlowsStore, projectTagsStore, parseCanvasKey } from './projects.js';
 
 /**
  * Each element record:
@@ -63,8 +63,8 @@ export const relationsStore = writable([]);  // relation lines between elements
 // ── v3: visible elements derived store ───────
 // Filters elementsStore based on activeCanvasKeyStore.
 //   project view → all elements
-//   task view    → elements tagged with the task's tagId
-//   final view   → elements tagged with (parent task tagId) AND (builtin 'final' tag)
+//   flow view    → elements tagged with the flow's tagId
+//   final view   → elements tagged with (parent flow tagId) AND (builtin 'final' tag)
 // v2 projects never set a non-project canvas key, so this behaves as a passthrough.
 /** Apply per-view position overrides if they exist for the given canvas key. */
 function _applyViewPos(els, canvasKey) {
@@ -77,17 +77,17 @@ function _applyViewPos(els, canvasKey) {
 }
 
 export const visibleElementsStore = derived(
-  [elementsStore, activeCanvasKeyStore, projectTasksStore, projectTagsStore],
-  ([$els, $key, $tasks, $tags]) => {
+  [elementsStore, activeCanvasKeyStore, projectFlowsStore, projectTagsStore],
+  ([$els, $key, $flows, $tags]) => {
     const parsed = parseCanvasKey($key);
     if (parsed.kind === 'project') return $els;
 
-    const task = $tasks.find(t => t.id === parsed.taskId);
-    if (!task) return $els; // fallback — unknown task, show all
-    const taskTagId = task.tagId;
+    const flow = $flows.find(t => t.id === parsed.flowId);
+    if (!flow) return $els; // fallback — unknown flow, show all
+    const flowTagId = flow.tagId;
 
     if (parsed.kind === 'task') {
-      const filtered = $els.filter(e => Array.isArray(e.tags) && e.tags.includes(taskTagId));
+      const filtered = $els.filter(e => Array.isArray(e.tags) && e.tags.includes(flowTagId));
       return _applyViewPos(filtered, $key);
     }
 
@@ -96,7 +96,7 @@ export const visibleElementsStore = derived(
       if (!finalTag) return [];
       const filtered = $els.filter(e =>
         Array.isArray(e.tags) &&
-        e.tags.includes(taskTagId) &&
+        e.tags.includes(flowTagId) &&
         e.tags.includes(finalTag.id)
       );
       return _applyViewPos(filtered, $key);

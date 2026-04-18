@@ -1,20 +1,24 @@
 <script>
   // ══════════════════════════════════════════════
-  // TasksView.svelte — the Tasks hub (v3 projects)
+  // FlowsView.svelte — the Flows hub (v3 projects)
   // ══════════════════════════════════════════════
   import {
     projectsStore, activeProjectIdStore,
-    projectTasksStore, projectCanvasesStore,
+    projectFlowsStore, projectCanvasesStore,
     activeCanvasKeyStore,
   } from '../stores/projects.js';
   import { activeViewStore, splitModeStore } from '../stores/ui.js';
-  import TaskRow from './TaskRow.svelte';
+  import FlowRow from './FlowRow.svelte';
+  import TextRow from './flow-rows/TextRow.svelte';
+  import NoteRow from './flow-rows/NoteRow.svelte';
+  import ChecklistRow from './flow-rows/ChecklistRow.svelte';
+  import LinkRow from './flow-rows/LinkRow.svelte';
 
   let splitMode = $derived($splitModeStore);
 
   let visible = $derived(
     $activeViewStore !== 'dashboard' &&
-    ($activeViewStore === 'tasks' || (splitMode && splitMode !== 'right'))
+    ($activeViewStore === 'flows' || (splitMode && splitMode !== 'right'))
   );
 
   function _svc(name, ...args) { return window[name]?.(...args); }
@@ -22,7 +26,7 @@
   let projects = $derived($projectsStore);
   let activeId = $derived($activeProjectIdStore);
   let project  = $derived(projects.find(p => p.id === activeId) || null);
-  let tasks    = $derived($projectTasksStore);
+  let flows    = $derived($projectFlowsStore);
   let canvases = $derived(
     $projectCanvasesStore
       .slice()
@@ -65,61 +69,85 @@
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
   }
 
-  let parentTasks = $derived(
-    tasks
-      .filter(t => !t.parentTaskId)
+  let parentFlows = $derived(
+    flows
+      .filter(t => !t.parentFlowId)
       .slice()
       .sort((a, b) => (a.order || 0) - (b.order || 0))
   );
 
-  function subTasksOf(parentId) {
-    return tasks
-      .filter(t => t.parentTaskId === parentId)
+  function subFlowsOf(parentId) {
+    return flows
+      .filter(t => t.parentFlowId === parentId)
       .slice()
       .sort((a, b) => (a.order || 0) - (b.order || 0));
   }
 
   // ── Stats ────────────────
-  let totalTasks = $derived(tasks.length);
-  let doneTasks  = $derived(tasks.filter(t => t.status === 'done').length);
+  let totalFlows = $derived(flows.length);
+  let doneFlows  = $derived(flows.filter(t => t.status === 'done').length);
 
   // ── Drag-reorder state ────────────────
-  let dragTaskId = $state(null);
+  let dragFlowId = $state(null);
   let dropTargetId = $state(null);
 
-  function onRowDragStart(e, task) {
-    dragTaskId = task.id;
+  function onRowDragStart(e, flow) {
+    dragFlowId = flow.id;
     e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', task.id);
+    e.dataTransfer.setData('text/plain', flow.id);
   }
 
-  function onRowDragOver(e, task) {
-    if (!dragTaskId || task.id === dragTaskId) {
+  function onRowDragOver(e, flow) {
+    if (!dragFlowId || flow.id === dragFlowId) {
       dropTargetId = null;
       return;
     }
-    dropTargetId = task.id;
+    dropTargetId = flow.id;
   }
 
-  function onRowDrop(e, targetTask) {
-    if (!dragTaskId || dragTaskId === targetTask.id) { dragTaskId = null; dropTargetId = null; return; }
-    const list = parentTasks.map(t => t.id);
-    const fromIdx = list.indexOf(dragTaskId);
-    let toIdx = list.indexOf(targetTask.id);
-    if (fromIdx === -1 || toIdx === -1) { dragTaskId = null; dropTargetId = null; return; }
+  function onRowDrop(e, targetFlow) {
+    if (!dragFlowId || dragFlowId === targetFlow.id) { dragFlowId = null; dropTargetId = null; return; }
+    const list = parentFlows.map(t => t.id);
+    const fromIdx = list.indexOf(dragFlowId);
+    let toIdx = list.indexOf(targetFlow.id);
+    if (fromIdx === -1 || toIdx === -1) { dragFlowId = null; dropTargetId = null; return; }
     list.splice(fromIdx, 1);
-    toIdx = list.indexOf(targetTask.id);
-    list.splice(toIdx, 0, dragTaskId);
+    toIdx = list.indexOf(targetFlow.id);
+    list.splice(toIdx, 0, dragFlowId);
     for (let i = 0; i < list.length; i++) {
-      _svc('updateTask', list[i], { order: i });
+      _svc('updateFlow', list[i], { order: i });
     }
-    dragTaskId = null;
+    dragFlowId = null;
     dropTargetId = null;
   }
 
-  function addParentTask() {
+  // ── + New popover (Flow / Text / Note / Checklist / Link) ──
+  let addMenuOpen = $state(false);
+  function toggleAddMenu() { addMenuOpen = !addMenuOpen; }
+  function closeAddMenu() { addMenuOpen = false; }
+
+  function addItem(kind) {
     if (!activeId) return;
-    _svc('createTask', { projectId: activeId, title: 'new task' });
+    const titles = {
+      flow: 'new flow',
+      text: 'text',
+      note: 'note',
+      checklist: 'checklist',
+      link: 'link',
+    };
+    const payloads = {
+      text: { body: '' },
+      note: { doc: null },
+      checklist: { items: [] },
+      link: { url: '', title: '', favicon: '' },
+    };
+    _svc('createFlow', {
+      projectId: activeId,
+      title: titles[kind] || 'new',
+      kind,
+      payload: payloads[kind] || null,
+    });
+    closeAddMenu();
   }
 
   function openProjectCanvas() {
@@ -130,7 +158,7 @@
     _svc('goToDashboard');
   }
 
-  function expandTasks() {
+  function expandFlows() {
     _svc('setSplitPanel', 'left');
   }
   function restoreSplit() {
@@ -142,7 +170,7 @@
 </script>
 
 {#if visible}
-<div class="tasks-view">
+<div class="flows-view">
   <!-- Top bar: minimal, editorial -->
   <header class="tv-topbar">
     <div class="tv-topbar-left">
@@ -159,7 +187,7 @@
             <svg viewBox="0 0 16 16" width="13" height="13"><rect x="1" y="2" width="6" height="12" rx="1" stroke="currentColor" stroke-width="1.3" fill="none"/><rect x="9" y="2" width="6" height="12" rx="1" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>
           </button>
         {:else}
-          <button class="tv-ctrl-btn" onclick={expandTasks} title="expand tasks">
+          <button class="tv-ctrl-btn" onclick={expandFlows} title="expand flows">
             <svg viewBox="0 0 16 16" width="13" height="13"><rect x="2" y="2" width="12" height="12" rx="1" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>
           </button>
         {/if}
@@ -176,10 +204,10 @@
   <div class="tv-hero">
     <h1 class="tv-title">{project?.name || 'untitled'}</h1>
     <div class="tv-meta-row">
-      <span class="tv-stat">{totalTasks} task{totalTasks !== 1 ? 's' : ''}</span>
-      {#if doneTasks > 0}
+      <span class="tv-stat">{totalFlows} item{totalFlows !== 1 ? 's' : ''}</span>
+      {#if doneFlows > 0}
         <span class="tv-stat-sep">/</span>
-        <span class="tv-stat">{doneTasks} done</span>
+        <span class="tv-stat">{doneFlows} done</span>
       {/if}
       <div class="tv-meta-spacer"></div>
       <button class="tv-action-btn" onclick={openProjectCanvas}>
@@ -189,26 +217,65 @@
     </div>
   </div>
 
-  <!-- Task list -->
+  <!-- Flow list -->
   <main class="tv-main">
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="tv-list" ondragend={() => { dragTaskId = null; dropTargetId = null; }}>
-      {#each parentTasks as task (task.id)}
-        <TaskRow
-          {task}
-          subTasks={subTasksOf(task.id)}
-          depth={0}
-          onDragStart={onRowDragStart}
-          onDragOver={onRowDragOver}
-          onDrop={onRowDrop}
-          isDragOver={dropTargetId === task.id}
-        />
+    <div class="tv-list" ondragend={() => { dragFlowId = null; dropTargetId = null; }}>
+      {#each parentFlows as flow (flow.id)}
+        {#if !flow.kind || flow.kind === 'flow'}
+          <FlowRow
+            {flow}
+            subFlows={subFlowsOf(flow.id)}
+            depth={0}
+            onDragStart={onRowDragStart}
+            onDragOver={onRowDragOver}
+            onDrop={onRowDrop}
+            isDragOver={dropTargetId === flow.id}
+          />
+        {:else if flow.kind === 'text'}
+          <TextRow {flow} />
+        {:else if flow.kind === 'note'}
+          <NoteRow {flow} />
+        {:else if flow.kind === 'checklist'}
+          <ChecklistRow {flow} />
+        {:else if flow.kind === 'link'}
+          <LinkRow {flow} />
+        {/if}
       {/each}
 
-      <button class="tv-add-btn" onclick={addParentTask}>
-        <span class="tv-add-icon">+</span>
-        <span>New task</span>
-      </button>
+      <div class="tv-add-wrap">
+        <button class="tv-add-btn" onclick={toggleAddMenu}>
+          <span class="tv-add-icon">+</span>
+          <span>New</span>
+        </button>
+        {#if addMenuOpen}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="tv-add-backdrop" onclick={closeAddMenu}></div>
+          <div class="tv-add-menu">
+            <button class="tv-add-item" onclick={() => addItem('flow')}>
+              <span class="tv-add-item-ico">◆</span>
+              <div class="tv-add-item-body"><b>Flow</b><span>canvas-backed</span></div>
+            </button>
+            <button class="tv-add-item" onclick={() => addItem('text')}>
+              <span class="tv-add-item-ico">¶</span>
+              <div class="tv-add-item-body"><b>Text</b><span>markdown block</span></div>
+            </button>
+            <button class="tv-add-item" onclick={() => addItem('note')}>
+              <span class="tv-add-item-ico">✎</span>
+              <div class="tv-add-item-body"><b>Note</b><span>rich editor</span></div>
+            </button>
+            <button class="tv-add-item" onclick={() => addItem('checklist')}>
+              <span class="tv-add-item-ico">☑</span>
+              <div class="tv-add-item-body"><b>Checklist</b><span>tickable items</span></div>
+            </button>
+            <button class="tv-add-item" onclick={() => addItem('link')}>
+              <span class="tv-add-item-ico">↗</span>
+              <div class="tv-add-item-body"><b>Link</b><span>URL with preview</span></div>
+            </button>
+          </div>
+        {/if}
+      </div>
     </div>
   </main>
 
@@ -263,7 +330,7 @@
 {/if}
 
 <style>
-  .tasks-view {
+  .flows-view {
     position: fixed;
     inset: 0;
     background: #111113;
@@ -273,15 +340,15 @@
     font-family: 'Geist', -apple-system, sans-serif;
     z-index: 9500;
   }
-  :global(body.on-split) .tasks-view {
+  :global(body.on-split) .flows-view {
     right: 50%;
     border-right: 1px solid rgba(255,255,255,0.06);
   }
-  :global(body.on-split.split-left) .tasks-view {
+  :global(body.on-split.split-left) .flows-view {
     right: 0;
     border-right: none;
   }
-  :global(body.on-split.split-right) .tasks-view {
+  :global(body.on-split.split-right) .flows-view {
     display: none;
   }
 
@@ -394,7 +461,7 @@
     background: rgba(255,255,255,0.04);
   }
 
-  /* ── Task list ───────────────────── */
+  /* ── Flow list ───────────────────── */
   .tv-main {
     flex: 1;
     overflow-y: auto;
@@ -408,6 +475,7 @@
     padding-top: 8px;
   }
 
+  .tv-add-wrap { position: relative; }
   .tv-add-btn {
     display: flex;
     align-items: center;
@@ -437,6 +505,54 @@
   }
   .tv-add-btn:hover .tv-add-icon {
     border-color: rgba(255,255,255,0.35);
+  }
+
+  .tv-add-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+  }
+  .tv-add-menu {
+    position: absolute;
+    top: calc(100% - 4px);
+    left: 0;
+    z-index: 51;
+    min-width: 220px;
+    background: #1a1a1c;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 4px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .tv-add-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: transparent;
+    border: none;
+    color: rgba(255,255,255,0.85);
+    padding: 8px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    text-align: left;
+    font-family: 'Geist', sans-serif;
+  }
+  .tv-add-item:hover { background: rgba(255,255,255,0.06); }
+  .tv-add-item-ico {
+    width: 22px; text-align: center;
+    color: rgba(255,255,255,0.55);
+    font-size: 13px;
+  }
+  .tv-add-item-body { display: flex; flex-direction: column; line-height: 1.25; }
+  .tv-add-item-body b { font-size: 12px; font-weight: 500; color: #fff; }
+  .tv-add-item-body span {
+    font-size: 10px;
+    color: rgba(255,255,255,0.4);
+    font-family: 'Geist Mono', monospace;
+    letter-spacing: 0.03em;
   }
 
   /* ── Canvas strip (footer) ───────────────────── */
@@ -513,7 +629,7 @@
   .tv-chip-del:hover { color: #ff7a7a; background: rgba(255,100,100,0.1); }
 
   /* ── Light mode ───────────────────── */
-  :global(body.dash-light) .tasks-view {
+  :global(body.dash-light) .flows-view {
     background: #f5f2ed;
     color: #1a1a1c;
   }
@@ -540,8 +656,17 @@
   :global(body.dash-light) .tv-add-btn:hover { color: rgba(0,0,0,0.5); }
   :global(body.dash-light) .tv-add-icon { border-color: rgba(0,0,0,0.15); }
   :global(body.dash-light) .tv-add-btn:hover .tv-add-icon { border-color: rgba(0,0,0,0.3); }
+  :global(body.dash-light) .tv-add-menu {
+    background: #fff;
+    border-color: rgba(0,0,0,0.1);
+  }
+  :global(body.dash-light) .tv-add-item { color: rgba(0,0,0,0.85); }
+  :global(body.dash-light) .tv-add-item:hover { background: rgba(0,0,0,0.05); }
+  :global(body.dash-light) .tv-add-item-ico { color: rgba(0,0,0,0.5); }
+  :global(body.dash-light) .tv-add-item-body b { color: #1a1a1c; }
+  :global(body.dash-light) .tv-add-item-body span { color: rgba(0,0,0,0.4); }
 
-  :global(body.on-split.dash-light) .tasks-view { border-right-color: rgba(0,0,0,0.08); }
+  :global(body.on-split.dash-light) .flows-view { border-right-color: rgba(0,0,0,0.08); }
 
   :global(body.dash-light) .tv-canvas-chip {
     border-color: rgba(0,0,0,0.12);

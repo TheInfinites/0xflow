@@ -3,7 +3,7 @@
   import { getContext } from 'svelte';
   import { visibleElementsStore } from '../stores/elements.js';
   import { scaleStore, pxStore, pyStore, activeEditorIdStore } from '../stores/canvas.js';
-  import { projectTagsStore, projectTasksStore } from '../stores/projects.js';
+  import { projectTagsStore, projectFlowsStore } from '../stores/projects.js';
   import ImageCard   from './ImageCard.svelte';
   import VideoPlayer from './VideoPlayer.svelte';
   import AudioPlayer from './AudioPlayer.svelte';
@@ -29,7 +29,7 @@
   let elements = $derived($elStore.filter(e => MEDIA_TYPES.has(e.type)));
 
   let allTags  = $derived($projectTagsStore);
-  let allTasks = $derived($projectTasksStore);
+  let allFlows = $derived($projectFlowsStore);
 
   // Simple hash -> hue fallback when a tag has no explicit color.
   function _hashHue(str) {
@@ -44,7 +44,7 @@
   }
   function _tagLabel(tag) {
     if (tag.kind === 'task') {
-      const t = allTasks.find(t => t.tagId === tag.id);
+      const t = allFlows.find(t => t.tagId === tag.id);
       if (t) return t.title;
     }
     return tag.name;

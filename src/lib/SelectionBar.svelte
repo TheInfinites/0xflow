@@ -2,7 +2,7 @@
   import { selectedStore, scaleStore, pxStore, pyStore } from '../stores/canvas.js';
   import { elementsStore, visibleElementsStore, snapshot } from '../stores/elements.js';
   import {
-    projectTagsStore, projectTasksStore,
+    projectTagsStore, projectFlowsStore,
     activeProjectIdStore, projectsStore,
   } from '../stores/projects.js';
   import { canvasTagPickerOpenStore } from '../stores/ui.js';
@@ -114,14 +114,14 @@
   let activeProject = $derived($projectsStore.find(p => p.id === $activeProjectIdStore) ?? null);
   let isV3Project   = $derived(activeProject?.schemaVersion === 3);
   let allTags       = $derived($projectTagsStore);
-  let allTasks      = $derived($projectTasksStore);
+  let allFlows      = $derived($projectFlowsStore);
 
   let tagsOpen     = $state(false);
   let newTagName   = $state('');
 
   function _tagLabel(tag) {
     if (tag.kind === 'task') {
-      const t = allTasks.find(t => t.tagId === tag.id);
+      const t = allFlows.find(t => t.tagId === tag.id);
       return t ? t.title : tag.name;
     }
     return tag.name;

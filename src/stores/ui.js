@@ -12,7 +12,7 @@ export const isOnCanvasStore     = writable(false);  // true when canvas view is
 
 // ── View routing ─────────────────────────────
 // 'dashboard' — project grid
-// 'tasks'     — new Tasks hub (v3 projects only)
+// 'flows'     — Flows hub (v3 projects only)
 // 'canvas'    — infinite canvas (existing)
 export const activeViewStore = writable('dashboard');
 
@@ -49,8 +49,8 @@ export function setActiveView(v)        { activeViewStore.set(v); }
 export const canvasTagPickerOpenStore = writable(false);
 
 // ── Split view mode ──────────────────────────
-// When true, v3 projects show Tasks + Canvas side by side.
-// 'left' = tasks expanded (full), 'right' = canvas expanded (full),
+// When true, v3 projects show Flows + Canvas side by side.
+// 'left' = flows expanded (full), 'right' = canvas expanded (full),
 // 'split' = both visible 50/50, false = not in split layout
 export const splitModeStore = writable('split');
 export function getSplitMode() { return get(splitModeStore); }

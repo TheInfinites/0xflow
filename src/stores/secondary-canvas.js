@@ -4,23 +4,23 @@
 import { writable, derived, get } from 'svelte/store';
 import { secondaryCanvasKeyStore } from './ui.js';
 import { parseCanvasKey } from './projects.js';
-import { projectTasksStore } from './projects.js';
+import { projectFlowsStore } from './projects.js';
 
 export const secondaryElementsStore  = writable([]);
 export const secondaryStrokesStore   = writable([]);
 export const secondaryRelationsStore = writable([]);
 
-// Derived visible elements for the secondary canvas — filters by task tag when on a task canvas.
+// Derived visible elements for the secondary canvas — filters by flow tag when on a flow canvas.
 export const secondaryVisibleElementsStore = derived(
-  [secondaryElementsStore, secondaryCanvasKeyStore, projectTasksStore],
-  ([$els, $key, $tasks]) => {
+  [secondaryElementsStore, secondaryCanvasKeyStore, projectFlowsStore],
+  ([$els, $key, $flows]) => {
     if (!$els.length) return [];
     const parsed = parseCanvasKey($key);
     if (parsed.kind === 'project' || parsed.kind === 'named') return $els;
     if (parsed.kind === 'task' || parsed.kind === 'final') {
-      const task = $tasks.find(t => t.id === parsed.taskId);
-      if (!task) return $els;
-      return $els.filter(e => Array.isArray(e.tags) && e.tags.includes(task.tagId));
+      const flow = $flows.find(t => t.id === parsed.flowId);
+      if (!flow) return $els;
+      return $els.filter(e => Array.isArray(e.tags) && e.tags.includes(flow.tagId));
     }
     return $els;
   }

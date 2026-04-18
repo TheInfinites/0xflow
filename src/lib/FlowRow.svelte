@@ -1,11 +1,11 @@
 <script>
   // ══════════════════════════════════════════════
-  // TaskRow.svelte — one row in TasksView's table
+  // FlowRow.svelte — one row in FlowsView's list (kind='flow' variant)
   // ══════════════════════════════════════════════
-  import { projectTasksStore, projectTagsStore, activeProjectIdStore } from '../stores/projects.js';
+  import { projectFlowsStore, projectTagsStore, activeProjectIdStore } from '../stores/projects.js';
 
-  /** @type {{ task: any, subTasks?: any[], depth?: number, onDragStart?: Function, onDragOver?: Function, onDrop?: Function, isDragOver?: boolean }} */
-  let { task, subTasks = [], depth = 0, onDragStart, onDragOver, onDrop, isDragOver = false } = $props();
+  /** @type {{ flow: any, subFlows?: any[], depth?: number, onDragStart?: Function, onDragOver?: Function, onDrop?: Function, isDragOver?: boolean }} */
+  let { flow, subFlows = [], depth = 0, onDragStart, onDragOver, onDrop, isDragOver = false } = $props();
 
   function _svc(name, ...args) { return window[name]?.(...args); }
 
@@ -14,12 +14,12 @@
   let editValue  = $state('');
   let notesTab   = $state('description'); // 'description' | 'comments'
 
-  let tasks = $derived($projectTasksStore);
+  let flows = $derived($projectFlowsStore);
   let allTags = $derived($projectTagsStore);
 
-  // Task-level metadata tags
-  let taskMetaTags = $derived(
-    (task.taskTagIds || [])
+  // Flow-level metadata tags
+  let flowMetaTags = $derived(
+    (flow.flowTagIds || [])
       .map(id => allTags.find(t => t.id === id))
       .filter(Boolean)
   );
@@ -28,7 +28,7 @@
   let newMetaTagName = $state('');
 
   let availableMetaTags = $derived(
-    allTags.filter(t => t.kind === 'project' && !(task.taskTagIds || []).includes(t.id))
+    allTags.filter(t => t.kind === 'project' && !(flow.flowTagIds || []).includes(t.id))
   );
 
   function _hashHue(str) {
@@ -42,13 +42,13 @@
   }
 
   function addMetaTag(tagId) {
-    const cur = task.taskTagIds || [];
+    const cur = flow.flowTagIds || [];
     if (cur.includes(tagId)) return;
-    _svc('updateTask', task.id, { taskTagIds: [...cur, tagId] });
+    _svc('updateFlow', flow.id, { flowTagIds: [...cur, tagId] });
   }
   function removeMetaTag(tagId) {
-    const cur = task.taskTagIds || [];
-    _svc('updateTask', task.id, { taskTagIds: cur.filter(t => t !== tagId) });
+    const cur = flow.flowTagIds || [];
+    _svc('updateFlow', flow.id, { flowTagIds: cur.filter(t => t !== tagId) });
   }
   async function createAndAddMetaTag() {
     const name = newMetaTagName.trim();
@@ -60,24 +60,24 @@
 
   // ── Detail panel ─────
   let descDraft = $state('');
-  $effect(() => { descDraft = task.description || ''; });
+  $effect(() => { descDraft = flow.description || ''; });
   function commitDesc() {
     const v = descDraft.trim();
-    if (v !== (task.description || '')) _svc('updateTask', task.id, { description: v });
+    if (v !== (flow.description || '')) _svc('updateFlow', flow.id, { description: v });
   }
 
   let newComment = $state('');
   function addComment() {
     const text = newComment.trim();
     if (!text) return;
-    const cur = Array.isArray(task.comments) ? task.comments : [];
+    const cur = Array.isArray(flow.comments) ? flow.comments : [];
     const entry = { id: 'c_' + Math.random().toString(36).slice(2, 9), text, createdAt: Date.now() };
-    _svc('updateTask', task.id, { comments: [...cur, entry] });
+    _svc('updateFlow', flow.id, { comments: [...cur, entry] });
     newComment = '';
   }
   function removeComment(id) {
-    const cur = Array.isArray(task.comments) ? task.comments : [];
-    _svc('updateTask', task.id, { comments: cur.filter(c => c.id !== id) });
+    const cur = Array.isArray(flow.comments) ? flow.comments : [];
+    _svc('updateFlow', flow.id, { comments: cur.filter(c => c.id !== id) });
   }
   function fmtTime(ts) {
     if (!ts) return '';
@@ -86,54 +86,54 @@
   }
 
   let progress = $derived.by(() => {
-    if (!subTasks.length) return null;
-    const done = subTasks.filter(s => s.status === 'done').length;
-    return { done, total: subTasks.length, pct: Math.round((done / subTasks.length) * 100) };
+    if (!subFlows.length) return null;
+    const done = subFlows.filter(s => s.status === 'done').length;
+    return { done, total: subFlows.length, pct: Math.round((done / subFlows.length) * 100) };
   });
 
   function grandChildrenOf(parentId) {
-    return tasks.filter(t => t.parentTaskId === parentId);
+    return flows.filter(t => t.parentFlowId === parentId);
   }
 
   function beginEdit() {
     editing = true;
-    editValue = task.title;
+    editValue = flow.title;
   }
 
   function commitEdit() {
     const v = editValue.trim();
-    if (v && v !== task.title) {
-      _svc('updateTask', task.id, { title: v });
+    if (v && v !== flow.title) {
+      _svc('updateFlow', flow.id, { title: v });
     }
     editing = false;
   }
 
-  function openTaskCanvas() {
-    _svc('openCanvasView', task.id, 'task');
+  function openFlowCanvas() {
+    _svc('openCanvasView', flow.id, 'task');
   }
 
   function openFinalCanvas() {
-    _svc('openCanvasView', task.id, 'final');
+    _svc('openCanvasView', flow.id, 'final');
   }
 
   function toggleStatus() {
-    const next = task.status === 'done' ? 'todo' : 'done';
-    _svc('updateTask', task.id, { status: next });
+    const next = flow.status === 'done' ? 'todo' : 'done';
+    _svc('updateFlow', flow.id, { status: next });
   }
 
-  function addSubTask() {
-    _svc('createTask', {
+  function addSubFlow() {
+    _svc('createFlow', {
       projectId: $activeProjectIdStore,
-      parentTaskId: task.id,
-      title: 'new sub-task',
+      parentFlowId: flow.id,
+      title: 'new sub-flow',
     });
     expanded = true;
   }
 
-  function removeTask() {
-    if (!confirm(`delete "${task.title}"? sub-tasks will also be deleted.`)) return;
-    const untag = confirm('also remove this task\'s tag from all elements? (cancel = keep tags)');
-    _svc('deleteTask', task.id, untag ? 'untag' : 'keep');
+  function removeFlow() {
+    if (!confirm(`delete "${flow.title}"? sub-flows will also be deleted.`)) return;
+    const untag = confirm('also remove this flow\'s tag from all elements? (cancel = keep tags)');
+    _svc('deleteFlow', flow.id, untag ? 'untag' : 'keep');
   }
 
   function fmtDate(iso) {
@@ -146,13 +146,13 @@
   // Time progress: position between start and due date. If only due is set,
   // treat "now" as the marker against a 14-day runway back from due.
   let timeProgress = $derived.by(() => {
-    if (!task.endDate) return null;
+    if (!flow.endDate) return null;
     const now = Date.now();
-    const end = new Date(task.endDate);
+    const end = new Date(flow.endDate);
     end.setHours(23, 59, 59, 999);
     const endMs = end.getTime();
-    const start = task.startDate
-      ? new Date(task.startDate).getTime()
+    const start = flow.startDate
+      ? new Date(flow.startDate).getTime()
       : endMs - 14 * 24 * 60 * 60 * 1000;
     if (endMs <= start) return null;
     const pct = Math.max(0, Math.min(100, ((now - start) / (endMs - start)) * 100));
@@ -209,7 +209,7 @@
   function openPicker(which, e) {
     e?.stopPropagation();
     if (datePickerOpen === which) { datePickerOpen = null; return; }
-    const cur = which === 'start' ? task.startDate : task.endDate;
+    const cur = which === 'start' ? flow.startDate : flow.endDate;
     viewMonth = cur ? new Date(cur) : new Date();
     const rect = e.currentTarget.getBoundingClientRect();
     const vw = window.innerWidth;
@@ -229,15 +229,15 @@
   }
   function pickDay(d) {
     const iso = toIso(d);
-    if (datePickerOpen === 'start') _svc('updateTask', task.id, { startDate: iso });
-    else if (datePickerOpen === 'end') _svc('updateTask', task.id, { endDate: iso });
+    if (datePickerOpen === 'start') _svc('updateFlow', flow.id, { startDate: iso });
+    else if (datePickerOpen === 'end') _svc('updateFlow', flow.id, { endDate: iso });
     closePicker();
   }
   function pickToday() { pickDay(new Date()); }
   function clearCurrent(e) {
     e.stopPropagation();
-    if (datePickerOpen === 'start') _svc('updateTask', task.id, { startDate: null });
-    else if (datePickerOpen === 'end') _svc('updateTask', task.id, { endDate: null });
+    if (datePickerOpen === 'start') _svc('updateFlow', flow.id, { startDate: null });
+    else if (datePickerOpen === 'end') _svc('updateFlow', flow.id, { endDate: null });
     closePicker();
   }
   function onPickerKeydown(e) {
@@ -260,15 +260,15 @@
   class="tr-shell"
   class:tr-shell-card={depth === 0}
   class:tr-shell-nested={depth > 0}
-  class:done={task.status === 'done'}
+  class:done={flow.status === 'done'}
   class:drag-over={isDragOver}
   class:expanded
   style="--depth: {depth}"
   role="listitem"
   draggable={!!onDragStart}
-  ondragstart={e => onDragStart?.(e, task)}
-  ondragover={e => { e.preventDefault(); onDragOver?.(e, task); }}
-  ondrop={e => { e.preventDefault(); onDrop?.(e, task); }}
+  ondragstart={e => onDragStart?.(e, flow)}
+  ondragover={e => { e.preventDefault(); onDragOver?.(e, flow); }}
+  ondrop={e => { e.preventDefault(); onDrop?.(e, flow); }}
 >
   <div class="tr">
     <div
@@ -278,8 +278,8 @@
       onclick={e => { if (e.target === e.currentTarget) expanded = !expanded; }}
       onkeydown={e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); expanded = !expanded; } }}
     >
-      <button class="tr-check" class:done={task.status === 'done'} onclick={toggleStatus} title="toggle status">
-        {#if task.status === 'done'}
+      <button class="tr-check" class:done={flow.status === 'done'} onclick={toggleStatus} title="toggle status">
+        {#if flow.status === 'done'}
           <svg viewBox="0 0 12 12" width="10" height="10"><path d="M3 6l2 2 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
         {/if}
       </button>
@@ -293,7 +293,7 @@
         />
       {:else}
         <button class="tr-title" onclick={beginEdit}>
-          {task.title}
+          {flow.title}
         </button>
       {/if}
     </div>
@@ -320,10 +320,10 @@
           <svg viewBox="0 0 12 12" width="11" height="11"><path d="M2 2h3v3H2zM7 2h3v3H7zM2 7h3v3H2zM7 7h3v3H7z" stroke="currentColor" stroke-width="1" fill="none"/></svg>
         </button>
       {/if}
-      <button class="tr-act" onclick={openTaskCanvas} title="open canvas">
+      <button class="tr-act" onclick={openFlowCanvas} title="open canvas">
         <svg viewBox="0 0 12 12" width="11" height="11"><path d="M4 2h6v6M4 8L10 2" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
-      <button class="tr-act tr-act-del" onclick={removeTask} title="delete">
+      <button class="tr-act tr-act-del" onclick={removeFlow} title="delete">
         <svg viewBox="0 0 12 12" width="11" height="11"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
       </button>
       <button class="tr-caret" class:open={expanded} onclick={() => expanded = !expanded} title="expand">
@@ -337,7 +337,7 @@
     <!-- Inline meta row: tags + started + due on one line -->
     <div class="tr-meta-row">
       <div class="tr-tags">
-        {#each taskMetaTags as tag (tag.id)}
+        {#each flowMetaTags as tag (tag.id)}
           <button
             class="tr-tag"
             style="--tag-color: {_tagColor(tag)};"
@@ -385,13 +385,13 @@
         <div class="tr-date-wrap">
           <button
             class="tr-date-pill"
-            class:set={task.startDate}
+            class:set={flow.startDate}
             class:active={datePickerOpen === 'start'}
             onclick={e => openPicker('start', e)}
             title="start date"
           >
             <svg viewBox="0 0 12 12" width="10" height="10"><rect x="1.5" y="2.5" width="9" height="8" rx="1" stroke="currentColor" stroke-width="1" fill="none"/><line x1="1.5" y1="5" x2="10.5" y2="5" stroke="currentColor" stroke-width="1"/></svg>
-            <span class="tr-date-text">{task.startDate ? fmtDate(task.startDate) : 'Start'}</span>
+            <span class="tr-date-text">{flow.startDate ? fmtDate(flow.startDate) : 'Start'}</span>
           </button>
           {#if datePickerOpen === 'start'}
             <div
@@ -420,7 +420,7 @@
                 {#each calendarGrid as d (d.getTime())}
                   {@const outside = d.getMonth() !== viewMonth.getMonth()}
                   {@const isToday = sameDay(d, new Date())}
-                  {@const selected = task.startDate && sameDay(d, new Date(task.startDate))}
+                  {@const selected = flow.startDate && sameDay(d, new Date(flow.startDate))}
                   <button
                     class="tr-cal-day"
                     class:outside
@@ -443,13 +443,13 @@
         <div class="tr-date-wrap">
           <button
             class="tr-date-pill"
-            class:set={task.endDate}
+            class:set={flow.endDate}
             class:active={datePickerOpen === 'end'}
             onclick={e => openPicker('end', e)}
             title="due date"
           >
             <svg viewBox="0 0 12 12" width="10" height="10"><circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1" fill="none"/><path d="M6 3.5V6l1.8 1.8" stroke="currentColor" stroke-width="1" stroke-linecap="round" fill="none"/></svg>
-            <span class="tr-date-text">{task.endDate ? fmtDate(task.endDate) : 'Due'}</span>
+            <span class="tr-date-text">{flow.endDate ? fmtDate(flow.endDate) : 'Due'}</span>
           </button>
           {#if datePickerOpen === 'end'}
             <div
@@ -478,7 +478,7 @@
                 {#each calendarGrid as d (d.getTime())}
                   {@const outside = d.getMonth() !== viewMonth.getMonth()}
                   {@const isToday = sameDay(d, new Date())}
-                  {@const selected = task.endDate && sameDay(d, new Date(task.endDate))}
+                  {@const selected = flow.endDate && sameDay(d, new Date(flow.endDate))}
                   <button
                     class="tr-cal-day"
                     class:outside
@@ -512,25 +512,25 @@
     {/if}
   </div>
 
-  <!-- Sub-tasks: right under the meta row so they're the hero of the card -->
-  {#if subTasks.length > 0 || depth === 0}
+  <!-- Sub-flows: right under the meta row so they're the hero of the card -->
+  {#if subFlows.length > 0 || depth === 0}
     <div class="tr-subtasks-section">
       <div class="tr-subtasks-header">
-        <span class="tr-subtasks-label">Sub-tasks</span>
-        {#if subTasks.length > 0}
-          <span class="tr-subtasks-count">{subTasks.filter(s => s.status === 'done').length}/{subTasks.length}</span>
+        <span class="tr-subtasks-label">Sub-flows</span>
+        {#if subFlows.length > 0}
+          <span class="tr-subtasks-count">{subFlows.filter(s => s.status === 'done').length}/{subFlows.length}</span>
         {/if}
       </div>
-      {#each subTasks as sub (sub.id)}
+      {#each subFlows as sub (sub.id)}
         <svelte:self
-          task={sub}
-          subTasks={grandChildrenOf(sub.id)}
+          flow={sub}
+          subFlows={grandChildrenOf(sub.id)}
           depth={depth + 1}
         />
       {/each}
-      <button class="tr-add-sub" onclick={addSubTask}>
+      <button class="tr-add-sub" onclick={addSubFlow}>
         <span class="tr-add-sub-icon">+</span>
-        Add sub-task
+        Add sub-flow
       </button>
     </div>
   {/if}
@@ -551,12 +551,12 @@
         role="tab"
         aria-selected={notesTab === 'comments'}
         onclick={() => notesTab = 'comments'}
-      >Comments{#if Array.isArray(task.comments) && task.comments.length > 0} <span class="tr-notes-count">{task.comments.length}</span>{/if}</button>
+      >Comments{#if Array.isArray(flow.comments) && flow.comments.length > 0} <span class="tr-notes-count">{flow.comments.length}</span>{/if}</button>
     </div>
 
     {#if notesTab === 'description'}
       <textarea
-        id="desc-{task.id}"
+        id="desc-{flow.id}"
         class="tr-textarea"
         placeholder="Write something..."
         bind:value={descDraft}
@@ -566,9 +566,9 @@
       ></textarea>
     {:else}
       <div class="tr-notes-comments">
-        {#if Array.isArray(task.comments) && task.comments.length > 0}
+        {#if Array.isArray(flow.comments) && flow.comments.length > 0}
           <div class="tr-comments">
-            {#each task.comments as c (c.id)}
+            {#each flow.comments as c (c.id)}
               <div class="tr-comment">
                 <p class="tr-comment-text">{c.text}</p>
                 <div class="tr-comment-foot">
@@ -583,7 +583,7 @@
         {/if}
         <div class="tr-comment-input">
           <input
-            id="cmt-{task.id}"
+            id="cmt-{flow.id}"
             type="text"
             placeholder="Write a comment..."
             bind:value={newComment}

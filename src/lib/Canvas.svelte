@@ -3,7 +3,7 @@
   import { get } from 'svelte/store';
   import { Application, Graphics, Text, TextStyle, Container, Sprite, Texture, Assets } from 'pixi.js';
   import { elementsStore, visibleElementsStore, strokesStore, relationsStore, snapshot, undo, redo, canUndo, canRedo } from '../stores/elements.js';
-  import { activeCanvasKeyStore, projectTasksStore, projectTagsStore, projectsStore, parseCanvasKey } from '../stores/projects.js';
+  import { activeCanvasKeyStore, projectFlowsStore, projectTagsStore, projectsStore, parseCanvasKey } from '../stores/projects.js';
   import { scaleStore, pxStore, pyStore, setCurTool, getCurTool, setSelected, selectedStrokeIdsStore, setSelectedStrokeIds, shapeDefaultsStore, setScale, setPx, setPy, activeEditorIdStore, setActiveEditorId, snapEnabledStore, isLightStore } from '../stores/canvas.js';
   import { activeProjectIdStore } from '../stores/projects.js';
   import { brainstormOpenStore, canvasTagPickerOpenStore, secondaryCanvasKeyStore } from '../stores/ui.js';
@@ -152,7 +152,7 @@
   }
   function _tagLabelForPicker(tag) {
     if (tag.kind === 'task') {
-      const t = $projectTasksStore.find(t => t.tagId === tag.id);
+      const t = $projectFlowsStore.find(t => t.tagId === tag.id);
       if (t) return t.title;
     }
     return tag.name;
@@ -227,9 +227,9 @@
     { label: 'Dashboard', icon: '<rect x="1" y="1" width="5" height="5" rx="0.8"/><rect x="9" y="1" width="5" height="5" rx="0.8"/><rect x="1" y="9" width="5" height="5" rx="0.8"/><rect x="9" y="9" width="5" height="5" rx="0.8"/>', angleDeg: 145 },
     { label: 'Bookmark',  icon: '<path d="M3 2h9v11l-4.5-3L3 13z"/>',                                                                                                                                                            angleDeg: 215 },
   ];
-  const _ICON_TASKS = '<path d="M2 3h11M2 7.5h11M2 12h11"/><circle cx="13" cy="3" r="1.2" fill="currentColor" stroke="none"/><circle cx="13" cy="7.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="13" cy="12" r="1.2" fill="currentColor" stroke="none"/>';
+  const _ICON_FLOWS = '<path d="M2 3h11M2 7.5h11M2 12h11"/><circle cx="13" cy="3" r="1.2" fill="currentColor" stroke="none"/><circle cx="13" cy="7.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="13" cy="12" r="1.2" fill="currentColor" stroke="none"/>';
 
-  // Dynamic radial items — v3 projects replace Dashboard with Tasks, keep Bookmark
+  // Dynamic radial items — v3 projects replace Dashboard with Flows, keep Bookmark
   let RADIAL_ITEMS = $derived.by(() => {
     const proj = $projectsStore.find(p => p.id === $activeProjectIdStore);
     if (!proj || proj.schemaVersion !== 3) return _RADIAL_BASE;
@@ -238,7 +238,7 @@
       _RADIAL_BASE[0], // Note
       _RADIAL_BASE[1], // Draw
       _RADIAL_BASE[2], // Import
-      { label: '☰ Tasks', action: 'tasks', icon: _ICON_TASKS, angleDeg: 145 },
+      { label: '☰ Flows', action: 'flows', icon: _ICON_FLOWS, angleDeg: 145 },
       _RADIAL_BASE[4], // Bookmark
     ];
   });
@@ -1758,7 +1758,7 @@
     const key = $activeCanvasKeyStore;
     const parsed = parseCanvasKey(key);
     if (parsed.kind === 'project') return [];
-    const task = $projectTasksStore.find(t => t.id === parsed.taskId);
+    const task = $projectFlowsStore.find(t => t.id === parsed.flowId);
     if (!task || !task.tagId) return [];
     const out = [task.tagId];
     if (parsed.kind === 'final') {
@@ -1860,7 +1860,7 @@
     }
 
     // Task canvas → strip the active task's tag from selected elements.
-    const task = $projectTasksStore.find(t => t.id === parsed.taskId);
+    const task = $projectFlowsStore.find(t => t.id === parsed.flowId);
     if (!task || !task.tagId) return;
     const tagId = task.tagId;
     snapshot();
@@ -2162,7 +2162,7 @@
     else if (item.label === 'Dashboard') { onBack(); }
     else if (item.label === 'Bookmark')  { _addBookmark(); }
     // v3 canvas navigation
-    else if (item.action === 'tasks')          { window.backToTasks?.(); }
+    else if (item.action === 'flows')          { window.backToFlows?.(); }
   }
 
   // ── Context menu ─────────────────────────────
@@ -2612,13 +2612,13 @@
       {/each}
       <div class="radial-center"></div>
     </div>
-    {#if _radialHovered >= 0 && RADIAL_ITEMS[_radialHovered]?.action === 'tasks'}
-      {@const tasksRect = _bmItemElAll[_radialHovered]?.getBoundingClientRect()}
+    {#if _radialHovered >= 0 && RADIAL_ITEMS[_radialHovered]?.action === 'flows'}
+      {@const flowsRect = _bmItemElAll[_radialHovered]?.getBoundingClientRect()}
       {@const parsed = parseCanvasKey($activeCanvasKeyStore)}
-      {@const parentTasks = $projectTasksStore.filter(t => !t.parentTaskId).sort((a, b) => (a.order || 0) - (b.order || 0))}
+      {@const parentFlows = $projectFlowsStore.filter(t => !t.parentFlowId).sort((a, b) => (a.order || 0) - (b.order || 0))}
       <div
         class="radial-bm-submenu radial-tasks-submenu"
-        style="left:{tasksRect ? tasksRect.left - 8 : 0}px; top:{tasksRect ? tasksRect.top - 4 : 0}px; transform: translateX(-100%);"
+        style="left:{flowsRect ? flowsRect.left - 8 : 0}px; top:{flowsRect ? flowsRect.top - 4 : 0}px; transform: translateX(-100%);"
         onclick={e => e.stopPropagation()}
         onpointerenter={e => { e.stopPropagation(); _radialSubmenuLocked = true; }}
         onpointerleave={e => { if (!e.currentTarget.contains(/** @type {Node} */(e.relatedTarget))) { _radialSubmenuLocked = false; } }}
@@ -2629,19 +2629,19 @@
           class:active={parsed.kind === 'project'}
           onclick={e => { e.stopPropagation(); _closeRadialMenu(); window.openCanvasView?.(null, 'task'); }}
         >⬡ Project canvas</button>
-        {#if parentTasks.length > 0}
+        {#if parentFlows.length > 0}
           <div class="radial-import-sep"></div>
-          {#each parentTasks as pt (pt.id)}
-            {@const subs = $projectTasksStore.filter(t => t.parentTaskId === pt.id).sort((a, b) => (a.order || 0) - (b.order || 0))}
+          {#each parentFlows as pt (pt.id)}
+            {@const subs = $projectFlowsStore.filter(t => t.parentFlowId === pt.id).sort((a, b) => (a.order || 0) - (b.order || 0))}
             <button
               class="radial-bm-jump radial-nav-item"
-              class:active={parsed.taskId === pt.id && parsed.kind === 'task'}
+              class:active={parsed.flowId === pt.id && parsed.kind === 'task'}
               onclick={e => { e.stopPropagation(); _closeRadialMenu(); window.openCanvasView?.(pt.id, 'task'); }}
             >{pt.title}</button>
             {#each subs as sub (sub.id)}
               <button
                 class="radial-bm-jump radial-nav-item radial-nav-sub"
-                class:active={parsed.taskId === sub.id}
+                class:active={parsed.flowId === sub.id}
                 onclick={e => { e.stopPropagation(); _closeRadialMenu(); window.openCanvasView?.(sub.id, 'task'); }}
               >{sub.title}</button>
             {/each}
@@ -2650,8 +2650,8 @@
         <div class="radial-import-sep"></div>
         <button
           class="radial-bm-jump radial-nav-item radial-nav-hub"
-          onclick={e => { e.stopPropagation(); _closeRadialMenu(); window.backToTasks?.(); }}
-        >☰ Tasks hub</button>
+          onclick={e => { e.stopPropagation(); _closeRadialMenu(); window.backToFlows?.(); }}
+        >☰ Flows hub</button>
       </div>
     {/if}
     {#if _radialHovered === 2}

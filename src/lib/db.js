@@ -33,18 +33,36 @@ export async function initDB() {
   )`);
 
   // ── v3 schema additions (additive, non-destructive) ─────
-  // Adds schema_version column to projects and creates project_tasks/project_tags tables.
+  // Adds schema_version column to projects and creates project_flows/project_tags tables.
   // schema_version defaults to 2 for all existing rows; new projects created after this
-  // feature ships set it to 3 and get the Tasks hub + tags.
+  // feature ships set it to 3 and get the Flows hub + tags.
   try {
     await _db.execute('ALTER TABLE projects ADD COLUMN schema_version INTEGER DEFAULT 2');
   } catch (e) {
     // Column already exists — ignore
   }
-  await _db.execute(`CREATE TABLE IF NOT EXISTS project_tasks (
+
+  // Migrate legacy project_tasks → project_flows (v6 rename). Runs once per DB:
+  // renames the table + column, carries all rows over. If project_tasks is
+  // already gone (fresh install or already migrated), CREATE TABLE IF NOT EXISTS
+  // below seeds project_flows from scratch.
+  try {
+    const legacy = await _db.select(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='project_tasks'"
+    );
+    const current = await _db.select(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='project_flows'"
+    );
+    if (legacy.length && !current.length) {
+      await _db.execute('ALTER TABLE project_tasks RENAME TO project_flows');
+      await _db.execute('ALTER TABLE project_flows RENAME COLUMN parent_task_id TO parent_flow_id');
+    }
+  } catch (e) { console.warn('[db] project_tasks→project_flows migration:', e); }
+
+  await _db.execute(`CREATE TABLE IF NOT EXISTS project_flows (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
-    parent_task_id TEXT,
+    parent_flow_id TEXT,
     title TEXT,
     tag_id TEXT,
     start_date TEXT,
@@ -55,13 +73,28 @@ export async function initDB() {
     created_at INTEGER,
     updated_at INTEGER
   )`);
+
+  // v6: "kind" discriminates flow / text / note / checklist / link rows.
+  // Non-flow kinds are list-only siblings (no canvas, no sub-items).
+  try { await _db.execute("ALTER TABLE project_flows ADD COLUMN kind TEXT DEFAULT 'flow'"); } catch (e) { /* exists */ }
+
+  // Migrate project_tags.owner_task_id → owner_flow_id.
+  try {
+    const cols = await _db.select('PRAGMA table_info(project_tags)');
+    const hasLegacy = cols.some(c => c.name === 'owner_task_id');
+    const hasNew    = cols.some(c => c.name === 'owner_flow_id');
+    if (hasLegacy && !hasNew) {
+      await _db.execute('ALTER TABLE project_tags RENAME COLUMN owner_task_id TO owner_flow_id');
+    }
+  } catch (e) { console.warn('[db] owner_task_id→owner_flow_id migration:', e); }
+
   await _db.execute(`CREATE TABLE IF NOT EXISTS project_tags (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
     name TEXT,
     slug TEXT,
     kind TEXT,
-    owner_task_id TEXT,
+    owner_flow_id TEXT,
     color TEXT,
     created_at INTEGER
   )`);
@@ -156,7 +189,7 @@ export async function dbDeleteProject(id) {
   if (!_db) return;
   await _db.execute('DELETE FROM projects WHERE id=?', [id]);
   await _db.execute('DELETE FROM canvas_states WHERE project_id=?', [id]);
-  await _db.execute('DELETE FROM project_tasks WHERE project_id=?', [id]);
+  await _db.execute('DELETE FROM project_flows WHERE project_id=?', [id]);
   await _db.execute('DELETE FROM project_tags WHERE project_id=?', [id]);
   // Delete named canvas records and their canvas_states rows
   const canvases = await _db.select('SELECT id FROM project_canvases WHERE project_id=?', [id]);
@@ -166,12 +199,12 @@ export async function dbDeleteProject(id) {
   await _db.execute('DELETE FROM project_canvases WHERE project_id=?', [id]);
 }
 
-// ── Project tasks CRUD ───────────────────────
+// ── Project flows CRUD ───────────────────────
 
-export async function dbLoadTasks(projectId) {
+export async function dbLoadFlows(projectId) {
   if (!_db) return [];
   const rows = await _db.select(
-    'SELECT * FROM project_tasks WHERE project_id=? ORDER BY order_idx ASC',
+    'SELECT * FROM project_flows WHERE project_id=? ORDER BY order_idx ASC',
     [projectId]
   );
   return rows.map(r => {
@@ -180,35 +213,39 @@ export async function dbLoadTasks(projectId) {
     return {
       id: r.id,
       projectId: r.project_id,
-      parentTaskId: r.parent_task_id || null,
+      parentFlowId: r.parent_flow_id || null,
+      kind: r.kind || 'flow',
       title: r.title || '',
       tagId: r.tag_id || null,
       startDate: r.start_date || null,
       endDate: r.end_date || null,
       status: r.status || 'todo',
       order: r.order_idx || 0,
-      taskTagIds: extra.taskTagIds || [],
+      flowTagIds: extra.flowTagIds || extra.taskTagIds || [],
       comments: extra.comments || [],
       description: extra.description || '',
+      payload: extra.payload || null,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     };
   });
 }
 
-export async function dbSaveTask(t) {
+export async function dbSaveFlow(t) {
   if (!_db) return;
   const data = JSON.stringify({
-    taskTagIds: t.taskTagIds || [],
+    flowTagIds: t.flowTagIds || [],
     comments: t.comments || [],
     description: t.description || '',
+    payload: t.payload || null,
   });
   await _db.execute(
-    `INSERT INTO project_tasks (id, project_id, parent_task_id, title, tag_id,
+    `INSERT INTO project_flows (id, project_id, parent_flow_id, kind, title, tag_id,
        start_date, end_date, status, order_idx, data, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
-       parent_task_id=excluded.parent_task_id,
+       parent_flow_id=excluded.parent_flow_id,
+       kind=excluded.kind,
        title=excluded.title,
        tag_id=excluded.tag_id,
        start_date=excluded.start_date,
@@ -218,7 +255,7 @@ export async function dbSaveTask(t) {
        data=excluded.data,
        updated_at=excluded.updated_at`,
     [
-      t.id, t.projectId, t.parentTaskId || null, t.title || '',
+      t.id, t.projectId, t.parentFlowId || null, t.kind || 'flow', t.title || '',
       t.tagId || null, t.startDate || null, t.endDate || null,
       t.status || 'todo', t.order || 0, data,
       t.createdAt, t.updatedAt,
@@ -226,9 +263,9 @@ export async function dbSaveTask(t) {
   );
 }
 
-export async function dbDeleteTask(id) {
+export async function dbDeleteFlow(id) {
   if (!_db) return;
-  await _db.execute('DELETE FROM project_tasks WHERE id=?', [id]);
+  await _db.execute('DELETE FROM project_flows WHERE id=?', [id]);
 }
 
 // ── Project tags CRUD ────────────────────────
@@ -245,7 +282,7 @@ export async function dbLoadTags(projectId) {
     name: r.name || '',
     slug: r.slug || '',
     kind: r.kind || 'project',
-    ownerTaskId: r.owner_task_id || null,
+    ownerFlowId: r.owner_flow_id || null,
     color: r.color || null,
     createdAt: r.created_at,
   }));
@@ -254,14 +291,14 @@ export async function dbLoadTags(projectId) {
 export async function dbSaveTag(tag) {
   if (!_db) return;
   await _db.execute(
-    `INSERT INTO project_tags (id, project_id, name, slug, kind, owner_task_id, color, created_at)
+    `INSERT INTO project_tags (id, project_id, name, slug, kind, owner_flow_id, color, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        name=excluded.name, slug=excluded.slug, kind=excluded.kind,
-       owner_task_id=excluded.owner_task_id, color=excluded.color`,
+       owner_flow_id=excluded.owner_flow_id, color=excluded.color`,
     [
       tag.id, tag.projectId, tag.name, tag.slug, tag.kind,
-      tag.ownerTaskId || null, tag.color || null, tag.createdAt,
+      tag.ownerFlowId || null, tag.color || null, tag.createdAt,
     ]
   );
 }

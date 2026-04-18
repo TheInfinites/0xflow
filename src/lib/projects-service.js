@@ -11,7 +11,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   initDB, dbGetAllSettings, dbLoadProjects, dbLoadFolders,
   dbSaveProject, dbDeleteProject, dbSaveFolder, dbDeleteFolder,
-  dbLoadTasks, dbSaveTask, dbDeleteTask,
+  dbLoadFlows, dbSaveFlow, dbDeleteFlow,
   dbLoadTags, dbSaveTag, dbDeleteTag,
   dbLoadProjectCanvases, dbSaveProjectCanvas, dbDeleteProjectCanvas,
 } from './db.js';
@@ -20,9 +20,9 @@ import {
   setProjects, setFolders,
   setActiveProjectId, getActiveProjectId,
   setCurrentFolderId, getCurrentFolderId,
-  projectTasksStore, projectTagsStore,
-  setProjectTasks, setProjectTags,
-  getProjectTasks, getProjectTags,
+  projectFlowsStore, projectTagsStore,
+  setProjectFlows, setProjectTags,
+  getProjectFlows, getProjectTags,
   activeCanvasKeyStore, setActiveCanvasKey,
   makeCanvasKey, parseCanvasKey,
   projectCanvasesStore, setProjectCanvases, getProjectCanvases,
@@ -196,13 +196,13 @@ function createProject(name) {
     noteCount: 0,
     accent: ACCENT_COLORS[Math.floor(Math.random() * ACCENT_COLORS.length)],
     folderId: fid,
-    schemaVersion: 3,   // new projects are v3 (Tasks hub + tags)
+    schemaVersion: 3,   // new projects are v3 (Flows hub + tags)
   };
   const projects = loadProjects();
   projects.unshift(p);
   saveProjects(projects);
 
-  // Seed the builtin 'final' tag for v3 projects so task final canvases can filter on it.
+  // Seed the builtin 'final' tag for v3 projects so flow final canvases can filter on it.
   const finalTag = _makeTag(id, 'final', 'builtin', null, '#e0b84a');
   _persistTag(finalTag);
 
@@ -292,13 +292,16 @@ function deleteProject(id) {
   if (p) showToast(`"${p.name}" deleted`);
 }
 
-// ── v3: Tasks & Tags CRUD ─────────────────────
-// Tasks and tags live alongside canvas state. Both persist to SQLite (Tauri) or
-// localStorage (browser). Task CRUD auto-creates a matching tag on the fly so
-// the task canvas can filter by that tag. Renaming a task updates the tag's
-// display name but keeps its id/slug stable so element associations survive.
+// ── v3: Flows & Tags CRUD ─────────────────────
+// Flows and tags live alongside canvas state. Both persist to SQLite (Tauri) or
+// localStorage (browser). Flow CRUD (for kind='flow') auto-creates a matching tag
+// on the fly so the flow canvas can filter by that tag. Renaming a flow updates
+// the tag's display name but keeps its id/slug stable so element associations
+// survive. Non-'flow' kinds (text/note/checklist/link) are list-only — no tag,
+// no canvas, no sub-items.
 
-const TASKS_KEY = (pid) => `freeflow_tasks_${pid}`;
+const FLOWS_KEY = (pid) => `freeflow_flows_${pid}`;
+const LEGACY_TASKS_KEY = (pid) => `freeflow_tasks_${pid}`; // for localStorage migration
 const TAGS_KEY  = (pid) => `freeflow_tags_${pid}`;
 
 function _slugify(s) {
@@ -311,14 +314,14 @@ function _newId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
-function _makeTag(projectId, name, kind = 'project', ownerTaskId = null, color = null) {
+function _makeTag(projectId, name, kind = 'project', ownerFlowId = null, color = null) {
   return {
     id: _newId('tag'),
     projectId,
     name,
     slug: _slugify(name),
-    kind,              // 'project' | 'task' | 'builtin'
-    ownerTaskId,
+    kind,              // 'project' | 'task' | 'builtin' (kind='task' retained for legacy tag records)
+    ownerFlowId,
     color,
     createdAt: Date.now(),
   };
@@ -350,43 +353,59 @@ function _persistTag(tag) {
   }
 }
 
-function _persistTask(task) {
-  if (getActiveProjectId() === task.projectId || get(projectTasksStore).some(t => t.projectId === task.projectId)) {
-    const all = get(projectTasksStore);
-    const idx = all.findIndex(t => t.id === task.id);
+function _persistFlow(flow) {
+  if (getActiveProjectId() === flow.projectId || get(projectFlowsStore).some(t => t.projectId === flow.projectId)) {
+    const all = get(projectFlowsStore);
+    const idx = all.findIndex(t => t.id === flow.id);
     if (idx >= 0) {
-      all[idx] = task;
-      projectTasksStore.set([...all]);
+      all[idx] = flow;
+      projectFlowsStore.set([...all]);
     } else {
-      projectTasksStore.set([...all, task]);
+      projectFlowsStore.set([...all, flow]);
     }
   }
   if (IS_TAURI_STORAGE && isDbReady()) {
-    dbSaveTask(task).catch(e => console.warn('[store] dbSaveTask:', e));
+    dbSaveFlow(flow).catch(e => console.warn('[store] dbSaveFlow:', e));
   } else {
     try {
-      const raw = store.get(TASKS_KEY(task.projectId));
+      const raw = store.get(FLOWS_KEY(flow.projectId));
       const arr = raw ? JSON.parse(raw) : [];
-      const idx = arr.findIndex(t => t.id === task.id);
-      if (idx >= 0) arr[idx] = task; else arr.push(task);
-      store.set(TASKS_KEY(task.projectId), JSON.stringify(arr));
+      const idx = arr.findIndex(t => t.id === flow.id);
+      if (idx >= 0) arr[idx] = flow; else arr.push(flow);
+      store.set(FLOWS_KEY(flow.projectId), JSON.stringify(arr));
     } catch {}
   }
 }
 
-async function _loadTasksAndTagsFor(projectId) {
+async function _loadFlowsAndTagsFor(projectId) {
   if (IS_TAURI_STORAGE && isDbReady()) {
-    const [tasks, tags] = await Promise.all([
-      dbLoadTasks(projectId),
+    const [flows, tags] = await Promise.all([
+      dbLoadFlows(projectId),
       dbLoadTags(projectId),
     ]);
-    setProjectTasks(tasks);
+    setProjectFlows(flows);
     setProjectTags(tags);
   } else {
     try {
-      const tRaw = store.get(TASKS_KEY(projectId));
-      setProjectTasks(tRaw ? JSON.parse(tRaw) : []);
-    } catch { setProjectTasks([]); }
+      // Prefer flows key; fall back to legacy tasks key (one-time migration for browser mode).
+      let tRaw = store.get(FLOWS_KEY(projectId));
+      if (!tRaw) {
+        const legacy = store.get(LEGACY_TASKS_KEY(projectId));
+        if (legacy) {
+          try {
+            const migrated = JSON.parse(legacy).map(r => ({
+              ...r,
+              parentFlowId: r.parentFlowId ?? r.parentTaskId ?? null,
+              flowTagIds:   r.flowTagIds   ?? r.taskTagIds   ?? [],
+              kind: r.kind || 'flow',
+            }));
+            store.set(FLOWS_KEY(projectId), JSON.stringify(migrated));
+            tRaw = JSON.stringify(migrated);
+          } catch { tRaw = legacy; }
+        }
+      }
+      setProjectFlows(tRaw ? JSON.parse(tRaw) : []);
+    } catch { setProjectFlows([]); }
     try {
       const gRaw = store.get(TAGS_KEY(projectId));
       setProjectTags(gRaw ? JSON.parse(gRaw) : []);
@@ -399,101 +418,109 @@ async function _loadTasksAndTagsFor(projectId) {
 }
 
 /**
- * Create a task under an optional parent. Auto-creates a task-scoped tag whose
- * id is attached to the task; that tag is what filters the task's canvas view.
+ * Create a flow under an optional parent. For kind='flow', auto-creates a
+ * flow-scoped tag whose id is attached to the flow; that tag filters the flow's
+ * canvas view. Other kinds (text/note/checklist/link) are list-only — no tag,
+ * no canvas, no sub-items.
  */
-function createTask({ projectId, parentTaskId = null, title = 'new task' }) {
-  const tag = _makeTag(projectId, title, 'task', null, null);
-  const task = {
-    id: _newId('task'),
+function createFlow({ projectId, parentFlowId = null, title = 'new flow', kind = 'flow', payload = null }) {
+  const isCanvasFlow = kind === 'flow';
+  const tag = isCanvasFlow ? _makeTag(projectId, title, 'task', null, null) : null;
+  const flow = {
+    id: _newId('flow'),
     projectId,
-    parentTaskId,
+    parentFlowId: isCanvasFlow ? parentFlowId : null,
+    kind,
     title,
-    tagId: tag.id,
+    tagId: tag?.id || null,
     startDate: null,
     endDate: null,
     status: 'todo',
-    order: get(projectTasksStore).filter(t => t.parentTaskId === parentTaskId).length,
-    taskTagIds: [],
+    order: get(projectFlowsStore).filter(t => (t.parentFlowId || null) === (isCanvasFlow ? parentFlowId : null)).length,
+    flowTagIds: [],
     comments: [],
+    description: '',
+    payload,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
-  // Back-link the tag to the task before persisting.
-  tag.ownerTaskId = task.id;
-  _persistTag(tag);
-  _persistTask(task);
-  return task;
+  if (tag) {
+    // Back-link the tag to the flow before persisting.
+    tag.ownerFlowId = flow.id;
+    _persistTag(tag);
+  }
+  _persistFlow(flow);
+  return flow;
 }
 
-function updateTask(taskId, patch) {
-  const all = get(projectTasksStore);
-  const task = all.find(t => t.id === taskId);
-  if (!task) return null;
-  const updated = { ...task, ...patch, updatedAt: Date.now() };
-  _persistTask(updated);
+function updateFlow(flowId, patch) {
+  const all = get(projectFlowsStore);
+  const flow = all.find(t => t.id === flowId);
+  if (!flow) return null;
+  const updated = { ...flow, ...patch, updatedAt: Date.now() };
+  _persistFlow(updated);
   // If title changed, keep the associated tag's name in sync (slug/id stay stable).
-  if (patch.title && patch.title !== task.title && task.tagId) {
-    const tag = get(projectTagsStore).find(t => t.id === task.tagId);
+  if (patch.title && patch.title !== flow.title && flow.tagId) {
+    const tag = get(projectTagsStore).find(t => t.id === flow.tagId);
     if (tag) _persistTag({ ...tag, name: patch.title });
   }
   return updated;
 }
 
 /**
- * Delete a task. `mode === 'untag'` also strips the task's tag from every element.
+ * Delete a flow. `mode === 'untag'` also strips the flow's tag from every element.
  * `mode === 'keep'` leaves tags in place (orphaned but harmless).
- * Sub-tasks cascade with the same mode.
+ * Sub-flows cascade with the same mode.
  */
-function deleteTask(taskId, mode = 'keep') {
-  const all = get(projectTasksStore);
-  const task = all.find(t => t.id === taskId);
-  if (!task) return;
+function deleteFlow(flowId, mode = 'keep') {
+  const all = get(projectFlowsStore);
+  const flow = all.find(t => t.id === flowId);
+  if (!flow) return;
 
-  // Cascade sub-tasks first
-  const subs = all.filter(t => t.parentTaskId === taskId);
-  for (const s of subs) deleteTask(s.id, mode);
+  // Cascade sub-flows first
+  const subs = all.filter(t => t.parentFlowId === flowId);
+  for (const s of subs) deleteFlow(s.id, mode);
 
-  // Strip the task's tag from elements if requested
-  if (mode === 'untag' && task.tagId) {
+  // Strip the flow's tag from elements if requested
+  if (mode === 'untag' && flow.tagId) {
     const els = get(elementsStore).map(e => {
-      if (!Array.isArray(e.tags) || !e.tags.includes(task.tagId)) return e;
-      return { ...e, tags: e.tags.filter(t => t !== task.tagId) };
+      if (!Array.isArray(e.tags) || !e.tags.includes(flow.tagId)) return e;
+      return { ...e, tags: e.tags.filter(t => t !== flow.tagId) };
     });
     elementsStore.set(els);
   }
 
-  // Remove task's tag
-  if (task.tagId) {
-    const tag = get(projectTagsStore).find(t => t.id === task.tagId);
+  // Remove flow's tag
+  if (flow.tagId) {
+    const tag = get(projectTagsStore).find(t => t.id === flow.tagId);
     if (tag) {
-      projectTagsStore.set(get(projectTagsStore).filter(t => t.id !== task.tagId));
+      projectTagsStore.set(get(projectTagsStore).filter(t => t.id !== flow.tagId));
       if (IS_TAURI_STORAGE && isDbReady()) {
-        dbDeleteTag(task.tagId).catch(() => {});
+        dbDeleteTag(flow.tagId).catch(() => {});
       } else {
         try {
-          const raw = store.get(TAGS_KEY(task.projectId));
+          const raw = store.get(TAGS_KEY(flow.projectId));
           const arr = raw ? JSON.parse(raw) : [];
-          store.set(TAGS_KEY(task.projectId), JSON.stringify(arr.filter(t => t.id !== task.tagId)));
+          store.set(TAGS_KEY(flow.projectId), JSON.stringify(arr.filter(t => t.id !== flow.tagId)));
         } catch {}
       }
     }
   }
 
-  // Remove the task
-  projectTasksStore.set(get(projectTasksStore).filter(t => t.id !== taskId));
+  // Remove the flow
+  projectFlowsStore.set(get(projectFlowsStore).filter(t => t.id !== flowId));
   if (IS_TAURI_STORAGE && isDbReady()) {
-    dbDeleteTask(taskId).catch(() => {});
+    dbDeleteFlow(flowId).catch(() => {});
   } else {
     try {
-      const raw = store.get(TASKS_KEY(task.projectId));
+      const raw = store.get(FLOWS_KEY(flow.projectId));
       const arr = raw ? JSON.parse(raw) : [];
-      store.set(TASKS_KEY(task.projectId), JSON.stringify(arr.filter(t => t.id !== taskId)));
+      store.set(FLOWS_KEY(flow.projectId), JSON.stringify(arr.filter(t => t.id !== flowId)));
     } catch {}
   }
 }
 
-/** Create a free-form project tag (not owned by any task). */
+/** Create a free-form project tag (not owned by any flow). */
 function createProjectTag(projectId, name, color = null) {
   const tag = _makeTag(projectId, name, 'project', null, color);
   _persistTag(tag);
@@ -572,11 +599,11 @@ async function openProject(id, e) {
   _loadingCanvas = true;
   clearCanvasState();
 
-  // v3 projects: load tasks/tags first, then canvas state
+  // v3 projects: load flows/tags first, then canvas state
   if (p.schemaVersion === 3) {
-    await _loadTasksAndTagsFor(id);
+    await _loadFlowsAndTagsFor(id);
   } else {
-    setProjectTasks([]);
+    setProjectFlows([]);
     setProjectTags([]);
   }
 
@@ -593,7 +620,7 @@ async function openProject(id, e) {
   }
 
   // Always start v3 projects on the project canvas view key (so filters pass-through
-  // to all elements until the user explicitly navigates to a task canvas).
+  // to all elements until the user explicitly navigates to a flow canvas).
   setActiveCanvasKey('__project__');
 
   try {
@@ -620,15 +647,15 @@ async function openProject(id, e) {
     _loadingCanvas = false;
   }
 
-  // Routing: v3 projects land on split view (tasks + canvas); v2 projects go straight to canvas.
+  // Routing: v3 projects land on split view (flows + canvas); v2 projects go straight to canvas.
   if (p.schemaVersion === 3) {
     setActiveView('canvas');
     setSplitMode('split');
-    document.body.classList.remove('on-tasks', 'split-left', 'split-right');
+    document.body.classList.remove('on-flows', 'split-left', 'split-right');
     document.body.classList.add('on-canvas', 'on-split');
     requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
   } else {
-    document.body.classList.remove('on-tasks');
+    document.body.classList.remove('on-flows');
     document.body.classList.add('on-canvas');
     setActiveView('canvas');
   }
@@ -651,29 +678,30 @@ function setCanvasView(newKey) {
 }
 
 /**
- * Navigate from the Tasks hub into a canvas view. If taskId is null, opens the
- * project canvas. If kind === 'final', opens the parent task's Final canvas.
+ * Navigate from the Flows hub into a canvas view. If flowId is null, opens the
+ * project canvas. If kind === 'final', opens the parent flow's Final canvas.
+ * Note: internal canvas-key kind retains 'task' prefix for backward-compat.
  */
-function openCanvasView(taskId = null, kind = 'task') {
-  const key = taskId ? makeCanvasKey(kind, taskId) : '__project__';
+function openCanvasView(flowId = null, kind = 'task') {
+  const key = flowId ? makeCanvasKey(kind, flowId) : '__project__';
   setCanvasView(key);
   const sm = get(splitModeStore);
   if (sm) {
     // In split mode, canvas is already visible — just switch the key.
-    // If tasks are fullscreen (split-left), switch to split to show canvas.
+    // If flows are fullscreen (split-left), switch to split to show canvas.
     if (sm === 'left') {
       setSplitPanel('split');
     }
     setActiveView('canvas');
   } else {
-    document.body.classList.remove('on-tasks');
+    document.body.classList.remove('on-flows');
     document.body.classList.add('on-canvas');
     setActiveView('canvas');
   }
 }
 
-/** Return from canvas back to Tasks hub (v3 projects only). */
-function backToTasks() {
+/** Return from canvas back to Flows hub (v3 projects only). */
+function backToFlows() {
   const id = getActiveProjectId();
   const projects = loadProjects();
   const p = projects.find(x => x.id === id);
@@ -683,17 +711,17 @@ function backToTasks() {
   _saveCurrentCanvas();
   const sm = get(splitModeStore);
   if (sm) {
-    // In split mode, expand tasks to full screen
+    // In split mode, expand flows to full screen
     setSplitPanel('left');
-    setActiveView('tasks');
+    setActiveView('flows');
   } else {
     document.body.classList.remove('on-canvas');
-    document.body.classList.add('on-tasks');
-    setActiveView('tasks');
+    document.body.classList.add('on-flows');
+    setActiveView('flows');
   }
 }
 
-/** Toggle split mode panels: 'left' = tasks full, 'right' = canvas full, 'split' = 50/50 */
+/** Toggle split mode panels: 'left' = flows full, 'right' = canvas full, 'split' = 50/50 */
 function setSplitPanel(mode) {
   setSplitMode(mode);
   document.body.classList.remove('split-left', 'split-right');
@@ -708,11 +736,11 @@ async function goToDashboard() {
   _debounceSaveTimer = null;
   _clearSecondaryUnsubs();
   await _saveCurrentCanvas();
-  document.body.classList.remove('on-canvas', 'on-tasks', 'on-split', 'split-left', 'split-right', 'dual-canvas');
+  document.body.classList.remove('on-canvas', 'on-flows', 'on-split', 'split-left', 'split-right', 'dual-canvas');
   setSplitMode(false);
   setActiveView('dashboard');
-  // Clear stores so the dashboard doesn't show stale task/tag/canvas data.
-  setProjectTasks([]);
+  // Clear stores so the dashboard doesn't show stale flow/tag/canvas data.
+  setProjectFlows([]);
   setProjectTags([]);
   setProjectCanvases([]);
   setActiveCanvasKey('__project__');
@@ -837,7 +865,7 @@ async function deleteNamedCanvas(canvasId) {
 
 /**
  * Switch the active canvas to a new key. Handles both named canvases (isolated
- * element stores) and task/project canvases (tag-filtered shared pool).
+ * element stores) and flow/project canvases (tag-filtered shared pool).
  */
 async function switchToCanvas(newKey) {
   const prevKey = get(activeCanvasKeyStore);
@@ -853,7 +881,7 @@ async function switchToCanvas(newKey) {
   if (prevParsed.kind === 'named') {
     await saveNamedCanvas(prevParsed.canvasId);
   } else {
-    // Save the project pool (tasks/project canvas)
+    // Save the project pool (flows/project canvas)
     if (p.schemaVersion === 3) {
       stashCurrentViewport(prevKey);
       await saveCanvasV3(projectId);
@@ -877,13 +905,13 @@ async function switchToCanvas(newKey) {
       clearCanvasState();
     }
   } else if (prevParsed.kind === 'named') {
-    // Switching from named → task/project: reload the project pool
+    // Switching from named → flow/project: reload the project pool
     let state = p.schemaVersion === 3 ? await loadCanvasV3(projectId) : null;
     if (!state) state = await loadCanvasV2(projectId);
     if (state) applyCanvasState(state);
     else clearCanvasState();
   }
-  // task ↔ project switches: no reload needed, visibleElementsStore handles filtering
+  // flow ↔ project switches: no reload needed, visibleElementsStore handles filtering
 
   // 4. Switch the key and restore viewport
   setActiveCanvasKey(newKey);
@@ -895,7 +923,7 @@ async function switchToCanvas(newKey) {
     if (sm === 'left') setSplitPanel('split');
     setActiveView('canvas');
   } else {
-    document.body.classList.remove('on-tasks');
+    document.body.classList.remove('on-flows');
     document.body.classList.add('on-canvas');
     setActiveView('canvas');
   }
@@ -905,7 +933,7 @@ async function switchToCanvas(newKey) {
  * Open a canvas in the secondary (right) panel for dual-canvas split view.
  * Pass null to close the secondary panel.
  */
-// Live-sync unsub for project/task secondary canvases
+// Live-sync unsub for project/flow secondary canvases
 let _secondaryUnsubs = [];
 function _clearSecondaryUnsubs() {
   _secondaryUnsubs.forEach(u => u());
@@ -939,7 +967,7 @@ async function setSecondaryCanvas(key) {
     setSecondaryStrokes(state?.strokes || []);
     setSecondaryRelations(state?.relations || []);
   } else if (activeParsed.kind === 'named') {
-    // Secondary is project/task but primary is a named canvas — primary owns elementsStore,
+    // Secondary is project/flow but primary is a named canvas — primary owns elementsStore,
     // so we can't live-mirror it. Load the project pool from disk as a snapshot instead.
     const projectId = getActiveProjectId();
     const projects  = loadProjects();
@@ -950,7 +978,7 @@ async function setSecondaryCanvas(key) {
     setSecondaryStrokes(state?.strokes || []);
     setSecondaryRelations(state?.relations || []);
   } else {
-    // Project / task canvas with project/task primary: live-mirror the shared pool
+    // Project / flow canvas with project/flow primary: live-mirror the shared pool
     // so edits appear in real time. Tag-based filtering happens in secondaryVisibleElementsStore.
     const { elementsStore: els, strokesStore: stk, relationsStore: rel } = await import('../stores/elements.js');
     _secondaryUnsubs.push(els.subscribe(v => setSecondaryElements(v)));
@@ -1166,14 +1194,14 @@ export function mountProjectsBridge() {
     openProject,
     goToDashboard,
     toggleDashboard,
-    // v3 tasks/tags
-    createTask,
-    updateTask,
-    deleteTask,
+    // v3 flows/tags
+    createFlow,
+    updateFlow,
+    deleteFlow,
     createProjectTag,
     setCanvasView,
     openCanvasView,
-    backToTasks,
+    backToFlows,
     setSplitPanel,
     // named canvases
     createNamedCanvas,

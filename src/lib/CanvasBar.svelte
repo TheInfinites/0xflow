@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import {
     activeProjectIdStore, projectsStore,
-    activeCanvasKeyStore, projectTasksStore, parseCanvasKey,
+    activeCanvasKeyStore, projectFlowsStore, parseCanvasKey,
     projectCanvasesStore,
   } from '../stores/projects.js';
   import { canUndo, canRedo, undo, redo } from '../stores/elements.js';
@@ -20,20 +20,20 @@
   // v3 breadcrumb state
   let isV3         = $derived(project?.schemaVersion === 3);
   let canvasParsed = $derived(parseCanvasKey($activeCanvasKeyStore));
-  let currentTask  = $derived(
+  let currentFlow  = $derived(
     canvasParsed.kind !== 'project'
-      ? $projectTasksStore.find(t => t.id === canvasParsed.taskId) || null
+      ? $projectFlowsStore.find(t => t.id === canvasParsed.flowId) || null
       : null
   );
-  let parentTask = $derived(
-    currentTask?.parentTaskId
-      ? $projectTasksStore.find(t => t.id === currentTask.parentTaskId) || null
+  let parentFlow = $derived(
+    currentFlow?.parentFlowId
+      ? $projectFlowsStore.find(t => t.id === currentFlow.parentFlowId) || null
       : null
   );
 
   let splitMode     = $derived($splitModeStore);
   let namedCanvases = $derived($projectCanvasesStore);
-  let topTasks      = $derived($projectTasksStore.filter(t => !t.parentTaskId));
+  let topFlows      = $derived($projectFlowsStore.filter(t => !t.parentFlowId));
   let activeKey     = $derived($activeCanvasKeyStore);
   let secondaryKey  = $derived($secondaryCanvasKeyStore);
 
@@ -122,11 +122,11 @@
   }
 
   function goProjectCanvas() { window.openCanvasView?.(null, 'task'); }
-  function goTaskCanvas(id)  { window.openCanvasView?.(id, 'task'); }
-  function goBackToTasks()   { window.backToTasks?.(); }
+  function goFlowCanvas(id)  { window.openCanvasView?.(id, 'task'); }
+  function goBackToFlows()   { window.backToFlows?.(); }
 
   function restoreSplit()  { window.setSplitPanel?.('split'); }
-  function showTasks()     { window.setSplitPanel?.('left'); }
+  function showFlows()     { window.setSplitPanel?.('left'); }
 
   let isRenaming = $state(false);
   let renameVal  = $state('');
@@ -199,13 +199,13 @@
       >R</button>
     </span>
   </div>
-  <!-- Task canvas tabs (v3 projects, top-level tasks only) -->
+  <!-- Flow canvas tabs (v3 projects, top-level flows only) -->
   {#if isV3}
-    {#each topTasks as task (task.id)}
-      {@const tkey = 'task:' + task.id}
-      <div class="ctab ctab-task" class:active={activeKey === tkey}>
-        <button class="ctab-body" onclick={() => openCanvas(tkey)} title={task.title}>
-          <span class="ctab-label">{task.title}</span>
+    {#each topFlows as flow (flow.id)}
+      {@const tkey = 'task:' + flow.id}
+      <div class="ctab ctab-flow" class:active={activeKey === tkey}>
+        <button class="ctab-body" onclick={() => openCanvas(tkey)} title={flow.title}>
+          <span class="ctab-label">{flow.title}</span>
         </button>
         <span class="ctab-split-chip" role="group" aria-label="Assign to split panel">
           <button
@@ -315,23 +315,23 @@
     </button>
     {#if isV3}
       {#if splitMode}
-        <button class="bar-btn bar-to-tasks" onclick={showTasks} title="show tasks panel">
+        <button class="bar-btn bar-to-flows" onclick={showFlows} title="show flows panel">
           <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><line x1="1" y1="3" x2="11" y2="3"/><line x1="1" y1="6" x2="7" y2="6"/><line x1="1" y1="9" x2="9" y2="9"/></svg>
-          tasks
+          flows
         </button>
         {#if splitMode === 'right'}
           <button class="bar-btn" onclick={restoreSplit} title="restore split view">
             <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1" y="1" width="4" height="10" rx="0.5"/><rect x="7" y="1" width="4" height="10" rx="0.5"/></svg>
           </button>
         {:else}
-          <button class="bar-btn" onclick={showTasks} title="expand tasks panel">
+          <button class="bar-btn" onclick={showFlows} title="expand flows panel">
             <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3H3v4M9 9l-6-6"/></svg>
           </button>
         {/if}
       {:else}
-        <button class="bar-btn bar-to-tasks" onclick={goBackToTasks} title="back to tasks">
+        <button class="bar-btn bar-to-flows" onclick={goBackToFlows} title="back to flows">
           <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><line x1="1" y1="3" x2="11" y2="3"/><line x1="1" y1="6" x2="7" y2="6"/><line x1="1" y1="9" x2="9" y2="9"/></svg>
-          tasks
+          flows
         </button>
       {/if}
     {/if}
@@ -343,26 +343,26 @@
         onblur={commitRename}
         onkeydown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') isRenaming = false; }}
       />
-    {:else if isV3 && currentTask}
+    {:else if isV3 && currentFlow}
       <span class="crumbs">
         <button class="crumb" onclick={goProjectCanvas} title="project canvas">
           <svg viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="1" width="8" height="8" rx="1"/></svg>
           <span class="crumb-label">{project?.name ?? 'untitled'}</span>
         </button>
-        {#if parentTask}
+        {#if parentFlow}
           <span class="crumb-sep" aria-hidden="true">
             <svg viewBox="0 0 6 10"><polyline points="1,1 5,5 1,9"/></svg>
           </span>
-          <button class="crumb" onclick={() => goTaskCanvas(parentTask.id)} title={parentTask.title}>
-            <span class="crumb-label">{parentTask.title}</span>
+          <button class="crumb" onclick={() => goFlowCanvas(parentFlow.id)} title={parentFlow.title}>
+            <span class="crumb-label">{parentFlow.title}</span>
           </button>
         {/if}
         <span class="crumb-sep" aria-hidden="true">
           <svg viewBox="0 0 6 10"><polyline points="1,1 5,5 1,9"/></svg>
         </span>
-        <span class="crumb crumb-current" title={currentTask.title}>
+        <span class="crumb crumb-current" title={currentFlow.title}>
           <span class="crumb-dot"></span>
-          <span class="crumb-label">{currentTask.title}</span>
+          <span class="crumb-label">{currentFlow.title}</span>
           {#if canvasParsed.kind === 'final'}
             <span class="crumb-tag">final</span>
           {/if}

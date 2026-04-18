@@ -5,17 +5,17 @@ import { get as _getStore } from 'svelte/store';
 import { elementsStore, snapshot } from '../stores/elements.js';
 import { scaleStore, pxStore, pyStore } from '../stores/canvas.js';
 import { projectDirStore } from '../stores/ui.js';
-import { activeCanvasKeyStore, projectTasksStore, projectTagsStore, parseCanvasKey } from '../stores/projects.js';
+import { activeCanvasKeyStore, projectFlowsStore, projectTagsStore, parseCanvasKey } from '../stores/projects.js';
 
 /** Auto-tags for newly created elements based on the active canvas view. */
 function _autoTags() {
   const key = _getStore(activeCanvasKeyStore);
   const parsed = parseCanvasKey(key);
   if (parsed.kind === 'project') return [];
-  const tasks = _getStore(projectTasksStore);
-  const task = tasks.find(t => t.id === parsed.taskId);
-  if (!task || !task.tagId) return [];
-  const out = [task.tagId];
+  const flows = _getStore(projectFlowsStore);
+  const flow = flows.find(t => t.id === parsed.flowId);
+  if (!flow || !flow.tagId) return [];
+  const out = [flow.tagId];
   if (parsed.kind === 'final') {
     const tags = _getStore(projectTagsStore);
     const finalTag = tags.find(t => t.kind === 'builtin' && t.slug === 'final');
