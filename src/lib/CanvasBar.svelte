@@ -33,7 +33,7 @@
 
   let splitMode     = $derived($splitModeStore);
   let namedCanvases = $derived($projectCanvasesStore);
-  let topFlows      = $derived($projectFlowsStore.filter(t => !t.parentFlowId));
+  let topFlows      = $derived($projectFlowsStore.filter(t => !t.parentFlowId && (!t.kind || t.kind === 'flow')));
   let activeKey     = $derived($activeCanvasKeyStore);
   let secondaryKey  = $derived($secondaryCanvasKeyStore);
 

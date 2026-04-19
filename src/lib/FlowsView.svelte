@@ -308,7 +308,7 @@
       </div>
     {/snippet}
 
-    {#snippet flowCell(flow, col)}
+    {#snippet flowCell(flow)}
       <div
         class="tv-cell"
         class:drag-over={dropTargetId === flow.id}
@@ -329,21 +329,6 @@
           <LinkRow {flow} startExpanded={true} />
         {/if}
 
-        <!-- Add below in this column -->
-        <div class="tv-add-popover-host tv-add-after-host">
-          <button
-            class="tv-add-after"
-            onclick={() => toggleAddMenu(flow.id + ':below')}
-            title="add below in this column"
-          >
-            <span class="tv-add-after-line"></span>
-            <span class="tv-add-after-icon">+</span>
-            <span class="tv-add-after-line"></span>
-          </button>
-          {#if addMenuAnchor === flow.id + ':below'}
-            {@render addMenu({ afterFlowId: flow.id, column: col })}
-          {/if}
-        </div>
       </div>
     {/snippet}
 
@@ -351,7 +336,7 @@
     <div class="tv-cols" ondragend={() => { dragFlowId = null; dropTargetId = null; }}>
       <div class="tv-col">
         {#each leftColumn as flow (flow.id)}
-          {@render flowCell(flow, 0)}
+          {@render flowCell(flow)}
         {/each}
         <div class="tv-add-popover-host tv-end-add">
           <button class="tv-add-btn" onclick={() => toggleAddMenu('end:0')}>
@@ -365,7 +350,7 @@
       </div>
       <div class="tv-col">
         {#each rightColumn as flow (flow.id)}
-          {@render flowCell(flow, 1)}
+          {@render flowCell(flow)}
         {/each}
         <div class="tv-add-popover-host tv-end-add">
           <button class="tv-add-btn" onclick={() => toggleAddMenu('end:1')}>
@@ -620,7 +605,6 @@
     border-color: rgba(255,255,255,0.22);
     background: rgba(255,255,255,0.02);
   }
-  .tv-add-btn:hover { color: rgba(255,255,255,0.6); }
   .tv-add-icon {
     width: 34px;
     height: 34px;
@@ -636,42 +620,6 @@
   .tv-add-btn:hover .tv-add-icon {
     border-color: rgba(255,255,255,0.35);
   }
-
-  /* Per-card "add below" affordance */
-  .tv-add-after-host { margin-top: 6px; }
-  .tv-add-after {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    background: transparent;
-    border: none;
-    padding: 6px 4px;
-    cursor: pointer;
-    color: rgba(255,255,255,0.18);
-    transition: color 0.12s;
-  }
-  .tv-add-after:hover { color: rgba(255,255,255,0.65); }
-  .tv-add-after-line {
-    flex: 1;
-    height: 1px;
-    background: currentColor;
-    opacity: 0.4;
-  }
-  .tv-add-after-icon {
-    width: 18px;
-    height: 18px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px dashed currentColor;
-    border-radius: 50%;
-    font-size: 12px;
-    line-height: 1;
-    flex-shrink: 0;
-  }
-  :global(body.dash-light) .tv-add-after { color: rgba(0,0,0,0.18); }
-  :global(body.dash-light) .tv-add-after:hover { color: rgba(0,0,0,0.6); }
 
   .tv-add-backdrop {
     position: fixed;
@@ -818,10 +766,21 @@
     border-color: rgba(0,0,0,0.3);
     background: rgba(0,0,0,0.03);
   }
-  :global(body.dash-light) .tv-add-btn { color: rgba(0,0,0,0.2); }
-  :global(body.dash-light) .tv-add-btn:hover { color: rgba(0,0,0,0.5); }
-  :global(body.dash-light) .tv-add-icon { border-color: rgba(0,0,0,0.15); }
-  :global(body.dash-light) .tv-add-btn:hover .tv-add-icon { border-color: rgba(0,0,0,0.3); }
+  :global(body.dash-light) .tv-add-btn {
+    color: rgba(0,0,0,0.4);
+    border: 1.5px dashed rgba(0,0,0,0.25);
+  }
+  :global(body.dash-light) .tv-add-btn:hover {
+    color: rgba(0,0,0,0.7);
+    border-color: rgba(0,0,0,0.45);
+    background: rgba(0,0,0,0.02);
+  }
+  :global(body.dash-light) .tv-add-icon {
+    border: 1.5px dashed rgba(0,0,0,0.3);
+  }
+  :global(body.dash-light) .tv-add-btn:hover .tv-add-icon {
+    border-color: rgba(0,0,0,0.55);
+  }
   :global(body.dash-light) .tv-add-menu {
     background: #fff;
     border-color: rgba(0,0,0,0.1);

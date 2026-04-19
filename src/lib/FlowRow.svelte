@@ -14,7 +14,6 @@
   $effect(() => { if (startExpanded) expanded = true; });
   let editing    = $state(false);
   let editValue  = $state('');
-  let notesTab   = $state('description'); // 'description' | 'comments'
 
   let flows = $derived($projectFlowsStore);
   let allTags = $derived($projectTagsStore);
@@ -58,33 +57,6 @@
     const tag = await _svc('createProjectTag', $activeProjectIdStore, name);
     if (tag?.id) addMetaTag(tag.id);
     newMetaTagName = '';
-  }
-
-  // ── Detail panel ─────
-  let descDraft = $state('');
-  $effect(() => { descDraft = flow.description || ''; });
-  function commitDesc() {
-    const v = descDraft.trim();
-    if (v !== (flow.description || '')) _svc('updateFlow', flow.id, { description: v });
-  }
-
-  let newComment = $state('');
-  function addComment() {
-    const text = newComment.trim();
-    if (!text) return;
-    const cur = Array.isArray(flow.comments) ? flow.comments : [];
-    const entry = { id: 'c_' + Math.random().toString(36).slice(2, 9), text, createdAt: Date.now() };
-    _svc('updateFlow', flow.id, { comments: [...cur, entry] });
-    newComment = '';
-  }
-  function removeComment(id) {
-    const cur = Array.isArray(flow.comments) ? flow.comments : [];
-    _svc('updateFlow', flow.id, { comments: cur.filter(c => c.id !== id) });
-  }
-  function fmtTime(ts) {
-    if (!ts) return '';
-    const d = new Date(ts);
-    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
 
   let progress = $derived.by(() => {
@@ -537,67 +509,19 @@
     </div>
   {/if}
 
-  <!-- Notes: tabbed editor for description + comments -->
-  <div class="tr-notes">
-    <div class="tr-notes-tabs" role="tablist">
-      <button
-        class="tr-notes-tab"
-        class:active={notesTab === 'description'}
-        role="tab"
-        aria-selected={notesTab === 'description'}
-        onclick={() => notesTab = 'description'}
-      >Description{#if descDraft.trim()} <span class="tr-notes-dot"></span>{/if}</button>
-      <button
-        class="tr-notes-tab"
-        class:active={notesTab === 'comments'}
-        role="tab"
-        aria-selected={notesTab === 'comments'}
-        onclick={() => notesTab = 'comments'}
-      >Comments{#if Array.isArray(flow.comments) && flow.comments.length > 0} <span class="tr-notes-count">{flow.comments.length}</span>{/if}</button>
+  {#if depth === 0}
+    <!-- Canvas actions -->
+    <div class="tr-canvas-actions">
+      <button class="tr-canvas-btn" onclick={openFlowCanvas}>
+        <svg viewBox="0 0 12 12" width="11" height="11"><path d="M4 2h6v6M4 8L10 2" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Open canvas
+      </button>
+      <button class="tr-canvas-btn" onclick={openFinalCanvas}>
+        <svg viewBox="0 0 12 12" width="11" height="11"><path d="M2 2h3v3H2zM7 2h3v3H7zM2 7h3v3H2zM7 7h3v3H7z" stroke="currentColor" stroke-width="1" fill="none"/></svg>
+        Final canvas
+      </button>
     </div>
-
-    {#if notesTab === 'description'}
-      <textarea
-        id="desc-{flow.id}"
-        class="tr-textarea"
-        placeholder="Write something..."
-        bind:value={descDraft}
-        onblur={commitDesc}
-        onkeydown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.target.blur(); } }}
-        rows="2"
-      ></textarea>
-    {:else}
-      <div class="tr-notes-comments">
-        {#if Array.isArray(flow.comments) && flow.comments.length > 0}
-          <div class="tr-comments">
-            {#each flow.comments as c (c.id)}
-              <div class="tr-comment">
-                <p class="tr-comment-text">{c.text}</p>
-                <div class="tr-comment-foot">
-                  <span class="tr-comment-time">{fmtTime(c.createdAt)}</span>
-                  <button class="tr-comment-del" onclick={() => removeComment(c.id)} title="delete">
-                    <svg viewBox="0 0 10 10" width="8" height="8"><path d="M3 3l4 4M7 3l-4 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-                  </button>
-                </div>
-              </div>
-            {/each}
-          </div>
-        {/if}
-        <div class="tr-comment-input">
-          <input
-            id="cmt-{flow.id}"
-            type="text"
-            placeholder="Write a comment..."
-            bind:value={newComment}
-            onkeydown={e => { if (e.key === 'Enter') addComment(); }}
-          />
-          <button class="tr-comment-send" onclick={addComment} disabled={!newComment.trim()} aria-label="send comment">
-            <svg viewBox="0 0 12 12" width="10" height="10"><path d="M2 6h8M7 3l3 3-3 3" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button>
-        </div>
-      </div>
-    {/if}
-  </div>
+  {/if}
 {/if}
 </div>
 
@@ -1115,149 +1039,29 @@
     padding: 4px 0 2px;
   }
 
-  /* ── Notes (tabbed description/comments) ───────────────────── */
-  .tr-notes {
-    padding: 8px 0 4px;
-    margin-top: 2px;
-    border-top: 1px solid rgba(255,255,255,0.05);
-  }
-  .tr-notes-tabs {
+  /* ── Canvas action buttons ───────────────────── */
+  .tr-canvas-actions {
     display: flex;
-    gap: 2px;
-    margin-bottom: 6px;
+    gap: 18px;
+    padding: 10px 0 4px;
+    margin-top: 2px;
   }
-  .tr-notes-tab {
-    background: none;
-    border: none;
-    color: rgba(255,255,255,0.3);
-    font-family: 'Geist Mono', monospace;
-    font-size: 9px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    padding: 4px 10px 5px;
-    cursor: pointer;
+  .tr-canvas-btn {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
+    padding: 2px 0;
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.45);
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
     transition: color 0.12s;
   }
-  .tr-notes-tab:hover { color: rgba(255,255,255,0.6); }
-  .tr-notes-tab.active {
-    color: rgba(255,255,255,0.85);
-  }
-  .tr-notes-dot {
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
-    background: rgba(255,255,255,0.4);
-  }
-  .tr-notes-count {
-    font-size: 9px;
-    color: rgba(255,255,255,0.4);
-    background: rgba(255,255,255,0.06);
-    padding: 0 5px;
-    border-radius: 6px;
-    min-width: 14px;
-    text-align: center;
-  }
-  .tr-notes-comments { padding-top: 2px; }
-
-  .tr-textarea {
-    width: 100%;
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-    border-radius: 0;
-    color: rgba(255,255,255,0.75);
-    padding: 6px 0;
-    font-family: 'Geist', sans-serif;
-    font-size: 12px;
-    resize: vertical;
-    outline: none;
-    box-sizing: border-box;
-    line-height: 1.6;
-  }
-  .tr-textarea:focus { border-bottom-color: rgba(255,255,255,0.2); }
-  .tr-textarea::placeholder { color: rgba(255,255,255,0.15); }
-
-  .tr-comments {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-bottom: 10px;
-    max-height: 160px;
-    overflow-y: auto;
-  }
-  .tr-comment {
-    padding: 8px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
-    font-size: 12px;
-  }
-  .tr-comment:last-child { border-bottom: none; }
-  .tr-comment-text {
-    color: rgba(255,255,255,0.7);
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    line-height: 1.5;
-    margin: 0;
-  }
-  .tr-comment-foot {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-top: 4px;
-  }
-  .tr-comment-time {
-    font-family: 'Geist Mono', monospace;
-    font-size: 9px;
-    color: rgba(255,255,255,0.18);
-    letter-spacing: 0.02em;
-  }
-  .tr-comment-del {
-    background: none;
-    border: none;
-    color: rgba(255,255,255,0.15);
-    cursor: pointer;
-    padding: 2px;
-    display: flex;
-    align-items: center;
-    opacity: 0;
-    transition: opacity 0.1s;
-  }
-  .tr-comment:hover .tr-comment-del { opacity: 1; }
-  .tr-comment-del:hover { color: #e84040; }
-
-  .tr-comment-input {
-    display: flex;
-    gap: 0;
-    align-items: center;
-    border-top: 1px solid rgba(255,255,255,0.04);
-    padding-top: 8px;
-  }
-  .tr-comment-input input {
-    flex: 1;
-    background: transparent;
-    border: none;
-    color: rgba(255,255,255,0.75);
-    padding: 4px 0;
-    font-family: 'Geist', sans-serif;
-    font-size: 12px;
-    outline: none;
-  }
-  .tr-comment-input input::placeholder { color: rgba(255,255,255,0.15); }
-  .tr-comment-send {
-    background: none;
-    border: none;
-    color: rgba(255,255,255,0.2);
-    cursor: pointer;
-    padding: 4px;
-    display: flex;
-    align-items: center;
-    border-radius: 4px;
-    transition: all 0.1s;
-  }
-  .tr-comment-send:hover:not(:disabled) { color: rgba(255,255,255,0.6); }
-  .tr-comment-send:disabled { opacity: 0.15; cursor: not-allowed; }
+  .tr-canvas-btn:hover { color: #fff; }
 
   /* ── Sub-tasks section ───────────────────── */
   .tr-subtasks-section {
@@ -1391,24 +1195,17 @@
   :global(body.dash-light) .tr-act { color: rgba(0,0,0,0.2); }
   :global(body.dash-light) .tr-act:hover { color: rgba(0,0,0,0.6); background: rgba(0,0,0,0.04); }
   :global(body.dash-light) .tr-act-del:hover { color: #e84040; }
-  :global(body.dash-light) .tr-notes { border-top-color: rgba(0,0,0,0.07); }
-  :global(body.dash-light) .tr-notes-tab { color: rgba(0,0,0,0.3); }
-  :global(body.dash-light) .tr-notes-tab:hover { color: rgba(0,0,0,0.6); }
-  :global(body.dash-light) .tr-notes-tab.active { color: rgba(0,0,0,0.85); }
-  :global(body.dash-light) .tr-notes-dot { background: rgba(0,0,0,0.4); }
-  :global(body.dash-light) .tr-notes-count { background: rgba(0,0,0,0.06); color: rgba(0,0,0,0.45); }
-  :global(body.dash-light) .tr-textarea { color: rgba(0,0,0,0.7); border-bottom-color: rgba(0,0,0,0.08); }
-  :global(body.dash-light) .tr-textarea:focus { border-bottom-color: rgba(0,0,0,0.2); }
-  :global(body.dash-light) .tr-textarea::placeholder { color: rgba(0,0,0,0.15); }
-  :global(body.dash-light) .tr-comment { border-bottom-color: rgba(0,0,0,0.05); }
-  :global(body.dash-light) .tr-comment-text { color: rgba(0,0,0,0.65); }
-  :global(body.dash-light) .tr-comment-time { color: rgba(0,0,0,0.2); }
-  :global(body.dash-light) .tr-comment-del { color: rgba(0,0,0,0.15); }
-  :global(body.dash-light) .tr-comment-input { border-top-color: rgba(0,0,0,0.05); }
-  :global(body.dash-light) .tr-comment-input input { color: rgba(0,0,0,0.7); }
-  :global(body.dash-light) .tr-comment-input input::placeholder { color: rgba(0,0,0,0.15); }
-  :global(body.dash-light) .tr-comment-send { color: rgba(0,0,0,0.2); }
-  :global(body.dash-light) .tr-comment-send:hover:not(:disabled) { color: rgba(0,0,0,0.5); }
+  :global(body.dash-light) .tr-canvas-actions { border-top-color: rgba(0,0,0,0.07); }
+  :global(body.dash-light) .tr-canvas-btn {
+    background: rgba(0,0,0,0.03);
+    border-color: rgba(0,0,0,0.08);
+    color: rgba(0,0,0,0.7);
+  }
+  :global(body.dash-light) .tr-canvas-btn:hover {
+    background: rgba(0,0,0,0.07);
+    border-color: rgba(0,0,0,0.18);
+    color: #000;
+  }
   :global(body.dash-light) .tr-subtasks-section { border-top-color: rgba(0,0,0,0.07); }
   :global(body.dash-light) .tr-subtasks-label { color: rgba(0,0,0,0.25); }
   :global(body.dash-light) .tr-subtasks-count { color: rgba(0,0,0,0.2); background: rgba(0,0,0,0.04); }
