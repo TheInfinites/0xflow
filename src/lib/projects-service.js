@@ -247,6 +247,15 @@ function renameProject(id, name) {
   saveProjects(projects);
 }
 
+function setProjectFlowColumns(id, count) {
+  const n = Math.max(1, Math.min(6, count | 0));
+  const projects = loadProjects();
+  const p = projects.find(x => x.id === id); if (!p) return;
+  p.flowColumns = n;
+  p.updatedAt = Date.now();
+  saveProjects(projects);
+}
+
 async function setProjectCover(id, file) {
   const { saveImgBlob, deleteImgBlob } = await import('./media-service.js');
   const projects = loadProjects();
@@ -1186,6 +1195,7 @@ export function mountProjectsBridge() {
     createProject,
     createFolder,
     renameProject,
+    setProjectFlowColumns,
     setProjectCover,
     setFolderCover,
     pickCoverImage,

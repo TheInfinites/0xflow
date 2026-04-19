@@ -13,6 +13,7 @@
   import NoteRow from './flow-rows/NoteRow.svelte';
   import ChecklistRow from './flow-rows/ChecklistRow.svelte';
   import LinkRow from './flow-rows/LinkRow.svelte';
+  import DividerRow from './flow-rows/DividerRow.svelte';
 
   let splitMode = $derived($splitModeStore);
 
@@ -76,23 +77,25 @@
       .sort((a, b) => (a.order || 0) - (b.order || 0))
   );
 
-  // Each parent flow lives in column 0 (left) or column 1 (right). Old flows
-  // lack the field — derive from index parity so the layout stays stable.
-  function _colOf(flow, idx) {
-    return flow.column === 0 || flow.column === 1 ? flow.column : (idx % 2);
+  // Column count is per-project; default 2, clamped to [1, 6].
+  let columnCount = $derived(
+    Math.max(1, Math.min(6, project?.flowColumns || 2))
+  );
+
+  // Each parent flow lives in column 0..N-1. Old flows lack the field — derive
+  // from index parity so the layout stays stable. Values outside range wrap.
+  function _colOf(flow, idx, n) {
+    const c = (flow.column === 0 || flow.column > 0) ? flow.column : idx;
+    return ((c % n) + n) % n;
   }
-  let leftColumn = $derived(
-    parentFlows
-      .map((f, i) => ({ f, col: _colOf(f, i) }))
-      .filter(x => x.col === 0)
-      .map(x => x.f)
-  );
-  let rightColumn = $derived(
-    parentFlows
-      .map((f, i) => ({ f, col: _colOf(f, i) }))
-      .filter(x => x.col === 1)
-      .map(x => x.f)
-  );
+  let columns = $derived.by(() => {
+    const n = columnCount;
+    const buckets = Array.from({ length: n }, () => []);
+    parentFlows.forEach((f, i) => {
+      buckets[_colOf(f, i, n)].push(f);
+    });
+    return buckets;
+  });
 
   // ── Stats ────────────────
   let totalFlows = $derived(flows.length);
@@ -122,9 +125,9 @@
     const fromIdx = list.findIndex(f => f.id === dragFlowId);
     const targetIdx0 = list.findIndex(f => f.id === targetFlow.id);
     if (fromIdx === -1 || targetIdx0 === -1) { dragFlowId = null; dropTargetId = null; return; }
-    const targetCol = targetFlow.column === 0 || targetFlow.column === 1
+    const targetCol = (targetFlow.column === 0 || targetFlow.column > 0)
       ? targetFlow.column
-      : (targetIdx0 % 2);
+      : (targetIdx0 % columnCount);
     const [moved] = list.splice(fromIdx, 1);
     const toIdx = list.findIndex(f => f.id === targetFlow.id);
     list.splice(toIdx, 0, moved);
@@ -155,10 +158,25 @@
   function _normalizeColumnsAndOrder() {
     // Ensure every parent flow has a column field (writes only if missing).
     parentFlows.forEach((f, i) => {
-      if (f.column !== 0 && f.column !== 1) {
-        _svc('updateFlow', f.id, { column: i % 2 });
+      if (!(f.column === 0 || f.column > 0)) {
+        _svc('updateFlow', f.id, { column: i % columnCount });
       }
     });
+  }
+
+  function addColumn() {
+    if (!activeId) return;
+    _svc('setProjectFlowColumns', activeId, columnCount + 1);
+  }
+  function removeColumn() {
+    if (!activeId || columnCount <= 1) return;
+    const newN = columnCount - 1;
+    // Reflow any flows in the removed column back into the last remaining column.
+    parentFlows.forEach((f, i) => {
+      const c = (f.column === 0 || f.column > 0) ? f.column : i;
+      if (c >= newN) _svc('updateFlow', f.id, { column: newN - 1 });
+    });
+    _svc('setProjectFlowColumns', activeId, newN);
   }
 
   async function addItem(kind, opts = {}) {
@@ -170,12 +188,14 @@
       note: 'note',
       checklist: 'checklist',
       link: 'link',
+      divider: 'divider',
     };
     const payloads = {
       text: { body: '' },
       note: { doc: null },
       checklist: { items: [] },
       link: { url: '', title: '', favicon: '' },
+      divider: { label: '' },
     };
 
     // Make sure existing flows have explicit column values so the new card's
@@ -305,10 +325,15 @@
           <span class="tv-add-item-ico">↗</span>
           <div class="tv-add-item-body"><b>Link</b><span>URL with preview</span></div>
         </button>
+        <button class="tv-add-item" onclick={() => addItem('divider', opts)}>
+          <span class="tv-add-item-ico">―</span>
+          <div class="tv-add-item-body"><b>Divider</b><span>visual separator</span></div>
+        </button>
       </div>
     {/snippet}
 
     {#snippet flowCell(flow)}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="tv-cell"
         class:drag-over={dropTargetId === flow.id}
@@ -327,41 +352,41 @@
           <ChecklistRow {flow} startExpanded={true} />
         {:else if flow.kind === 'link'}
           <LinkRow {flow} startExpanded={true} />
+        {:else if flow.kind === 'divider'}
+          <DividerRow {flow} />
         {/if}
 
       </div>
     {/snippet}
 
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="tv-cols" ondragend={() => { dragFlowId = null; dropTargetId = null; }}>
-      <div class="tv-col">
-        {#each leftColumn as flow (flow.id)}
-          {@render flowCell(flow)}
-        {/each}
-        <div class="tv-add-popover-host tv-end-add">
-          <button class="tv-add-btn" onclick={() => toggleAddMenu('end:0')}>
-            <span class="tv-add-icon">+</span>
-            <span>New</span>
-          </button>
-          {#if addMenuAnchor === 'end:0'}
-            {@render addMenu({ afterFlowId: null, column: 0 })}
-          {/if}
+    <div
+      class="tv-cols"
+      class:tv-cols-capped={splitMode === 'left'}
+      style="grid-template-columns: repeat({columnCount}, minmax(0, 1fr));"
+      ondragend={() => { dragFlowId = null; dropTargetId = null; }}
+    >
+      {#each columns as colFlows, ci (ci)}
+        <div class="tv-col">
+          {#each colFlows as flow (flow.id)}
+            {@render flowCell(flow)}
+          {/each}
+          <div class="tv-add-popover-host tv-end-add">
+            <button class="tv-add-btn" onclick={() => toggleAddMenu('end:' + ci)}>
+              <span class="tv-add-icon">+</span>
+              <span>New</span>
+            </button>
+            {#if addMenuAnchor === 'end:' + ci}
+              {@render addMenu({ afterFlowId: null, column: ci })}
+            {/if}
+          </div>
         </div>
-      </div>
-      <div class="tv-col">
-        {#each rightColumn as flow (flow.id)}
-          {@render flowCell(flow)}
-        {/each}
-        <div class="tv-add-popover-host tv-end-add">
-          <button class="tv-add-btn" onclick={() => toggleAddMenu('end:1')}>
-            <span class="tv-add-icon">+</span>
-            <span>New</span>
-          </button>
-          {#if addMenuAnchor === 'end:1'}
-            {@render addMenu({ afterFlowId: null, column: 1 })}
-          {/if}
-        </div>
-      </div>
+      {/each}
+    </div>
+    <div class="tv-col-controls">
+      <button class="tv-col-btn" onclick={removeColumn} disabled={columnCount <= 1} title="remove column">−</button>
+      <span class="tv-col-count">{columnCount} col{columnCount !== 1 ? 's' : ''}</span>
+      <button class="tv-col-btn" onclick={addColumn} disabled={columnCount >= 6} title="add column">+</button>
     </div>
   </main>
 
@@ -556,11 +581,59 @@
   }
   .tv-cols {
     display: grid;
-    grid-template-columns: 1fr 1fr;
     gap: 14px;
     padding-top: 8px;
     align-items: start;
   }
+  /* In full-screen flows view, cap card width so they don't stretch huge */
+  .tv-cols-capped {
+    max-width: 760px;
+  }
+  .tv-col-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 16px;
+    padding: 4px 0;
+  }
+  .tv-cols-capped + .tv-col-controls { max-width: 760px; }
+  .tv-col-btn {
+    width: 22px; height: 22px;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 4px;
+    color: rgba(255,255,255,0.5);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; line-height: 1;
+    transition: color 0.12s, border-color 0.12s, background 0.12s;
+  }
+  .tv-col-btn:hover:not(:disabled) {
+    color: #fff;
+    border-color: rgba(255,255,255,0.3);
+    background: rgba(255,255,255,0.04);
+  }
+  .tv-col-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .tv-col-count {
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    color: rgba(255,255,255,0.35);
+    text-transform: uppercase;
+    min-width: 50px;
+    text-align: center;
+  }
+  :global(body.dash-light) .tv-col-btn {
+    border-color: rgba(0,0,0,0.15);
+    color: rgba(0,0,0,0.5);
+  }
+  :global(body.dash-light) .tv-col-btn:hover:not(:disabled) {
+    color: #1a1a1c;
+    border-color: rgba(0,0,0,0.3);
+    background: rgba(0,0,0,0.03);
+  }
+  :global(body.dash-light) .tv-col-count { color: rgba(0,0,0,0.4); }
   .tv-col {
     display: flex;
     flex-direction: column;
@@ -578,7 +651,7 @@
     opacity: 0.6;
   }
   @media (max-width: 720px) {
-    .tv-cols { grid-template-columns: 1fr; }
+    .tv-cols { grid-template-columns: 1fr !important; }
   }
 
   .tv-end-add { display: flex; min-height: 100px; }
