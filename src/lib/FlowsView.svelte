@@ -76,12 +76,23 @@
       .sort((a, b) => (a.order || 0) - (b.order || 0))
   );
 
-  function subFlowsOf(parentId) {
-    return flows
-      .filter(t => t.parentFlowId === parentId)
-      .slice()
-      .sort((a, b) => (a.order || 0) - (b.order || 0));
+  // Each parent flow lives in column 0 (left) or column 1 (right). Old flows
+  // lack the field — derive from index parity so the layout stays stable.
+  function _colOf(flow, idx) {
+    return flow.column === 0 || flow.column === 1 ? flow.column : (idx % 2);
   }
+  let leftColumn = $derived(
+    parentFlows
+      .map((f, i) => ({ f, col: _colOf(f, i) }))
+      .filter(x => x.col === 0)
+      .map(x => x.f)
+  );
+  let rightColumn = $derived(
+    parentFlows
+      .map((f, i) => ({ f, col: _colOf(f, i) }))
+      .filter(x => x.col === 1)
+      .map(x => x.f)
+  );
 
   // ── Stats ────────────────
   let totalFlows = $derived(flows.length);
@@ -107,27 +118,52 @@
 
   function onRowDrop(e, targetFlow) {
     if (!dragFlowId || dragFlowId === targetFlow.id) { dragFlowId = null; dropTargetId = null; return; }
-    const list = parentFlows.map(t => t.id);
-    const fromIdx = list.indexOf(dragFlowId);
-    let toIdx = list.indexOf(targetFlow.id);
-    if (fromIdx === -1 || toIdx === -1) { dragFlowId = null; dropTargetId = null; return; }
-    list.splice(fromIdx, 1);
-    toIdx = list.indexOf(targetFlow.id);
-    list.splice(toIdx, 0, dragFlowId);
+    const list = parentFlows.slice();
+    const fromIdx = list.findIndex(f => f.id === dragFlowId);
+    const targetIdx0 = list.findIndex(f => f.id === targetFlow.id);
+    if (fromIdx === -1 || targetIdx0 === -1) { dragFlowId = null; dropTargetId = null; return; }
+    const targetCol = targetFlow.column === 0 || targetFlow.column === 1
+      ? targetFlow.column
+      : (targetIdx0 % 2);
+    const [moved] = list.splice(fromIdx, 1);
+    const toIdx = list.findIndex(f => f.id === targetFlow.id);
+    list.splice(toIdx, 0, moved);
     for (let i = 0; i < list.length; i++) {
-      _svc('updateFlow', list[i], { order: i });
+      const patch = { order: i };
+      if (list[i].id === dragFlowId) patch.column = targetCol;
+      _svc('updateFlow', list[i].id, patch);
     }
     dragFlowId = null;
     dropTargetId = null;
   }
 
-  // ── + New popover (Flow / Text / Note / Checklist / Link) ──
-  let addMenuOpen = $state(false);
-  function toggleAddMenu() { addMenuOpen = !addMenuOpen; }
-  function closeAddMenu() { addMenuOpen = false; }
+  function subFlowsOf(parentId) {
+    return flows
+      .filter(t => t.parentFlowId === parentId)
+      .slice()
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
+  }
 
-  function addItem(kind) {
+  // ── + New popover (Flow / Text / Note / Checklist / Link) ──
+  // Anchor encodes location: 'end' | `${flowId}:below` | `${flowId}:right`
+  let addMenuAnchor = $state(null);
+  function toggleAddMenu(anchor) {
+    addMenuAnchor = addMenuAnchor === anchor ? null : anchor;
+  }
+  function closeAddMenu() { addMenuAnchor = null; }
+
+  function _normalizeColumnsAndOrder() {
+    // Ensure every parent flow has a column field (writes only if missing).
+    parentFlows.forEach((f, i) => {
+      if (f.column !== 0 && f.column !== 1) {
+        _svc('updateFlow', f.id, { column: i % 2 });
+      }
+    });
+  }
+
+  async function addItem(kind, opts = {}) {
     if (!activeId) return;
+    const { afterFlowId = null, column = 0 } = opts;
     const titles = {
       flow: 'new flow',
       text: 'text',
@@ -141,12 +177,36 @@
       checklist: { items: [] },
       link: { url: '', title: '', favicon: '' },
     };
-    _svc('createFlow', {
+
+    // Make sure existing flows have explicit column values so the new card's
+    // order math doesn't get fooled by the parity-derived defaults.
+    _normalizeColumnsAndOrder();
+
+    // Compute target order: just after the anchor's order if given, else end.
+    let targetOrder;
+    if (afterFlowId) {
+      const anchor = parentFlows.find(f => f.id === afterFlowId);
+      const anchorOrder = anchor?.order ?? parentFlows.length - 1;
+      targetOrder = anchorOrder + 1;
+      // Shift everyone with order >= targetOrder up by 1 to make room.
+      for (const f of parentFlows) {
+        if ((f.order || 0) >= targetOrder) {
+          _svc('updateFlow', f.id, { order: (f.order || 0) + 1 });
+        }
+      }
+    } else {
+      targetOrder = parentFlows.length;
+    }
+
+    const created = _svc('createFlow', {
       projectId: activeId,
       title: titles[kind] || 'new',
       kind,
       payload: payloads[kind] || null,
     });
+    if (created?.id) {
+      _svc('updateFlow', created.id, { order: targetOrder, column });
+    }
     closeAddMenu();
   }
 
@@ -220,61 +280,102 @@
   <!-- Flow list -->
   <main class="tv-main">
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="tv-list" ondragend={() => { dragFlowId = null; dropTargetId = null; }}>
-      {#each parentFlows as flow (flow.id)}
-        {#if !flow.kind || flow.kind === 'flow'}
-          <FlowRow
-            {flow}
-            subFlows={subFlowsOf(flow.id)}
-            depth={0}
-            onDragStart={onRowDragStart}
-            onDragOver={onRowDragOver}
-            onDrop={onRowDrop}
-            isDragOver={dropTargetId === flow.id}
-          />
-        {:else if flow.kind === 'text'}
-          <TextRow {flow} />
-        {:else if flow.kind === 'note'}
-          <NoteRow {flow} />
-        {:else if flow.kind === 'checklist'}
-          <ChecklistRow {flow} />
-        {:else if flow.kind === 'link'}
-          <LinkRow {flow} />
-        {/if}
-      {/each}
-
-      <div class="tv-add-wrap">
-        <button class="tv-add-btn" onclick={toggleAddMenu}>
-          <span class="tv-add-icon">+</span>
-          <span>New</span>
+    {#snippet addMenu(opts)}
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="tv-add-backdrop" onclick={closeAddMenu}></div>
+      <div class="tv-add-menu">
+        <button class="tv-add-item" onclick={() => addItem('flow', opts)}>
+          <span class="tv-add-item-ico">◆</span>
+          <div class="tv-add-item-body"><b>Flow</b><span>canvas-backed</span></div>
         </button>
-        {#if addMenuOpen}
-          <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="tv-add-backdrop" onclick={closeAddMenu}></div>
-          <div class="tv-add-menu">
-            <button class="tv-add-item" onclick={() => addItem('flow')}>
-              <span class="tv-add-item-ico">◆</span>
-              <div class="tv-add-item-body"><b>Flow</b><span>canvas-backed</span></div>
-            </button>
-            <button class="tv-add-item" onclick={() => addItem('text')}>
-              <span class="tv-add-item-ico">¶</span>
-              <div class="tv-add-item-body"><b>Text</b><span>markdown block</span></div>
-            </button>
-            <button class="tv-add-item" onclick={() => addItem('note')}>
-              <span class="tv-add-item-ico">✎</span>
-              <div class="tv-add-item-body"><b>Note</b><span>rich editor</span></div>
-            </button>
-            <button class="tv-add-item" onclick={() => addItem('checklist')}>
-              <span class="tv-add-item-ico">☑</span>
-              <div class="tv-add-item-body"><b>Checklist</b><span>tickable items</span></div>
-            </button>
-            <button class="tv-add-item" onclick={() => addItem('link')}>
-              <span class="tv-add-item-ico">↗</span>
-              <div class="tv-add-item-body"><b>Link</b><span>URL with preview</span></div>
-            </button>
-          </div>
+        <button class="tv-add-item" onclick={() => addItem('text', opts)}>
+          <span class="tv-add-item-ico">¶</span>
+          <div class="tv-add-item-body"><b>Text</b><span>markdown block</span></div>
+        </button>
+        <button class="tv-add-item" onclick={() => addItem('note', opts)}>
+          <span class="tv-add-item-ico">✎</span>
+          <div class="tv-add-item-body"><b>Note</b><span>rich editor</span></div>
+        </button>
+        <button class="tv-add-item" onclick={() => addItem('checklist', opts)}>
+          <span class="tv-add-item-ico">☑</span>
+          <div class="tv-add-item-body"><b>Checklist</b><span>tickable items</span></div>
+        </button>
+        <button class="tv-add-item" onclick={() => addItem('link', opts)}>
+          <span class="tv-add-item-ico">↗</span>
+          <div class="tv-add-item-body"><b>Link</b><span>URL with preview</span></div>
+        </button>
+      </div>
+    {/snippet}
+
+    {#snippet flowCell(flow, col)}
+      <div
+        class="tv-cell"
+        class:drag-over={dropTargetId === flow.id}
+        draggable="true"
+        ondragstart={e => onRowDragStart(e, flow)}
+        ondragover={e => { e.preventDefault(); onRowDragOver(e, flow); }}
+        ondrop={e => { e.preventDefault(); onRowDrop(e, flow); }}
+      >
+        {#if !flow.kind || flow.kind === 'flow'}
+          <FlowRow {flow} subFlows={subFlowsOf(flow.id)} depth={0} startExpanded={true} />
+        {:else if flow.kind === 'text'}
+          <TextRow {flow} startExpanded={true} />
+        {:else if flow.kind === 'note'}
+          <NoteRow {flow} startExpanded={true} />
+        {:else if flow.kind === 'checklist'}
+          <ChecklistRow {flow} startExpanded={true} />
+        {:else if flow.kind === 'link'}
+          <LinkRow {flow} startExpanded={true} />
         {/if}
+
+        <!-- Add below in this column -->
+        <div class="tv-add-popover-host tv-add-after-host">
+          <button
+            class="tv-add-after"
+            onclick={() => toggleAddMenu(flow.id + ':below')}
+            title="add below in this column"
+          >
+            <span class="tv-add-after-line"></span>
+            <span class="tv-add-after-icon">+</span>
+            <span class="tv-add-after-line"></span>
+          </button>
+          {#if addMenuAnchor === flow.id + ':below'}
+            {@render addMenu({ afterFlowId: flow.id, column: col })}
+          {/if}
+        </div>
+      </div>
+    {/snippet}
+
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="tv-cols" ondragend={() => { dragFlowId = null; dropTargetId = null; }}>
+      <div class="tv-col">
+        {#each leftColumn as flow (flow.id)}
+          {@render flowCell(flow, 0)}
+        {/each}
+        <div class="tv-add-popover-host tv-end-add">
+          <button class="tv-add-btn" onclick={() => toggleAddMenu('end:0')}>
+            <span class="tv-add-icon">+</span>
+            <span>New</span>
+          </button>
+          {#if addMenuAnchor === 'end:0'}
+            {@render addMenu({ afterFlowId: null, column: 0 })}
+          {/if}
+        </div>
+      </div>
+      <div class="tv-col">
+        {#each rightColumn as flow (flow.id)}
+          {@render flowCell(flow, 1)}
+        {/each}
+        <div class="tv-add-popover-host tv-end-add">
+          <button class="tv-add-btn" onclick={() => toggleAddMenu('end:1')}>
+            <span class="tv-add-icon">+</span>
+            <span>New</span>
+          </button>
+          {#if addMenuAnchor === 'end:1'}
+            {@render addMenu({ afterFlowId: null, column: 1 })}
+          {/if}
+        </div>
       </div>
     </div>
   </main>
@@ -326,6 +427,7 @@
       </button>
     </div>
   </footer>
+
 </div>
 {/if}
 
@@ -467,45 +569,109 @@
     overflow-y: auto;
     padding: 0 40px 80px;
   }
-  .tv-list {
-    max-width: 760px;
+  .tv-cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    padding-top: 8px;
+    align-items: start;
+  }
+  .tv-col {
     display: flex;
     flex-direction: column;
     gap: 14px;
-    padding-top: 8px;
+    min-width: 0;
+  }
+  .tv-cell {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    transition: transform 0.12s, opacity 0.12s;
+  }
+  .tv-cell.drag-over {
+    transform: scale(0.98);
+    opacity: 0.6;
+  }
+  @media (max-width: 720px) {
+    .tv-cols { grid-template-columns: 1fr; }
   }
 
-  .tv-add-wrap { position: relative; }
+  .tv-end-add { display: flex; min-height: 100px; }
+  .tv-add-popover-host { position: relative; }
   .tv-add-btn {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 8px;
+    justify-content: center;
+    gap: 10px;
     width: 100%;
     background: transparent;
-    border: none;
-    color: rgba(255,255,255,0.2);
-    padding: 16px 0;
+    border: 1px dashed rgba(255,255,255,0.1);
+    border-radius: 14px;
+    color: rgba(255,255,255,0.25);
+    padding: 20px;
     cursor: pointer;
     font-family: 'Geist', sans-serif;
-    font-size: 13px;
-    transition: color 0.12s;
+    font-size: 12px;
+    transition: color 0.12s, border-color 0.12s, background 0.12s;
+  }
+  .tv-add-btn:hover {
+    color: rgba(255,255,255,0.7);
+    border-color: rgba(255,255,255,0.22);
+    background: rgba(255,255,255,0.02);
   }
   .tv-add-btn:hover { color: rgba(255,255,255,0.6); }
   .tv-add-icon {
-    width: 20px;
-    height: 20px;
+    width: 34px;
+    height: 34px;
     display: flex;
     align-items: center;
     justify-content: center;
     border: 1px dashed rgba(255,255,255,0.15);
     border-radius: 50%;
-    font-size: 14px;
+    font-size: 20px;
     font-weight: 300;
     line-height: 1;
   }
   .tv-add-btn:hover .tv-add-icon {
     border-color: rgba(255,255,255,0.35);
   }
+
+  /* Per-card "add below" affordance */
+  .tv-add-after-host { margin-top: 6px; }
+  .tv-add-after {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    background: transparent;
+    border: none;
+    padding: 6px 4px;
+    cursor: pointer;
+    color: rgba(255,255,255,0.18);
+    transition: color 0.12s;
+  }
+  .tv-add-after:hover { color: rgba(255,255,255,0.65); }
+  .tv-add-after-line {
+    flex: 1;
+    height: 1px;
+    background: currentColor;
+    opacity: 0.4;
+  }
+  .tv-add-after-icon {
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px dashed currentColor;
+    border-radius: 50%;
+    font-size: 12px;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+  :global(body.dash-light) .tv-add-after { color: rgba(0,0,0,0.18); }
+  :global(body.dash-light) .tv-add-after:hover { color: rgba(0,0,0,0.6); }
 
   .tv-add-backdrop {
     position: fixed;

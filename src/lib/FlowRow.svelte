@@ -4,12 +4,14 @@
   // ══════════════════════════════════════════════
   import { projectFlowsStore, projectTagsStore, activeProjectIdStore } from '../stores/projects.js';
 
-  /** @type {{ flow: any, subFlows?: any[], depth?: number, onDragStart?: Function, onDragOver?: Function, onDrop?: Function, isDragOver?: boolean }} */
-  let { flow, subFlows = [], depth = 0, onDragStart, onDragOver, onDrop, isDragOver = false } = $props();
+  /** @type {{ flow: any, subFlows?: any[], depth?: number, onDragStart?: Function, onDragOver?: Function, onDrop?: Function, isDragOver?: boolean, startExpanded?: boolean }} */
+  let { flow, subFlows = [], depth = 0, onDragStart, onDragOver, onDrop, isDragOver = false, startExpanded = false } = $props();
 
   function _svc(name, ...args) { return window[name]?.(...args); }
 
-  let expanded   = $state(false);
+  // eslint-disable-next-line svelte/prefer-writable-derived
+  let expanded   = $state(startExpanded);
+  $effect(() => { if (startExpanded) expanded = true; });
   let editing    = $state(false);
   let editValue  = $state('');
   let notesTab   = $state('description'); // 'description' | 'comments'

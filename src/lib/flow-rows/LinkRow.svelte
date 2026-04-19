@@ -1,12 +1,13 @@
 <script>
-  /** @type {{ flow: any }} */
-  let { flow } = $props();
+  /** @type {{ flow: any, startExpanded?: boolean }} */
+  let { flow, startExpanded = false } = $props();
 
   const IS_TAURI = !!(window.__TAURI__) && !window.__TAURI__.__isMock;
 
   function _svc(name, ...args) { return window[name]?.(...args); }
 
-  let expanded = $state(false);
+  let expanded = $state(startExpanded);
+  $effect(() => { if (startExpanded) expanded = true; });
   let editingTitle = $state(false);
   let titleDraft = $state('');
   let urlDraft   = $state('');
