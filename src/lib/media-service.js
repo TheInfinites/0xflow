@@ -392,6 +392,36 @@ export function makeVideoCard(id, url, x, y, w) {
   return proxy;
 }
 
+export function makeVideoClip(sourceEl, inPoint, outPoint, x, y) {
+  const srcContent = sourceEl.content ?? {};
+  const rand = Math.random().toString(36).slice(2, 7);
+  const el = {
+    id:      'vid_clip_' + Date.now() + '_' + rand,
+    type:    'video',
+    x, y,
+    width:   sourceEl.width,
+    height:  sourceEl.height,
+    zIndex:  Date.now(),
+    pinned:  false, locked: false, votes: 0, reactions: [],
+    color:   null,
+    content: {
+      imgId:      srcContent.imgId ?? null,
+      refPath:    srcContent.refPath ?? null,
+      embedded:   srcContent.embedded ?? true,
+      sourcePath: srcContent.sourcePath ?? null,
+      nativeW:    srcContent.nativeW ?? 0,
+      nativeH:    srcContent.nativeH ?? 0,
+      flowScope:  srcContent.flowScope ?? null,
+      inPoint,
+      outPoint,
+      parentVideoId: sourceEl.id,
+    },
+    tags: Array.isArray(sourceEl.tags) ? [...sourceEl.tags] : [],
+  };
+  elementsStore.update(els => [...els, el]);
+  return el;
+}
+
 export function makeAudioCard(id, url, x, y, filename) {
   const el = {
     id:      'aud_' + id,

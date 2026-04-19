@@ -1,5 +1,5 @@
 <script>
-  import { getBlobURL } from './media-service.js';
+  import { getBlobURL, blobURLCache, IS_TAURI } from './media-service.js';
   import { elementsStore } from '../stores/elements.js';
   import { onMount, onDestroy } from 'svelte';
 
@@ -10,48 +10,157 @@
   let muted     = $state(false);
   let duration  = $state(0);
   let currentTime = $state(0);
+  let looping   = $derived(el?.content?.loop ?? false);
 
-  let blobUrl = $state(null);
+  // Clip-range enforcement: only active when this element IS a clip
+  // (content.inPoint/outPoint present). Setting clip bounds on a regular
+  // video is done via the mark-clip button below — it doesn't mutate the
+  // source, it just spawns a new clip node.
+  let clipIn  = $derived(Number(el?.content?.inPoint  ?? 0));
+  let clipOut = $derived(Number(el?.content?.outPoint ?? 0));
+  let isClip  = $derived(clipOut > clipIn);
+
+  // Mark-clip flow: first click stores IN at playhead; second click at
+  // OUT > IN spawns a new clip node. Reset on element change.
+  let pendingIn = $state(null);
+  $effect(() => { void el?.id; pendingIn = null; });
+
+  // Resolution order (mirrors ImageCard): embedded blob by imgId →
+  // Tauri asset URL from refPath → raw refPath (browser object URL) →
+  // transient in-session cache under `ref_display_{elId}`.
+  let embeddedUrl = $state(null);
   $effect(() => {
+    const embedded = el?.content?.embedded ?? true;
     const id = el?.content?.imgId;
-    if (!id) { blobUrl = el?.content?.sourcePath ?? null; return; }
-    getBlobURL(id).then(url => { if (url) blobUrl = url; }).catch(() => {
-      blobUrl = el?.content?.sourcePath ?? null;
-    });
+    if (!id || !embedded) { embeddedUrl = null; return; }
+    getBlobURL(id).then(url => { if (url) embeddedUrl = url; }).catch(() => { embeddedUrl = null; });
+  });
+
+  let refPath = $derived(el?.content?.refPath ?? null);
+  let sessionPreview = $derived(blobURLCache['ref_display_' + el?.id] ?? null);
+
+  let blobUrl = $derived.by(() => {
+    if (embeddedUrl) return embeddedUrl;
+    if (refPath) {
+      if (IS_TAURI && window.__TAURI__?.core?.convertFileSrc) {
+        try { return window.__TAURI__.core.convertFileSrc(refPath); } catch {}
+      }
+      return refPath;
+    }
+    if (sessionPreview) return sessionPreview;
+    return el?.content?.sourcePath ?? null;
   });
 
   export function togglePlay() {
     if (!videoEl) return;
-    if (videoEl.paused) videoEl.play();
-    else videoEl.pause();
+    if (videoEl.paused) {
+      if (isClip && (videoEl.currentTime < clipIn || videoEl.currentTime >= clipOut - 0.01)) {
+        videoEl.currentTime = clipIn;
+      }
+      const p = videoEl.play();
+      if (p && typeof p.catch === 'function') {
+        p.catch(err => window.showToast?.('video play blocked: ' + (err?.message ?? err)));
+      }
+    } else videoEl.pause();
   }
 
   function stepFrame(dir) {
     if (!videoEl) return;
     videoEl.pause();
-    videoEl.currentTime = Math.max(0, Math.min(duration, videoEl.currentTime + dir / 30));
+    const lo = isClip ? clipIn : 0;
+    const hi = isClip ? clipOut : duration;
+    videoEl.currentTime = Math.max(lo, Math.min(hi, videoEl.currentTime + dir / 30));
   }
 
-  function onTimeUpdate() { if (videoEl) currentTime = videoEl.currentTime; }
-  function onLoaded() {
+  function onTimeUpdate() {
     if (!videoEl) return;
-    duration = videoEl.duration ?? 0;
-    // Resize element to native video aspect ratio, preserving width
-    const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
-    if (vw && vh && el?.id) {
-      const FOOTER_H = 50; // footer: seek row + buttons row ~50px world units
-      const targetH = Math.round(el.width * vh / vw) + FOOTER_H;
-      if (Math.abs(targetH - el.height) > 4) {
-        elementsStore.update(els => els.map(e =>
-          e.id === el.id ? { ...e, height: targetH } : e
-        ));
+    currentTime = videoEl.currentTime;
+    if (isClip) {
+      if (currentTime >= clipOut) {
+        videoEl.currentTime = clipIn;
+        if (!looping) videoEl.pause();
+      } else if (currentTime < clipIn - 0.05) {
+        videoEl.currentTime = clipIn;
       }
     }
   }
 
+  function onVideoEnded() {
+    if (!videoEl) return;
+    if (looping) {
+      videoEl.currentTime = isClip ? clipIn : 0;
+      videoEl.play().catch(() => {});
+    }
+  }
+
+  function toggleLoop() {
+    if (!el?.id) return;
+    const next = !looping;
+    elementsStore.update(els => els.map(e =>
+      e.id === el.id ? { ...e, content: { ...(e.content ?? {}), loop: next } } : e
+    ));
+    if (videoEl) videoEl.loop = next;
+  }
+
+  $effect(() => { if (videoEl) videoEl.loop = looping && !isClip; });
+  function onLoaded() {
+    if (!videoEl) return;
+    duration = videoEl.duration ?? 0;
+    const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
+    if (vw && vh && el?.id) {
+      const FOOTER_H = 92;
+      // First load: snap node to native resolution (capped to a sane
+      // initial max). Subsequent loads: preserve current width, match
+      // native aspect. Stored nativeW/nativeH so subsequent resizes
+      // keep the ratio even if the video isn't fully loaded yet.
+      const alreadySized = (el.content?.nativeW === vw && el.content?.nativeH === vh);
+      const MAX_INIT_W = 640;
+      const initW = alreadySized ? el.width : Math.min(vw, MAX_INIT_W);
+      const targetH = Math.round(initW * vh / vw) + FOOTER_H;
+      if (!alreadySized || Math.abs(targetH - el.height) > 2 || Math.abs(initW - el.width) > 2) {
+        elementsStore.update(els => els.map(e =>
+          e.id === el.id
+            ? { ...e, width: initW, height: targetH, content: { ...(e.content ?? {}), nativeW: vw, nativeH: vh } }
+            : e
+        ));
+      }
+    }
+    if (isClip && videoEl.currentTime < clipIn) videoEl.currentTime = clipIn;
+  }
+
   function onSeek(e) {
     if (!videoEl || !duration) return;
-    videoEl.currentTime = Number(e.target.value);
+    const v = Number(e.target.value);
+    if (isClip) {
+      videoEl.currentTime = Math.max(clipIn, Math.min(clipOut, v));
+    } else {
+      videoEl.currentTime = v;
+    }
+  }
+
+  function markClip() {
+    if (!videoEl || !duration) return;
+    const t = videoEl.currentTime;
+    if (pendingIn == null) {
+      pendingIn = t;
+      window.showToast?.(`clip IN @ ${fmt(t)} — scrub + click again for OUT`);
+      return;
+    }
+    let a = pendingIn, b = t;
+    if (b < a) [a, b] = [b, a];
+    if (b - a < 0.1) {
+      window.showToast?.('clip too short — scrub further and retry');
+      pendingIn = null;
+      return;
+    }
+    // If this element is itself a clip, treat marks as relative to its
+    // window and translate back to absolute blob time.
+    if (isClip) {
+      a = Math.max(clipIn, Math.min(clipOut, a));
+      b = Math.max(clipIn, Math.min(clipOut, b));
+    }
+    window._pixiCanvas?.spawnVideoClip?.(el.id, a, b);
+    pendingIn = null;
   }
 
   function toggleMute() {
@@ -121,10 +230,14 @@
         bind:this={videoEl}
         src={blobUrl}
         class="vc-video"
+        preload="metadata"
+        playsinline
         onplay={() => (playing = true)}
         onpause={() => (playing = false)}
         ontimeupdate={onTimeUpdate}
         onloadedmetadata={onLoaded}
+        ondurationchange={onLoaded}
+        onended={onVideoEnded}
       ></video>
       <!-- transparent overlay — passes all pointer events to Pixi for drag/select -->
       <div class="vc-video-overlay"></div>
@@ -133,16 +246,19 @@
     <div class="vc-no-src">loading…</div>
   {/if}
 
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="vc-footer" onpointerdown={e => e.stopPropagation()}>
     <!-- Row 1: seek bar + time -->
     <div class="vc-row">
       <input
         type="range" class="vc-seek"
-        min="0" max={duration || 1} step="0.01"
+        min={isClip ? clipIn : 0}
+        max={isClip ? (clipOut || 1) : (duration || 1)}
+        step="0.01"
         value={currentTime}
         oninput={onSeek}
       />
-      <span class="vc-time">{fmt(currentTime)} / {fmt(duration)}</span>
+      <span class="vc-time">{fmt(currentTime)} / {fmt(isClip ? clipOut : duration)}</span>
     </div>
     <!-- Row 2: all buttons spread -->
     <div class="vc-row vc-btn-row">
@@ -166,8 +282,26 @@
           <svg viewBox="0 0 13 13" fill="currentColor"><path d="M2 4.5h2.5l3.5-3v10l-3.5-3H2z"/><path d="M9 4.5c.8.5 1.3 1.2 1.3 2s-.5 1.5-1.3 2" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
         {/if}
       </button>
+      <button class="vc-btn" class:active={looping} onclick={toggleLoop} title={looping ? 'Loop on' : 'Loop off'}>
+        <svg viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 5a3 3 0 0 1 3-3h4l-1.5-1.5M9 2l-1.5 1.5"/>
+          <path d="M11 8a3 3 0 0 1-3 3H4l1.5 1.5M4 11l1.5-1.5"/>
+        </svg>
+      </button>
       <button class="vc-btn" onclick={toggleFullscreen} title="Fullscreen">
         <svg viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><polyline points="1,4 1,1 4,1"/><polyline points="9,1 12,1 12,4"/><polyline points="12,9 12,12 9,12"/><polyline points="4,12 1,12 1,9"/></svg>
+      </button>
+      <button
+        class="vc-btn vc-clip-btn"
+        class:armed={pendingIn != null}
+        onclick={markClip}
+        disabled={!duration}
+        title={pendingIn == null ? 'Mark clip IN at playhead' : `Mark clip OUT @ playhead (IN at ${fmt(pendingIn)})`}
+      >
+        <svg viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 6.5h9"/><path d="M8 3.5l3 3-3 3"/>
+          <circle cx="3" cy="3" r="1.2"/><circle cx="3" cy="10" r="1.2"/>
+        </svg>
       </button>
       <button class="vc-btn" onclick={takeScreenshot} title="Screenshot">
         <svg viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="11" height="8" rx="1"/><circle cx="6.5" cy="7" r="2"/><path d="M4.5 3l.8-1.5h2.4l.8 1.5"/></svg>
@@ -181,7 +315,7 @@
     width: 100%; height: 100%;
     display: flex; flex-direction: column;
     background: #111;
-    border-radius: 10px;
+    border-radius: 14px;
     overflow: hidden;
   }
   .vc-video-wrap {
@@ -193,7 +327,7 @@
   .vc-video {
     display: block;
     width: 100%; height: 100%;
-    object-fit: cover;
+    object-fit: contain;
   }
   .vc-video-overlay {
     position: absolute; inset: 0;
@@ -205,48 +339,56 @@
     color: rgba(255,255,255,0.2); font-size: 11px;
   }
   .vc-footer {
-    display: flex; flex-direction: column; gap: 1px;
-    padding: 5px 10px 6px;
+    display: flex; flex-direction: column; gap: 18px;
+    padding: 20px 0 18px;
     background: rgba(0,0,0,0.85);
     flex-shrink: 0;
     pointer-events: auto;
   }
   .vc-row {
     display: flex; align-items: center; gap: 0; width: 100%;
+    padding: 0 22px;
+    box-sizing: border-box;
   }
+  .vc-btn-row { padding: 0 10px; gap: 8px; }
   .vc-btn-row .vc-btn {
-    flex: 1 1 0; justify-content: center; padding: 5px 0;
+    flex: 1 1 0; justify-content: center; padding: 3px 0;
   }
   .vc-btn {
     display: inline-flex; align-items: center; justify-content: center;
-    background: none; border: none; border-radius: 3px;
-    color: rgba(255,255,255,0.22);
-    cursor: pointer; padding: 4px 5px;
+    background: none; border: none; border-radius: 4px;
+    color: rgba(255,255,255,0.35);
+    cursor: pointer; padding: 3px 6px;
     transition: color 0.1s;
   }
-  .vc-btn:hover { color: rgba(255,255,255,0.8); }
-  .vc-btn svg { width: 11px; height: 11px; display: block; }
-  .vc-play-btn { color: rgba(255,255,255,0.55); }
+  .vc-btn:hover { color: rgba(255,255,255,0.9); }
+  .vc-btn.active { color: rgba(74,158,255,0.95); }
+  .vc-btn svg { width: 18px; height: 18px; display: block; }
+  .vc-play-btn { color: rgba(255,255,255,0.7); }
   .vc-play-btn:hover { color: #fff; }
-  .vc-play-btn svg { width: 10px; height: 10px; }
-  .vc-vol.muted { color: rgba(255,255,255,0.1); }
+  .vc-play-btn svg { width: 16px; height: 16px; }
+  .vc-vol.muted { color: rgba(255,255,255,0.15); }
   .vc-seek {
-    flex: 1; height: 2px;
+    flex: 1; height: 4px;
     cursor: pointer;
     appearance: none; -webkit-appearance: none;
-    background: rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.12);
     border-radius: 2px; outline: none; border: none;
   }
   .vc-seek::-webkit-slider-thumb {
     appearance: none; -webkit-appearance: none;
-    width: 8px; height: 8px; border-radius: 50%;
-    background: rgba(255,255,255,0.6); cursor: pointer;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: rgba(255,255,255,0.75); cursor: pointer;
     transition: background 0.1s, transform 0.1s;
   }
-  .vc-seek:hover::-webkit-slider-thumb { background: #fff; transform: scale(1.2); }
+  .vc-seek:hover::-webkit-slider-thumb { background: #fff; transform: scale(1.15); }
   .vc-time {
-    font-size: 8px; color: rgba(255,255,255,0.25);
+    font-size: 11px; color: rgba(255,255,255,0.45);
     font-family: 'DM Mono', monospace; white-space: nowrap;
-    padding-left: 8px; letter-spacing: 0.03em;
+    padding-left: 10px; letter-spacing: 0.03em;
   }
+  .vc-clip-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .vc-clip-btn:disabled:hover { color: rgba(255,255,255,0.22); }
+  .vc-clip-btn.armed { color: rgba(232,120,60,0.95); }
+  .vc-clip-btn.armed:hover { color: #E8780A; }
 </style>

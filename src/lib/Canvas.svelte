@@ -9,7 +9,7 @@
   import { brainstormOpenStore, canvasTagPickerOpenStore, secondaryCanvasKeyStore } from '../stores/ui.js';
   import { secondaryVisibleElementsStore, secondaryStrokesStore, secondaryRelationsStore } from '../stores/secondary-canvas.js';
   import { store } from './projects-service.js';
-  import { embedMediaElement, releaseMediaElement } from './media-service.js';
+  import { embedMediaElement, releaseMediaElement, makeVideoClip } from './media-service.js';
   import NoteOverlay   from './NoteOverlay.svelte';
   import MediaOverlay  from './MediaOverlay.svelte';
   import BrainstormPanel from './BrainstormPanel.svelte';
@@ -626,6 +626,19 @@
     // Notes/ai-notes/todos are rendered as DOM overlays — Pixi just needs a transparent hit area
     if (el.type === 'note' || el.type === 'ai-note' || el.type === 'todo') {
       g.rect(0, 0, w, h).fill({ color: 0x000000, alpha: 0 });
+      return g;
+    }
+
+    // Video: DOM overlay draws its own background — Pixi only needs hit area
+    // + selection ring. Skipping the filled card avoids a dark edge leaking
+    // past the DOM overlay's rounded corners.
+    if (el.type === 'video') {
+      g.rect(0, 0, w, h).fill({ color: 0x000000, alpha: 0 });
+      if (isSelected) {
+        g.roundRect(-2, -2, w + 4, h + 4, 10).stroke({ color: 0xe8440a, width: 0.75 });
+      }
+      if (el.pinned) g.circle(w - 8, 8, 3).fill({ color: 0xe8440a, alpha: 0.8 });
+      if (el.locked) g.circle(w - (el.pinned ? 16 : 8), 8, 3).fill({ color: 0xe8440a, alpha: 0.8 });
       return g;
     }
 
@@ -2021,7 +2034,7 @@
     let { x, y, w, h: ht } = resizeOrigin;
 
     const resizingEl = $elementsStore.find(el => el.id === resizeEl);
-    const lockAspect = resizingEl?.type === 'image';
+    const lockAspect = resizingEl?.type === 'image' || resizingEl?.type === 'video';
     const aspect = resizeOrigin.w / resizeOrigin.h;
 
     if (lockAspect) {
@@ -2054,7 +2067,18 @@
       if (h.includes('n')) { const nh = Math.max(MIN_H, resizeOrigin.h - dy); y = resizeOrigin.y + (resizeOrigin.h - nh); ht = nh; }
     }
 
-    if (snapEnabled) { w = snap(w); ht = snap(ht); x = snap(x); y = snap(y); }
+    if (snapEnabled) {
+      if (lockAspect) {
+        // Snap width only; re-derive height from aspect so ratio is preserved.
+        const nw = snap(w);
+        if (h.includes('w')) x = resizeOrigin.x + (resizeOrigin.w - nw);
+        w = nw;
+        ht = w / aspect;
+        if (h.includes('n')) y = resizeOrigin.y + (resizeOrigin.h - ht);
+      } else {
+        w = snap(w); ht = snap(ht); x = snap(x); y = snap(y);
+      }
+    }
 
     elementsStore.update(els =>
       els.map(el => el.id === resizeEl ? { ..._setElPos(el, x, y), width: w, height: ht } : el)
@@ -2491,12 +2515,29 @@
     window.showToast?.('masonry layout applied');
   }
 
+  function spawnVideoClip(srcId, inPoint, outPoint) {
+    const src = get(elementsStore).find(e => e.id === srcId);
+    if (!src || src.type !== 'video') return null;
+    const dur = Math.max(0, Number(outPoint) - Number(inPoint));
+    if (!(dur > 0.05)) return null;
+    snapshot();
+    const x = src.x + src.width + 40;
+    const y = src.y;
+    const clip = makeVideoClip(src, Number(inPoint), Number(outPoint), x, y);
+    relationsStore.update(rs => [...rs, { id: crypto.randomUUID(), elAId: srcId, elBId: clip.id }]);
+    selected = new Set([clip.id]);
+    setSelected(new Set(selected));
+    elementsStore.update(els => { renderElements(get(visibleElementsStore)); return els; });
+    return clip.id;
+  }
+
   // ── Expose to legacy bridge ──────────────────
   $effect(() => {
     if (!isPrimary) return; // secondary canvas doesn't register globals
     window._pixiCanvas = {
       serializePixiCanvas, restorePixiCanvas,
       makeNote, makeAiNote, makeLabel, makeTodo, makeDrawCard,
+      spawnVideoClip,
       zoomToFit, resetView, zoomToSelection, zoomToElement,
       deleteSelected, selectAll, duplicateSelected,
       copySelected, pasteClipboard,
