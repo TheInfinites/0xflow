@@ -1,6 +1,7 @@
 <script>
   import { elementsStore, snapshot } from '../stores/elements.js';
   import { setActiveEditorId, scaleStore, pxStore, pyStore } from '../stores/canvas.js';
+  import { activeCanvasKeyStore } from '../stores/projects.js';
 
   const WORLD_OFFSET = 3000;
 
@@ -10,12 +11,22 @@
   let px    = $derived($pxStore);
   let py    = $derived($pyStore);
   let el    = $derived($elementsStore.find(e => e.id === elId) ?? null);
+  let canvasKey = $derived($activeCanvasKeyStore);
+
+  function _effectivePos(e, key) {
+    if (key && key !== '__project__' && !key.startsWith('canvas:')) {
+      const vp = e.viewPositions?.[key];
+      if (vp) return { x: vp.x, y: vp.y };
+    }
+    return { x: e.x, y: e.y };
+  }
 
   let rect = $derived((() => {
     if (!el) return null;
+    const pos = _effectivePos(el, canvasKey);
     return {
-      left:   (el.x - WORLD_OFFSET) * scale + px,
-      top:    (el.y - WORLD_OFFSET) * scale + py,
+      left:   (pos.x - WORLD_OFFSET) * scale + px,
+      top:    (pos.y - WORLD_OFFSET) * scale + py,
       width:  el.width  * scale,
       height: el.height * scale,
     };

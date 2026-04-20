@@ -2,6 +2,7 @@
   import { getContext } from 'svelte';
   import { activeEditorIdStore, setActiveEditorId, scaleStore, pxStore, pyStore } from '../stores/canvas.js';
   import { elementsStore } from '../stores/elements.js';
+  import { activeCanvasKeyStore } from '../stores/projects.js';
   import NoteEditor from './NoteEditor.svelte';
   import TodoOverlay from './TodoOverlay.svelte';
 
@@ -16,14 +17,26 @@
   let px       = $derived($pxStore);
   let py       = $derived($pyStore);
   let elements = $derived($elementsStore);
+  let canvasKey = $derived($activeCanvasKeyStore);
 
   let activeEl = $derived(activeId ? elements.find(e => e.id === activeId) ?? null : null);
+
+  // Read effective position — on flow (task/final) canvases, position lives in
+  // viewPositions[canvasKey] rather than the base x/y.
+  function _effectivePos(el, key) {
+    if (key && key !== '__project__' && !key.startsWith('canvas:')) {
+      const vp = el.viewPositions?.[key];
+      if (vp) return { x: vp.x, y: vp.y };
+    }
+    return { x: el.x, y: el.y };
+  }
 
   // Compute screen position from world coordinates
   let rect = $derived((() => {
     if (!activeEl) return null;
-    const sx = (activeEl.x - WORLD_OFFSET) * scale + px;
-    const sy = (activeEl.y - WORLD_OFFSET) * scale + py;
+    const pos = _effectivePos(activeEl, canvasKey);
+    const sx = (pos.x - WORLD_OFFSET) * scale + px;
+    const sy = (pos.y - WORLD_OFFSET) * scale + py;
     return {
       left: sx,
       top: sy,

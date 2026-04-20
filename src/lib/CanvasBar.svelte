@@ -33,9 +33,61 @@
 
   let splitMode     = $derived($splitModeStore);
   let namedCanvases = $derived($projectCanvasesStore);
-  let topFlows      = $derived($projectFlowsStore.filter(t => !t.parentFlowId && (!t.kind || t.kind === 'flow')));
   let activeKey     = $derived($activeCanvasKeyStore);
   let secondaryKey  = $derived($secondaryCanvasKeyStore);
+
+  // Open flow tabs — only flows the user has explicitly opened appear in the strip.
+  // Persisted per-project in localStorage so the strip survives reloads. Closing
+  // a tab just removes it from this set (the underlying flow is untouched).
+  let _openTabsTick = $state(0);
+  function _openKey(pid) { return 'freeflow_open_flow_tabs_' + pid; }
+  function _readOpen(pid) {
+    if (!pid) return new Set();
+    try { return new Set(JSON.parse(localStorage.getItem(_openKey(pid)) || '[]')); }
+    catch { return new Set(); }
+  }
+  function _writeOpen(pid, set) {
+    if (!pid) return;
+    try { localStorage.setItem(_openKey(pid), JSON.stringify([...set])); } catch {}
+    _openTabsTick++;
+  }
+  let openFlowTabs = $derived((_openTabsTick, _readOpen(activeId)));
+
+  // Auto-open a tab whenever a flow canvas becomes active (on either panel).
+  $effect(() => {
+    if (!activeId) return;
+    const keys = [activeKey, secondaryKey].filter(Boolean);
+    let changed = false;
+    const set = _readOpen(activeId);
+    for (const key of keys) {
+      const parsed = parseCanvasKey(key);
+      // Only auto-add top-level flow tabs; sub-flows render via activeSubFlow transient.
+      if (parsed.kind !== 'task') continue;
+      const flow = $projectFlowsStore.find(t => t.id === parsed.flowId);
+      if (!flow || flow.parentFlowId || (flow.kind && flow.kind !== 'flow')) continue;
+      if (!set.has(flow.id)) { set.add(flow.id); changed = true; }
+    }
+    if (changed) _writeOpen(activeId, set);
+  });
+
+  let topFlows = $derived(
+    $projectFlowsStore.filter(t =>
+      !t.parentFlowId &&
+      (!t.kind || t.kind === 'flow') &&
+      openFlowTabs.has(t.id)
+    )
+  );
+
+  // When the active canvas is a sub-flow (or a final canvas), show a transient
+  // tab for it so the user can see/return to it. Hidden once they leave.
+  let activeSubFlow = $derived((() => {
+    if (canvasParsed.kind !== 'task' && canvasParsed.kind !== 'final') return null;
+    const flow = $projectFlowsStore.find(t => t.id === canvasParsed.flowId);
+    if (!flow) return null;
+    // Only show as transient if it isn't already in topFlows (i.e. it's a sub-flow or a final canvas)
+    if (canvasParsed.kind === 'task' && !flow.parentFlowId && (!flow.kind || flow.kind === 'flow')) return null;
+    return { flow, key: $activeCanvasKeyStore, isFinal: canvasParsed.kind === 'final' };
+  })());
 
   // Tab: new canvas inline creation
   let addingCanvas   = $state(false);
@@ -119,6 +171,23 @@
     const name = c?.name || 'this canvas';
     if (!confirm(`Delete canvas "${name}"? This cannot be undone.`)) return;
     window.deleteNamedCanvas?.(canvasId);
+  }
+
+  // Closing a flow tab removes it from the strip (the underlying flow isn't deleted).
+  // If the tab was active on either panel, navigate that panel away first.
+  function closeFlowTab(e, key) {
+    e.stopPropagation();
+    const flowId = key.startsWith('task:') ? key.slice(5).split(':')[0] : null;
+    if (secondaryKey === key && activeKey !== key) {
+      window.setSecondaryCanvas?.(null);
+    } else if (activeKey === key) {
+      window.switchToCanvas?.('__project__');
+    }
+    if (flowId && activeId) {
+      const set = _readOpen(activeId);
+      set.delete(flowId);
+      _writeOpen(activeId, set);
+    }
   }
 
   function goProjectCanvas() { window.openCanvasView?.(null, 'task'); }
@@ -221,8 +290,46 @@
             onclick={e => secondaryKey === tkey ? openSecondary(tkey, e) : pickRight(tkey, e)}
           >R</button>
         </span>
+        <button
+          class="ctab-close"
+          title="Close tab (returns to project canvas)"
+          aria-label="Close tab"
+          onclick={e => closeFlowTab(e, tkey)}
+        >
+          <svg viewBox="0 0 10 10" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 2l6 6M8 2L2 8"/></svg>
+        </button>
       </div>
     {/each}
+    <!-- Transient tab for the active sub-flow / final canvas (not in topFlows) -->
+    {#if activeSubFlow}
+      <div class="ctab ctab-flow ctab-subflow" class:active={activeKey === activeSubFlow.key}>
+        <button class="ctab-body" onclick={() => openCanvas(activeSubFlow.key)} title={activeSubFlow.flow.title}>
+          <span class="ctab-label">{activeSubFlow.flow.title}{activeSubFlow.isFinal ? ' · final' : ''}</span>
+        </button>
+        <span class="ctab-split-chip" role="group" aria-label="Assign to split panel">
+          <button
+            class="ctab-side ctab-side-l"
+            class:filled={activeKey === activeSubFlow.key}
+            title={activeKey === activeSubFlow.key ? 'On left' : 'Move to left'}
+            onclick={e => pickLeft(activeSubFlow.key, e)}
+          >L</button>
+          <button
+            class="ctab-side ctab-side-r"
+            class:filled={secondaryKey === activeSubFlow.key}
+            title={secondaryKey === activeSubFlow.key ? 'On right (click to close)' : 'Move to right'}
+            onclick={e => secondaryKey === activeSubFlow.key ? openSecondary(activeSubFlow.key, e) : pickRight(activeSubFlow.key, e)}
+          >R</button>
+        </span>
+        <button
+          class="ctab-close"
+          title="Close tab (returns to project canvas)"
+          aria-label="Close tab"
+          onclick={e => closeFlowTab(e, activeSubFlow.key)}
+        >
+          <svg viewBox="0 0 10 10" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 2l6 6M8 2L2 8"/></svg>
+        </button>
+      </div>
+    {/if}
   {/if}
 
   <!-- Named canvas tabs -->

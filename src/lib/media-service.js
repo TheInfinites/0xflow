@@ -537,17 +537,29 @@ export async function placeImageBlob(blob, wx, wy, sourcePath) {
     wx = p.x - dispW / 2; wy = p.y - dispH / 2;
   }
 
-  // Reference-only by default: store the file path (Tauri) or an object URL (browser)
-  // without copying the blob into the app. User can later choose "Embed file" to copy it in.
-  const refPath = sourcePath
-    ? sourcePath
-    : IS_TAURI ? null   // Tauri: sourcePath must be provided by caller (drag path)
-    : URL.createObjectURL(blob); // browser: use an object URL as reference
-
-  // Use the dataURL as a transient preview URL in the blobURLCache
-  // (not persisted — refPath is what survives saves)
+  // Reference-only by default: store the file path (Tauri) or an object URL (browser).
+  // When no sourcePath is supplied (clipboard paste, URL fetch), persist the blob
+  // so the image survives restarts — Tauri: save into {projectDir}/images/; browser:
+  // save into IndexedDB and track via imgId.
   const tempId = 'ref_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
   if (dataURL) blobURLCache[tempId] = dataURL;
+
+  let refPath = sourcePath ?? null;
+  let imgId   = null;
+  if (!sourcePath) {
+    if (IS_TAURI) {
+      const savedPath = await saveImgToProjectDir(blob, tempId);
+      if (savedPath) {
+        refPath = savedPath;
+      } else {
+        // No active project dir — fall back to AppData store so image still persists.
+        imgId = await saveImgBlob(blob);
+      }
+    } else {
+      imgId = await saveImgBlob(blob);
+      refPath = URL.createObjectURL(blob);
+    }
+  }
 
   snapshot();
   const el = {
@@ -562,19 +574,19 @@ export async function placeImageBlob(blob, wx, wy, sourcePath) {
     tags:    _autoTags(),
     viewPositions: {},
     content: {
-      imgId:    null,       // null = not embedded
-      refPath:  refPath,    // original file path / object URL
+      imgId:    imgId,
+      refPath:  refPath,
       embedded: false,
       nativeW:  nw,
       nativeH:  nh,
-      sourcePath: refPath,  // keep legacy compat
+      sourcePath: refPath,
       flowScope: _autoFlowScope(),
     },
   };
   elementsStore.update(els => [...els, el]);
 
-  // For in-session display, put the dataURL in blobURLCache keyed to the element id
   if (dataURL) blobURLCache['ref_display_' + el.id] = dataURL;
+  if (imgId && dataURL) blobURLCache[imgId] = dataURL;
 }
 
 export async function placeMediaFromPath(filePath, wx, wy, mediaType, mimeType) {

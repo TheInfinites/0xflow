@@ -1278,9 +1278,11 @@
     }
 
     if (isDragging && dragOrigins.length) {
-      dragMoved = true;
       const dx = (e.clientX - dragOrigins[0].startClientX) / scale;
       const dy = (e.clientY - dragOrigins[0].startClientY) / scale;
+      const distPx = Math.hypot(e.clientX - dragOrigins[0].startClientX, e.clientY - dragOrigins[0].startClientY);
+      if (distPx < 3) return;
+      dragMoved = true;
       elementsStore.update(els => {
         return els.map(el => {
           const o = dragOrigins.find(o => o.id === el.id);
@@ -2175,13 +2177,16 @@
   }
 
   function resizeHandlePos(el, handle, s) {
-    const sx = (el.x - WORLD_OFFSET) * s + px;
-    const sy = (el.y - WORLD_OFFSET) * s + py;
+    const pos = _getElPos(el);
+    const sx = (pos.x - WORLD_OFFSET) * s + px;
+    const sy = (pos.y - WORLD_OFFSET) * s + py;
     const ew = el.width * s, eh = el.height * s;
-    const hw = 8; // handle half-width
+    // Corner handles are 10×10, edge handles are 16×16 hit areas — both centered on the anchor point.
+    const isCorner = handle.length === 2;
+    const hw = isCorner ? 5 : 8;
     const map = {
-      n:  { left: sx + ew/2 - hw, top: sy - hw, cursor: 'n-resize' },
-      ne: { left: sx + ew - hw,   top: sy - hw,   cursor: 'ne-resize' },
+      n:  { left: sx + ew/2 - hw, top: sy - hw,        cursor: 'n-resize' },
+      ne: { left: sx + ew - hw,   top: sy - hw,        cursor: 'ne-resize' },
       e:  { left: sx + ew - hw,   top: sy + eh/2 - hw, cursor: 'e-resize' },
       se: { left: sx + ew - hw,   top: sy + eh - hw,   cursor: 'se-resize' },
       s:  { left: sx + ew/2 - hw, top: sy + eh - hw,   cursor: 's-resize' },
@@ -3135,12 +3140,18 @@
     z-index: 1200;
     pointer-events: all;
   }
-  /* Corner handles — visible round dots */
+  /* Corner handles — small white squares with orange border, centered on corner */
   .resize-corner {
     width: 10px; height: 10px;
+    background: #ffffff;
+    border: 1.5px solid #e8440a;
+    border-radius: 2px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+    box-sizing: border-box;
+    transition: transform 0.08s ease;
   }
-  .resize-corner::after {
-    content: none;
+  .resize-corner:hover {
+    transform: scale(1.2);
   }
   /* Edge handles — invisible hit areas only */
   .resize-edge {

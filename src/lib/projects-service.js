@@ -968,6 +968,14 @@ async function setSecondaryCanvas(key) {
   const parsed       = parseCanvasKey(key);
   const activeParsed = parseCanvasKey(get(activeCanvasKeyStore));
 
+  // Flush any pending debounced save on the primary so the disk snapshot we're
+  // about to read for the secondary reflects the latest edits.
+  if (_debounceSaveTimer) {
+    clearTimeout(_debounceSaveTimer);
+    _debounceSaveTimer = null;
+    await _saveCurrentCanvas();
+  }
+
   if (parsed.kind === 'named') {
     // Named canvas: load snapshot once (isolated store — no live sync needed)
     const state = await loadNamedCanvas(parsed.canvasId);
