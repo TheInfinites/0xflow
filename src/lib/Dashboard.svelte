@@ -45,7 +45,7 @@
 
   // ── helpers ─────────────────────────────────
   function getFolderProjects(fid) {
-    if (fid === null) return projects;
+    if (fid === null) return projects.filter(p => !p.folderId);
     if (fid === '__unfiled__') return projects.filter(p => !p.folderId);
     return projects.filter(p => p.folderId === fid);
   }

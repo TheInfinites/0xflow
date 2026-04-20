@@ -250,9 +250,8 @@ function renameProject(id, name) {
 function setProjectFlowColumns(id, count) {
   const n = Math.max(1, Math.min(6, count | 0));
   const projects = loadProjects();
-  const p = projects.find(x => x.id === id); if (!p) return;
-  p.flowColumns = n;
-  p.updatedAt = Date.now();
+  const idx = projects.findIndex(x => x.id === id); if (idx < 0) return;
+  projects[idx] = { ...projects[idx], flowColumns: n, updatedAt: Date.now() };
   saveProjects(projects);
 }
 

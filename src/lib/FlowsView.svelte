@@ -363,7 +363,7 @@
     <div
       class="tv-cols"
       class:tv-cols-capped={splitMode === 'left'}
-      style="grid-template-columns: repeat({columnCount}, minmax(0, 1fr));"
+      style="grid-template-columns: repeat({columnCount}, minmax(0, 360px));"
       ondragend={() => { dragFlowId = null; dropTargetId = null; }}
     >
       {#each columns as colFlows, ci (ci)}
