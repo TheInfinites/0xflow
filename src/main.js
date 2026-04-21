@@ -208,20 +208,25 @@ function _screenCenter() {
   return _clientToWorld(window.innerWidth / 2, window.innerHeight / 2, { left: 0, top: 0 });
 }
 
+function _dropPointWorld() {
+  const m = window.getLastMousePos?.();
+  if (m) return _clientToWorld(m.x, m.y, { left: 0, top: 0 });
+  return _screenCenter();
+}
 window.addNote = () => {
   const pixi = window._pixiCanvas; if (!pixi) return;
-  const { x, y } = _screenCenter();
-  pixi.makeNote(x - 120, y - 64);
+  const { x, y } = _dropPointWorld();
+  pixi.makeNote(x, y);
 };
 window.addTodo = () => {
   const pixi = window._pixiCanvas; if (!pixi) return;
-  const { x, y } = _screenCenter();
-  pixi.makeTodo(x - 120, y - 80);
+  const { x, y } = _dropPointWorld();
+  pixi.makeTodo(x, y);
 };
 window.addAiNote = () => {
   const pixi = window._pixiCanvas; if (!pixi) return;
-  const { x, y } = _screenCenter();
-  pixi.makeAiNote(x - 160, y - 100);
+  const { x, y } = _dropPointWorld();
+  pixi.makeAiNote(x, y);
 };
 
 // Intercept legacy canvas dblclick-to-create-note.
@@ -234,6 +239,6 @@ if (_cv) {
     const pixi = window._pixiCanvas; if (!pixi) return;
     e.stopImmediatePropagation();
     const { x, y } = _clientToWorld(e.clientX, e.clientY, { left: 0, top: 0 });
-    pixi.makeNote(x - 120, y - 64);
+    pixi.makeNote(x, y);
   }, true); // capture phase
 }

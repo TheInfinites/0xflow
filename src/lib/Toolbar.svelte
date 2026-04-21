@@ -7,13 +7,12 @@
 
   const tools = [
     { id: 'select',  key: 'v', tip: 'select  v',         svg: '<path d="M3 2l4 10 2-3.5 3.5-2z"/>' },
+    { id: 'hand',    key: 'h', tip: 'hand  h',           svg: '<path d="M6 8V3.5a1 1 0 0 1 2 0V7M8 7V2.8a1 1 0 0 1 2 0V7M10 7V3.5a1 1 0 0 1 2 0V8M6 8V6a1 1 0 0 0-2 0v4.5c0 2 1.7 3.5 3.7 3.5h.6c2 0 3.7-1.5 3.7-3.5V8"/>' },
     { id: 'note',    key: 'n', tip: 'note  n',           svg: '<rect x="2" y="2" width="11" height="11" rx="1.5"/><line x1="4.5" y1="5.5" x2="10.5" y2="5.5"/><line x1="4.5" y1="7.5" x2="10.5" y2="7.5"/><line x1="4.5" y1="9.5" x2="8" y2="9.5"/>' },
     { id: 'text',    key: 't', tip: 'text  t',           svg: '<line x1="7.5" y1="2" x2="7.5" y2="13"/><line x1="3" y1="4" x2="12" y2="4"/>' },
     { id: 'frame',   key: 'f', tip: 'frame  f',          svg: '<rect x="2" y="2" width="11" height="11" rx="1.5"/>' },
     { id: 'sep' },
     { id: 'pen',     key: 'd', tip: 'draw  d',           svg: '<path d="M3 12L10 3.5l2.5 2.5L5 14z"/><line x1="10" y1="3.5" x2="12.5" y2="6"/>' },
-    { id: 'rect',    key: 'r', tip: 'rectangle  r',      svg: '<rect x="2.5" y="3.5" width="10" height="8" rx="1" fill="none"/>' },
-    { id: 'ellipse', key: 'l', tip: 'ellipse  l',        svg: '<ellipse cx="7.5" cy="7.5" rx="5" ry="3.5" fill="none"/>' },
     { id: 'arrow',   key: 'a', tip: 'connect  a',        svg: '<line x1="3" y1="12" x2="12" y2="3"/><polyline points="7,3 12,3 12,8"/>' },
     { id: 'eraser',  key: 'e', tip: 'erase  e',          svg: '<path d="M3 11l5-7 4 4-5 7z"/><line x1="2" y1="13" x2="13" y2="13"/>' },
     { id: 'sep' },
@@ -27,7 +26,7 @@
     { id: 'theme',   tip: 'toggle theme',   svg: '<circle cx="7.5" cy="7.5" r="3"/><line x1="7.5" y1="1" x2="7.5" y2="2.5"/><line x1="7.5" y1="12.5" x2="7.5" y2="14"/><line x1="1" y1="7.5" x2="2.5" y2="7.5"/><line x1="12.5" y1="7.5" x2="14" y2="7.5"/><line x1="3" y1="3" x2="4.1" y2="4.1"/><line x1="10.9" y1="10.9" x2="12" y2="12"/><line x1="12" y1="3" x2="10.9" y2="4.1"/><line x1="4.1" y1="10.9" x2="3" y2="12"/>' },
   ];
 
-  const CANVAS_TOOLS = new Set(['select','pen','eraser','arrow','frame','rect','ellipse','line','text']);
+  const CANVAS_TOOLS = new Set(['select','hand','pen','eraser','arrow','frame','line','text']);
 
   function handleClick(t) {
     if (t.id === 'note')     { const m = window.getLastMousePos?.() ?? { x: window.innerWidth/2, y: window.innerHeight/2 }; const p = window.c2w?.(m.x, m.y) ?? { x: 3000, y: 3000 }; window._pixiCanvas?.makeNote?.(p.x, p.y); return; }

@@ -2,6 +2,7 @@
   import { projectsStore, foldersStore, currentFolderIdStore } from '../stores/projects.js';
   import TopBar from './TopBar.svelte';
   import ProjectGrid from './ProjectGrid.svelte';
+  import DashboardChangelog from './DashboardChangelog.svelte';
 
   // Service functions — imported at runtime via window bridge (set up by projects-service.js)
   // We call window.* so that the service is guaranteed to be mounted before Dashboard renders.
@@ -289,6 +290,7 @@
         </div>
       {/each}
     </dl>
+    <DashboardChangelog />
     <div class="hero-actions">
       <button class="hero-new-btn" onclick={openNewModal}>
         <svg viewBox="0 0 12 12"><line x1="6" y1="1" x2="6" y2="11"/><line x1="1" y1="6" x2="11" y2="6"/></svg>

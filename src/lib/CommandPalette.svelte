@@ -7,11 +7,18 @@
   let posX = $state(null); // null = centered
   let posY = $state(null);
 
+  function _dropPoint() {
+    const m = window.getLastMousePos?.();
+    const cx = m?.x ?? window.innerWidth / 2;
+    const cy = m?.y ?? window.innerHeight / 2;
+    return window.c2w?.(cx, cy) ?? { x: 3000, y: 3000 };
+  }
+
   const commands = [
-    { label: 'New note',           shortcut: 'N',        action: () => { const p = window.c2w?.(window.innerWidth/2, window.innerHeight/2) ?? { x: 3000, y: 3000 }; window._pixiCanvas?.makeNote?.(p.x, p.y); } },
-    { label: 'New AI note',        shortcut: 'I',        action: () => { const p = window.c2w?.(window.innerWidth/2, window.innerHeight/2) ?? { x: 3000, y: 3000 }; window._pixiCanvas?.makeAiNote?.(p.x, p.y); } },
-    { label: 'New to-do',          shortcut: 'O',        action: () => { const p = window.c2w?.(window.innerWidth/2, window.innerHeight/2) ?? { x: 3000, y: 3000 }; window._pixiCanvas?.makeTodo?.(p.x, p.y); } },
-    { label: 'New draw card',      shortcut: 'W',        action: () => { const p = window.c2w?.(window.innerWidth/2, window.innerHeight/2) ?? { x: 3000, y: 3000 }; window._pixiCanvas?.makeDrawCard?.(p.x, p.y); } },
+    { label: 'New note',           shortcut: 'N',        action: () => { const p = _dropPoint(); window._pixiCanvas?.makeNote?.(p.x, p.y); } },
+    { label: 'New AI note',        shortcut: 'I',        action: () => { const p = _dropPoint(); window._pixiCanvas?.makeAiNote?.(p.x, p.y); } },
+    { label: 'New to-do',          shortcut: 'O',        action: () => { const p = _dropPoint(); window._pixiCanvas?.makeTodo?.(p.x, p.y); } },
+    { label: 'New draw card',      shortcut: 'W',        action: () => { const p = _dropPoint(); window._pixiCanvas?.makeDrawCard?.(p.x, p.y); } },
     { label: 'Zoom to fit',        shortcut: '0',        action: () => window.zoomToFit?.() },
     { label: 'Select all',         shortcut: 'Ctrl+A',   action: () => window._pixiCanvas?.selectAll?.() },
     { label: 'Delete selected',    shortcut: 'Del',      action: () => window._pixiCanvas?.deleteSelected?.() },

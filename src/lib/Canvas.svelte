@@ -55,8 +55,10 @@
   let selected = new Set();       // Set of element ids
   let isDragging = false;
   let dragMoved = false; // true if pointer moved during a drag (suppresses pointertap play toggle)
-  let isPanning = false;
+  let isPanning = $state(false);
   let panStart = { x: 0, y: 0, px: 0, py: 0 };
+  let handToolActive = $state(false); // middle-mouse hand tool: panning while held
+  let handToolPrevTool = null;        // tool to restore when middle-mouse released
   let marqueeActive = false;
   let marqueeStart = null;
   let marqueeRect = $state(null); // { x, y, w, h } in screen px
@@ -1138,6 +1140,44 @@
     }
   }
 
+  // ── Hand tool (middle-mouse pan) ─────────────
+  function _endHandTool() {
+    if (!handToolActive) return;
+    handToolActive = false;
+    if (handToolPrevTool != null && handToolPrevTool !== curTool) {
+      curTool = handToolPrevTool;
+      setCurTool(handToolPrevTool);
+    }
+    handToolPrevTool = null;
+  }
+  // Safety net: if middle-button is released off-canvas, still end the hand tool.
+  function _onWindowPointerUp(e) {
+    if (handToolActive && e.button === 1) {
+      isPanning = false;
+      _endHandTool();
+    }
+  }
+  // Capture-phase middle-down: start hand tool even when a child component (card/editor) would otherwise swallow the event.
+  function _onWindowPointerDownCapture(e) {
+    if (e.button !== 1) return;
+    if (!canvasEl) return;
+    const r = canvasEl.getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+    zoomTarget = null; zoomRaf = null;
+    isPanning = true;
+    panStart = { x: e.clientX, y: e.clientY, px, py };
+    handToolPrevTool = curTool;
+    handToolActive = true;
+    e.preventDefault();
+  }
+  // While hand tool is active, pan with pointermove at window level (child components can't block it).
+  function _onWindowPointerMove(e) {
+    if (!handToolActive || !isPanning) return;
+    px = panStart.px + (e.clientX - panStart.x);
+    py = panStart.py + (e.clientY - panStart.y);
+    applyViewport();
+  }
+
   // ── Pointer event handlers ───────────────────
   function onPointerDown(e) {
     // Secondary (preview) panel: allow pan only, drop everything else.
@@ -1146,6 +1186,19 @@
         zoomTarget = null; zoomRaf = null;
         isPanning = true;
         panStart = { x: e.clientX, y: e.clientY, px, py };
+      }
+      return;
+    }
+
+    // Middle-mouse hand tool, alt+left pan, or left-click while 'hand' tool is active.
+    if (e.button === 1 || (e.button === 0 && e.altKey) || (e.button === 0 && curTool === 'hand')) {
+      zoomTarget = null; zoomRaf = null;
+      isPanning = true;
+      panStart = { x: e.clientX, y: e.clientY, px, py };
+      if (e.button === 1) {
+        handToolPrevTool = curTool;
+        handToolActive = true;
+        e.preventDefault();
       }
       return;
     }
@@ -1168,14 +1221,6 @@
       _radialStartY = e.clientY;
       _radialDragged = false;
       e.preventDefault();
-      return;
-    }
-
-    if (e.button === 1 || (e.button === 0 && e.altKey)) {
-      // Pan — cancel any in-progress zoom animation so it doesn't fight the drag
-      zoomTarget = null; zoomRaf = null;
-      isPanning = true;
-      panStart = { x: e.clientX, y: e.clientY, px, py };
       return;
     }
 
@@ -1344,7 +1389,11 @@
 
     if (relDragActive) { finishRelDrag(e.clientX, e.clientY); return; }
 
-    if (isPanning) { isPanning = false; return; }
+    if (isPanning) {
+      isPanning = false;
+      if (handToolActive && e.button === 1) _endHandTool();
+      return;
+    }
 
     if (isDragging) {
       isDragging = false;
@@ -1952,7 +2001,7 @@
     if (e.key === '-')        { doZoom(0.92, app.screen.width/2, app.screen.height/2); return; }
 
     // Tool shortcuts
-    const toolMap = { v:'select', t:'text', d:'pen', a:'arrow', e:'eraser', f:'frame', r:'rect', l:'ellipse' };
+    const toolMap = { v:'select', h:'hand', t:'text', d:'pen', a:'arrow', e:'eraser', f:'frame' };
     if (toolMap[e.key]) { curTool = toolMap[e.key]; setCurTool(curTool); return; }
 
     // Create shortcuts
@@ -2166,7 +2215,7 @@
     const sx = (bbox.x - WORLD_OFFSET) * s + px;
     const sy = (bbox.y - WORLD_OFFSET) * s + py;
     const ew = bbox.w * s, eh = bbox.h * s;
-    const hw = 8;
+    const hw = 3.5;
     const map = {
       nw: { left: sx - hw,      top: sy - hw,      cursor: 'nw-resize' },
       ne: { left: sx + ew - hw, top: sy - hw,      cursor: 'ne-resize' },
@@ -2181,9 +2230,9 @@
     const sx = (pos.x - WORLD_OFFSET) * s + px;
     const sy = (pos.y - WORLD_OFFSET) * s + py;
     const ew = el.width * s, eh = el.height * s;
-    // Corner handles are 10×10, edge handles are 16×16 hit areas — both centered on the anchor point.
+    // Corner handles are 7×7 dots, edge handles are 14×14 hit areas — both centered on the anchor point.
     const isCorner = handle.length === 2;
-    const hw = isCorner ? 5 : 8;
+    const hw = isCorner ? 3.5 : 7;
     const map = {
       n:  { left: sx + ew/2 - hw, top: sy - hw,        cursor: 'n-resize' },
       ne: { left: sx + ew - hw,   top: sy - hw,        cursor: 'ne-resize' },
@@ -2625,10 +2674,16 @@
       document.addEventListener('pointerup', onDocRadialUp);
       document.addEventListener('pointermove', onDocRadialMove);
       document.addEventListener('contextmenu', onDocContextMenu);
+      window.addEventListener('pointerup', _onWindowPointerUp);
+      window.addEventListener('pointerdown', _onWindowPointerDownCapture, true);
+      window.addEventListener('pointermove', _onWindowPointerMove, true);
       _docRadialCleanup = () => {
         document.removeEventListener('pointerup', onDocRadialUp);
         document.removeEventListener('pointermove', onDocRadialMove);
         document.removeEventListener('contextmenu', onDocContextMenu);
+        window.removeEventListener('pointerup', _onWindowPointerUp);
+        window.removeEventListener('pointerdown', _onWindowPointerDownCapture, true);
+        window.removeEventListener('pointermove', _onWindowPointerMove, true);
       };
     }
   });
@@ -2646,6 +2701,8 @@
   ondblclick={onDblClick}
   onwheel={onWheel}
   oncontextmenu={e => { e.preventDefault(); if (ctxMenu) closeCtxMenu(); }}
+  class:hand-tool-active={handToolActive || (curTool === 'hand' && isPanning)}
+  class:hand-tool-idle={curTool === 'hand' && !handToolActive && !isPanning}
   style="position:relative;width:100%;height:100%;overflow:hidden;"
 >
   <canvas bind:this={canvasEl} style="display:block;width:100%;height:100%;"></canvas>
@@ -3134,28 +3191,36 @@
     line-height: 1.2;
     white-space: nowrap;
   }
+  /* ── Hand tool cursors ── */
+  /* Fall back to the OS native grab/grabbing cursors — they render at proper DPI. */
+  .hand-tool-idle, .hand-tool-idle * { cursor: grab !important; }
+  .hand-tool-active, .hand-tool-active * { cursor: grabbing !important; }
+
   /* ── Resize handles ── */
   .resize-handle {
     position: absolute;
     z-index: 1200;
     pointer-events: all;
   }
-  /* Corner handles — small white squares with orange border, centered on corner */
+  /* Corner handles — minimal dot, centered on corner */
   .resize-corner {
-    width: 10px; height: 10px;
+    width: 7px; height: 7px;
     background: #ffffff;
-    border: 1.5px solid #e8440a;
-    border-radius: 2px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+    border: 1px solid rgba(232,68,10,0.9);
+    border-radius: 50%;
     box-sizing: border-box;
-    transition: transform 0.08s ease;
+    transition: transform 0.08s ease, background 0.08s ease;
   }
   .resize-corner:hover {
-    transform: scale(1.2);
+    transform: scale(1.35);
+    background: #e8440a;
+  }
+  :global(body.on-canvas.light) .resize-corner {
+    border-color: rgba(0,0,0,0.45);
   }
   /* Edge handles — invisible hit areas only */
   .resize-edge {
-    width: 16px; height: 16px;
+    width: 14px; height: 14px;
     background: transparent;
   }
 
