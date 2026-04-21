@@ -497,6 +497,7 @@
     }
 
     positionDomOverlays();
+    updateRelations();
   }
 
   function buildElContainer(el) {
@@ -1057,13 +1058,18 @@
 
   function updateRelations() {
     if (!relLayer) return;
-    const rels = $relationsStore;
+    const rels = isSecondary ? get(secondaryRelationsStore) : get(relationsStore);
+    // Only draw relations whose endpoints are visible on the current canvas —
+    // otherwise sub-canvas / flow-scoped connections bleed onto unrelated views.
+    const visEls = isSecondary ? get(secondaryVisibleElementsStore) : get(visibleElementsStore);
+    const visIds = new Set(visEls.map(e => e.id));
 
     const existing = new Set(relGraphics.keys());
     for (const rel of rels) {
+      if (!visIds.has(rel.elAId) || !visIds.has(rel.elBId)) continue;
       existing.delete(rel.id);
-      const elA = $elementsStore.find(e => e.id === rel.elAId);
-      const elB = $elementsStore.find(e => e.id === rel.elBId);
+      const elA = visEls.find(e => e.id === rel.elAId);
+      const elB = visEls.find(e => e.id === rel.elBId);
       if (!elA || !elB) continue;
 
       const posA = _getElPos(elA), posB = _getElPos(elB);
@@ -1615,14 +1621,18 @@
         node = node.parent;
       }
     }
-    // Fallback: test world coords against all elements (catches DOM overlay elements)
+    // Fallback: test world coords against visible elements only (catches DOM overlay
+    // elements). Using the visible set prevents relations to off-view elements that
+    // happen to share coordinates with the release point on a flow/subflow canvas.
     if (!targetId) {
       const wp = c2w(clientX, clientY);
-      const found = $elementsStore.find(e =>
-        e.id !== srcId &&
-        wp.x >= e.x && wp.x <= e.x + e.width &&
-        wp.y >= e.y && wp.y <= e.y + e.height
-      );
+      const visEls = get(visibleElementsStore);
+      const found = visEls.find(e => {
+        if (e.id === srcId) return false;
+        const pos = _getElPos(e);
+        return wp.x >= pos.x && wp.x <= pos.x + e.width &&
+               wp.y >= pos.y && wp.y <= pos.y + e.height;
+      });
       if (found) targetId = found.id;
     }
 
