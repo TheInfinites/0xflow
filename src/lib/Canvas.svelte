@@ -2466,9 +2466,9 @@
       tags: _autoTags(),
       viewPositions: perView ? { [_activeKey()]: { x: minX, y: minY } } : {},
     };
-    elementsStore.update(all => [frame, ...all]);
     selected = new Set([frameId]);
     setSelected(new Set([frameId]));
+    elementsStore.update(all => [frame, ...all]);
     snapshot();
     window.showToast?.('grouped');
   }
