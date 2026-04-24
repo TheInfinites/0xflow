@@ -14,6 +14,7 @@
   import ChecklistRow from './flow-rows/ChecklistRow.svelte';
   import LinkRow from './flow-rows/LinkRow.svelte';
   import DividerRow from './flow-rows/DividerRow.svelte';
+  import GroupRow from './flow-rows/GroupRow.svelte';
 
   let splitMode = $derived($splitModeStore);
 
@@ -82,20 +83,59 @@
     Math.max(1, Math.min(6, project?.flowColumns || 2))
   );
 
+  // IDs of flows that live inside a group — excluded from the regular column grid.
+  let groupChildIdSet = $derived(
+    new Set(
+      flows
+        .filter(f => f.kind === 'group')
+        .flatMap(f => f.payload?.childIds || [])
+    )
+  );
+
+  // Top-level flows are parentFlows minus those consumed by groups.
+  let topLevelFlows = $derived(
+    parentFlows.filter(f => !groupChildIdSet.has(f.id))
+  );
+
   // Each parent flow lives in column 0..N-1. Old flows lack the field — derive
   // from index parity so the layout stays stable. Values outside range wrap.
   function _colOf(flow, idx, n) {
     const c = (flow.column === 0 || flow.column > 0) ? flow.column : idx;
     return ((c % n) + n) % n;
   }
-  let columns = $derived.by(() => {
+  // Build a flat sequence of grid items in document order.
+  // Each item is either a group (spans N cols) or a per-column bucket of
+  // regular flows. Non-group flows are assigned to column slots using their
+  // stored `column` field; they're batched together between any groups.
+  let gridItems = $derived.by(() => {
     const n = columnCount;
+    const items = [];
+    // Collect pending non-group flows into column buckets, then flush them
+    // as a multi-column row whenever we hit a group or the end.
     const buckets = Array.from({ length: n }, () => []);
-    parentFlows.forEach((f, i) => {
-      buckets[_colOf(f, i, n)].push(f);
+    let hasPending = false;
+
+    function flushBuckets() {
+      if (!hasPending) return;
+      items.push({ kind: 'cols', buckets: buckets.map(b => [...b]) });
+      for (let i = 0; i < n; i++) buckets[i] = [];
+      hasPending = false;
+    }
+
+    topLevelFlows.forEach((f, i) => {
+      if (f.kind === 'group') {
+        flushBuckets();
+        items.push({ kind: 'group', flow: f });
+      } else {
+        const col = _colOf(f, i, n);
+        buckets[col].push(f);
+        hasPending = true;
+      }
     });
-    return buckets;
+    flushBuckets();
+    return items;
   });
+
 
   // ── Stats ────────────────
   let totalFlows = $derived(flows.length);
@@ -189,6 +229,7 @@
       checklist: 'checklist',
       link: 'link',
       divider: 'divider',
+      group: 'group',
     };
     const payloads = {
       text: { body: '' },
@@ -196,6 +237,7 @@
       checklist: { items: [] },
       link: { url: '', title: '', favicon: '' },
       divider: { label: '' },
+      group: { label: '', colSpan: 1, childIds: [] },
     };
 
     // Make sure existing flows have explicit column values so the new card's
@@ -329,6 +371,10 @@
           <span class="tv-add-item-ico">―</span>
           <div class="tv-add-item-body"><b>Divider</b><span>visual separator</span></div>
         </button>
+        <button class="tv-add-item" onclick={() => addItem('group', opts)}>
+          <span class="tv-add-item-ico">⬡</span>
+          <div class="tv-add-item-body"><b>Group</b><span>spans columns, holds items</span></div>
+        </button>
       </div>
     {/snippet}
 
@@ -366,11 +412,28 @@
       style="grid-template-columns: repeat({columnCount}, minmax(0, 360px));"
       ondragend={() => { dragFlowId = null; dropTargetId = null; }}
     >
-      {#each columns as colFlows, ci (ci)}
-        <div class="tv-col">
-          {#each colFlows as flow (flow.id)}
-            {@render flowCell(flow)}
+      {#each gridItems as item (item.kind === 'group' ? item.flow.id : 'cols-' + gridItems.indexOf(item))}
+        {#if item.kind === 'group'}
+          <div
+            class="tv-group-cell"
+            style="grid-column: span {Math.max(1, Math.min(columnCount, item.flow.payload?.colSpan || 1))};"
+          >
+            <GroupRow flow={item.flow} {columnCount} allFlows={flows} />
+          </div>
+        {:else}
+          {#each item.buckets as colFlows, ci (ci)}
+            <div class="tv-col">
+              {#each colFlows as flow (flow.id)}
+                {@render flowCell(flow)}
+              {/each}
+            </div>
           {/each}
+        {/if}
+      {/each}
+
+      <!-- "New" add buttons — always one per column, always at the bottom -->
+      {#each { length: columnCount } as _, ci (ci)}
+        <div class="tv-col tv-end-add-col">
           <div class="tv-add-popover-host tv-end-add">
             <button class="tv-add-btn" onclick={() => toggleAddMenu('end:' + ci)}>
               <span class="tv-add-icon">+</span>
@@ -638,6 +701,9 @@
     display: flex;
     flex-direction: column;
     gap: 14px;
+    min-width: 0;
+  }
+  .tv-group-cell {
     min-width: 0;
   }
   .tv-cell {

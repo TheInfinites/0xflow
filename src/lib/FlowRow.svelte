@@ -9,6 +9,8 @@
 
   function _svc(name, ...args) { return window[name]?.(...args); }
 
+  function focusOnMount(node) { requestAnimationFrame(() => node.focus()); }
+
   // eslint-disable-next-line svelte/prefer-writable-derived
   let expanded   = $state(startExpanded);
   $effect(() => { if (startExpanded) expanded = true; });
@@ -228,6 +230,73 @@
     document.addEventListener('mousedown', onDocDown);
     return () => document.removeEventListener('mousedown', onDocDown);
   });
+
+  // ── Cross-flow links ─────────────────────────
+  // A flow can be linked to sub-flows of other flows (flows that have a parentFlowId).
+  let linkPickerOpen = $state(false);
+  let linkPickerFilter = $state('');
+
+  let linkedFlows = $derived(
+    (flow.linkedFlowIds || [])
+      .map(id => flows.find(f => f.id === id))
+      .filter(Boolean)
+  );
+
+  // All sub-flows across the project (have a parentFlowId), excluding:
+  //   - the current flow itself
+  //   - flows that are already linked
+  //   - sub-flows of the current flow (would be circular)
+  let linkableFlows = $derived(
+    flows.filter(f =>
+      f.parentFlowId &&
+      f.id !== flow.id &&
+      f.parentFlowId !== flow.id &&
+      !(flow.linkedFlowIds || []).includes(f.id)
+    )
+  );
+
+  let filteredLinkable = $derived(
+    linkPickerFilter.trim()
+      ? linkableFlows.filter(f => {
+          const q = linkPickerFilter.toLowerCase();
+          const parent = flows.find(p => p.id === f.parentFlowId);
+          return f.title.toLowerCase().includes(q) || parent?.title.toLowerCase().includes(q);
+        })
+      : linkableFlows
+  );
+
+  function parentFlowOf(f) {
+    return flows.find(p => p.id === f.parentFlowId) || null;
+  }
+
+  function addFlowLink(targetId) {
+    const cur = flow.linkedFlowIds || [];
+    if (cur.includes(targetId)) return;
+    _svc('updateFlow', flow.id, { linkedFlowIds: [...cur, targetId] });
+    linkPickerOpen = false;
+    linkPickerFilter = '';
+  }
+
+  function removeFlowLink(targetId) {
+    const cur = flow.linkedFlowIds || [];
+    _svc('updateFlow', flow.id, { linkedFlowIds: cur.filter(id => id !== targetId) });
+  }
+
+  function openLinkedCanvas(linkedFlow) {
+    _svc('openCanvasView', linkedFlow.id, 'task');
+  }
+
+  $effect(() => {
+    if (!linkPickerOpen) return;
+    const onDocDown = (e) => {
+      if (!e.target.closest('.tr-link-picker') && !e.target.closest('.tr-link-add-btn')) {
+        linkPickerOpen = false;
+        linkPickerFilter = '';
+      }
+    };
+    document.addEventListener('mousedown', onDocDown);
+    return () => document.removeEventListener('mousedown', onDocDown);
+  });
 </script>
 
 <div
@@ -263,7 +332,7 @@
           bind:value={editValue}
           onblur={commitEdit}
           onkeydown={(e) => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') editing = false; }}
-          autofocus
+          use:focusOnMount
         />
       {:else}
         <button class="tr-title" onclick={beginEdit}>
@@ -482,6 +551,69 @@
           <div class="tr-timeline-fill" style="width: {timeProgress.pct}%"></div>
         </div>
         <span class="tr-timeline-label">{timeProgress.label}</span>
+      </div>
+    {/if}
+  </div>
+
+  <!-- Cross-flow links -->
+  <div class="tr-links-section">
+    <div class="tr-links-header">
+      <span class="tr-links-label">Linked to</span>
+      <div class="tr-link-add-wrap">
+        <button
+          class="tr-link-add-btn"
+          onclick={e => { e.stopPropagation(); linkPickerOpen = !linkPickerOpen; linkPickerFilter = ''; }}
+          title="link to a sub-flow"
+        >+</button>
+        {#if linkPickerOpen}
+          <div
+            class="tr-link-picker"
+            role="listbox"
+            tabindex="-1"
+            onclick={e => e.stopPropagation()}
+            onkeydown={e => { if (e.key === 'Escape') { e.stopPropagation(); linkPickerOpen = false; } }}
+          >
+            <input
+              class="tr-link-search"
+              type="text"
+              placeholder="search sub-flows..."
+              bind:value={linkPickerFilter}
+              use:focusOnMount
+            />
+            {#if filteredLinkable.length > 0}
+              {#each filteredLinkable as lf (lf.id)}
+                {@const parent = parentFlowOf(lf)}
+                <button class="tr-link-item" onclick={() => addFlowLink(lf.id)}>
+                  <span class="tr-link-item-parent">{parent?.title || '—'}</span>
+                  <span class="tr-link-item-arrow">›</span>
+                  <span class="tr-link-item-name">{lf.title}</span>
+                </button>
+              {/each}
+            {:else}
+              <div class="tr-link-empty">no sub-flows to link</div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    </div>
+    {#if linkedFlows.length > 0}
+      <div class="tr-links-chips">
+        {#each linkedFlows as lf (lf.id)}
+          {@const parent = parentFlowOf(lf)}
+          <div class="tr-link-chip" class:done={lf.status === 'done'}>
+            <button class="tr-link-chip-body" onclick={() => openLinkedCanvas(lf)} title="open flow canvas">
+              <span class="tr-link-chip-parent">{parent?.title || '—'}</span>
+              <span class="tr-link-chip-sep">›</span>
+              <span class="tr-link-chip-name">{lf.title}</span>
+              {#if lf.status === 'done'}
+                <svg class="tr-link-chip-check" viewBox="0 0 10 10" width="8" height="8"><path d="M2 5l2 2 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              {/if}
+            </button>
+            <button class="tr-link-chip-del" onclick={() => removeFlowLink(lf.id)} title="remove link">
+              <svg viewBox="0 0 10 10" width="8" height="8"><path d="M2.5 2.5l5 5M7.5 2.5l-5 5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+            </button>
+          </div>
+        {/each}
       </div>
     {/if}
   </div>
@@ -1215,4 +1347,174 @@
   :global(body.dash-light) .tr-add-sub:hover .tr-add-sub-icon { border-color: rgba(0,0,0,0.3); }
   :global(body.dash-light) .tr-tag-add { border-color: rgba(0,0,0,0.12); color: rgba(0,0,0,0.25); }
   :global(body.dash-light) .tr-tag-add:hover { color: rgba(0,0,0,0.5); border-color: rgba(0,0,0,0.25); }
+
+  /* ── Cross-flow links ───────────────────── */
+  .tr-links-section {
+    padding: 6px 0 8px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+    margin-top: 2px;
+  }
+  .tr-links-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .tr-links-label {
+    font-family: 'Geist Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.25);
+    flex: 1;
+  }
+  .tr-link-add-wrap { position: relative; }
+  .tr-link-add-btn {
+    background: none;
+    border: 1px dashed rgba(255,255,255,0.12);
+    color: rgba(255,255,255,0.25);
+    border-radius: 3px;
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.1s;
+  }
+  .tr-link-add-btn:hover { color: rgba(255,255,255,0.5); border-color: rgba(255,255,255,0.25); }
+
+  .tr-link-picker {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    min-width: 220px;
+    max-height: 220px;
+    overflow-y: auto;
+    background: #1a1a1c;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px;
+    padding: 4px;
+    z-index: 200;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.6);
+  }
+  .tr-link-search {
+    width: 100%;
+    box-sizing: border-box;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 4px;
+    color: rgba(255,255,255,0.85);
+    padding: 5px 8px;
+    font-family: 'Geist', sans-serif;
+    font-size: 11px;
+    outline: none;
+    margin-bottom: 4px;
+  }
+  .tr-link-search:focus { border-color: rgba(255,255,255,0.2); }
+  .tr-link-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    padding: 6px 8px;
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.7);
+    font-family: 'Geist', sans-serif;
+    font-size: 11px;
+    cursor: pointer;
+    border-radius: 4px;
+    text-align: left;
+    transition: background 0.1s;
+  }
+  .tr-link-item:hover { background: rgba(255,255,255,0.05); color: #fff; }
+  .tr-link-item-parent { color: rgba(255,255,255,0.35); font-size: 10px; }
+  .tr-link-item-arrow { color: rgba(255,255,255,0.2); font-size: 10px; }
+  .tr-link-item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tr-link-empty {
+    font-family: 'Geist Mono', monospace;
+    font-size: 9px;
+    color: rgba(255,255,255,0.25);
+    padding: 10px 8px;
+    text-align: center;
+    letter-spacing: 0.04em;
+  }
+
+  .tr-links-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .tr-link-chip {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.03);
+    border-radius: 4px;
+    overflow: hidden;
+    transition: border-color 0.1s;
+  }
+  .tr-link-chip:hover { border-color: rgba(255,255,255,0.14); }
+  .tr-link-chip.done { opacity: 0.5; }
+  .tr-link-chip-body {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 3px 6px 3px 7px;
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.6);
+    font-family: 'Geist', sans-serif;
+    font-size: 10px;
+    cursor: pointer;
+    transition: color 0.1s;
+    max-width: 200px;
+  }
+  .tr-link-chip-body:hover { color: #fff; }
+  .tr-link-chip-parent { color: rgba(255,255,255,0.3); font-size: 9px; white-space: nowrap; }
+  .tr-link-chip-sep { color: rgba(255,255,255,0.2); font-size: 9px; }
+  .tr-link-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tr-link-chip-check { color: rgba(120,200,140,0.8); flex-shrink: 0; }
+  .tr-link-chip-del {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 100%;
+    padding: 0;
+    background: none;
+    border: none;
+    border-left: 1px solid rgba(255,255,255,0.06);
+    color: rgba(255,255,255,0.2);
+    cursor: pointer;
+    transition: all 0.1s;
+    flex-shrink: 0;
+  }
+  .tr-link-chip-del:hover { color: #e84040; background: rgba(232,64,64,0.08); }
+
+  /* light mode */
+  :global(body.dash-light) .tr-links-section { border-top-color: rgba(0,0,0,0.07); }
+  :global(body.dash-light) .tr-links-label { color: rgba(0,0,0,0.25); }
+  :global(body.dash-light) .tr-link-add-btn { border-color: rgba(0,0,0,0.12); color: rgba(0,0,0,0.25); }
+  :global(body.dash-light) .tr-link-add-btn:hover { color: rgba(0,0,0,0.5); border-color: rgba(0,0,0,0.25); }
+  :global(body.dash-light) .tr-link-picker { background: #faf8f4; border-color: rgba(0,0,0,0.1); box-shadow: 0 12px 32px rgba(0,0,0,0.12); }
+  :global(body.dash-light) .tr-link-search { background: rgba(0,0,0,0.03); border-color: rgba(0,0,0,0.08); color: #1a1a1c; }
+  :global(body.dash-light) .tr-link-search:focus { border-color: rgba(0,0,0,0.2); }
+  :global(body.dash-light) .tr-link-item { color: rgba(0,0,0,0.7); }
+  :global(body.dash-light) .tr-link-item:hover { background: rgba(0,0,0,0.05); color: #000; }
+  :global(body.dash-light) .tr-link-item-parent { color: rgba(0,0,0,0.35); }
+  :global(body.dash-light) .tr-link-item-arrow { color: rgba(0,0,0,0.2); }
+  :global(body.dash-light) .tr-link-empty { color: rgba(0,0,0,0.25); }
+  :global(body.dash-light) .tr-link-chip { border-color: rgba(0,0,0,0.08); background: rgba(0,0,0,0.025); }
+  :global(body.dash-light) .tr-link-chip:hover { border-color: rgba(0,0,0,0.14); }
+  :global(body.dash-light) .tr-link-chip-body { color: rgba(0,0,0,0.6); }
+  :global(body.dash-light) .tr-link-chip-body:hover { color: #000; }
+  :global(body.dash-light) .tr-link-chip-parent { color: rgba(0,0,0,0.3); }
+  :global(body.dash-light) .tr-link-chip-sep { color: rgba(0,0,0,0.2); }
+  :global(body.dash-light) .tr-link-chip-del { border-left-color: rgba(0,0,0,0.06); color: rgba(0,0,0,0.2); }
+  :global(body.dash-light) .tr-link-chip-del:hover { color: #e84040; background: rgba(232,64,64,0.06); }
 </style>

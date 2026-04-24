@@ -446,6 +446,7 @@ function createFlow({ projectId, parentFlowId = null, title = 'new flow', kind =
     status: 'todo',
     order: get(projectFlowsStore).filter(t => (t.parentFlowId || null) === (isCanvasFlow ? parentFlowId : null)).length,
     flowTagIds: [],
+    linkedFlowIds: [],
     comments: [],
     description: '',
     payload,
@@ -512,6 +513,14 @@ function deleteFlow(flowId, mode = 'keep') {
           store.set(TAGS_KEY(flow.projectId), JSON.stringify(arr.filter(t => t.id !== flow.tagId)));
         } catch {}
       }
+    }
+  }
+
+  // Strip this flow's ID from linkedFlowIds of any other flows that referenced it
+  const afterSubs = get(projectFlowsStore);
+  for (const f of afterSubs) {
+    if (Array.isArray(f.linkedFlowIds) && f.linkedFlowIds.includes(flowId)) {
+      updateFlow(f.id, { linkedFlowIds: f.linkedFlowIds.filter(id => id !== flowId) });
     }
   }
 
