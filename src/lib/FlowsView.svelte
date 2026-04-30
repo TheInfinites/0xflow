@@ -15,6 +15,7 @@
   import LinkRow from './flow-rows/LinkRow.svelte';
   import DividerRow from './flow-rows/DividerRow.svelte';
   import GroupRow from './flow-rows/GroupRow.svelte';
+  import { flip } from 'svelte/animate';
 
   let splitMode = $derived($splitModeStore);
 
@@ -146,18 +147,28 @@
   // only commits once the pointer has moved past a small threshold, so clicks
   // and interactions inside the row aren't hijacked.
   let pendingDragFlow = null;     // { id, x, y } — set on pointerdown, cleared on up/start
-  let dragFlowId = $state(null);  // set only after threshold crossed → row goes translucent
-  let dragGhostStyle = $state('');
-  let dragGhostLabel = $state('');
+  let dragFlowId = $state(null);  // set only after threshold crossed
   let dropIndicator = $state(null);
   let dragMoved = $state(false);
   let dragSourceHeight = $state(0); // px height of the dragged cell, mirrored by the placeholder
 
-  function _flowLabel(f) {
-    if (!f) return '';
-    if (f.kind === 'divider') return f.payload?.label || '— divider —';
-    return f.title || 'untitled';
-  }
+  // Non-state refs for the floating clone & rAF coalescing — these don't need
+  // to drive Svelte reactivity, just the DOM clone's transform.
+  let _ghostEl = null;            // the DOM clone that follows the cursor
+  let _ghostOffsetX = 0;          // cursor → clone top-left offset captured at start
+  let _ghostOffsetY = 0;
+  let _lastClientX = 0;
+  let _lastClientY = 0;
+  let _rafId = 0;
+  // Cached rects, populated at drag start; invalidated on scroll/resize during a drag.
+  let _cachedColRects = [];       // [{ el, rect, idx }]
+  let _cachedGroupRects = [];     // [{ el, rect, id }]
+  let _cachedColsRect = null;
+  // True iff the cursor is over the phantom (auto-add) column slot.
+  let _overPhantomCol = false;
+  // Reactive flag: cursor is near the right edge during a drag, so we should
+  // reveal the phantom column. Updated each rAF tick during drag.
+  let nearRightEdge = $state(false);
 
   // Only block drag-initiation for *true* text-entry contexts where a press is
   // needed for caret placement / text selection. Buttons are fine — the click
@@ -170,7 +181,7 @@
   function onCellPointerDown(e, flow) {
     if (e.button !== 0) return;
     if (_isTextEntryTarget(e.target)) return;
-    pendingDragFlow = { id: flow.id, x: e.clientX, y: e.clientY, label: _flowLabel(flow) };
+    pendingDragFlow = { id: flow.id, x: e.clientX, y: e.clientY };
     window.addEventListener('pointermove', onDragMove);
     window.addEventListener('pointerup', onDragEnd, { once: true });
     window.addEventListener('pointercancel', onDragEnd, { once: true });
@@ -182,7 +193,7 @@
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
-    pendingDragFlow = { id: flow.id, x: e.clientX, y: e.clientY, label: _flowLabel(flow), fromGrip: true };
+    pendingDragFlow = { id: flow.id, x: e.clientX, y: e.clientY, fromGrip: true };
     window.addEventListener('pointermove', onDragMove);
     window.addEventListener('pointerup', onDragEnd, { once: true });
     window.addEventListener('pointercancel', onDragEnd, { once: true });
@@ -194,50 +205,120 @@
     e.stopImmediatePropagation();
   }
 
-  function _commitDragStart() {
+  function _refreshCachedRects() {
+    const colsRoot = document.querySelector('.tv-cols');
+    _cachedColsRect = colsRoot ? colsRoot.getBoundingClientRect() : null;
+    _cachedColRects = colsRoot
+      ? Array.from(colsRoot.querySelectorAll('.tv-col[data-col-index]')).map(el => ({
+          el,
+          rect: el.getBoundingClientRect(),
+          idx: parseInt(el.getAttribute('data-col-index'), 10),
+        }))
+      : [];
+    _cachedGroupRects = colsRoot
+      ? Array.from(colsRoot.querySelectorAll('.tv-group-cell[data-grid-item-id]')).map(el => ({
+          el,
+          rect: el.getBoundingClientRect(),
+          id: el.getAttribute('data-grid-item-id'),
+        }))
+      : [];
+  }
+
+  function _commitDragStart(e) {
     if (!pendingDragFlow) return;
     dragFlowId = pendingDragFlow.id;
-    dragGhostLabel = pendingDragFlow.label;
     dragMoved = true;
     dropIndicator = null;
     // Measure the source cell so the placeholder matches its height.
     const sel = `[data-cell-id="${pendingDragFlow.id}"], [data-grid-item-id="${pendingDragFlow.id}"]`;
     const sourceEl = document.querySelector(sel);
-    dragSourceHeight = sourceEl ? Math.round(sourceEl.getBoundingClientRect().height) : 56;
+    const sourceRect = sourceEl ? sourceEl.getBoundingClientRect() : null;
+    dragSourceHeight = sourceRect ? Math.round(sourceRect.height) : 56;
+
+    // Clone the source for the floating preview.
+    if (sourceEl) {
+      const clone = sourceEl.cloneNode(true);
+      clone.classList.add('tv-drag-clone');
+      // Wrapper holds positioning; clone sits inside at full source width.
+      const wrapper = document.createElement('div');
+      wrapper.className = 'tv-drag-clone-wrap';
+      wrapper.style.width = `${sourceRect.width}px`;
+      wrapper.style.height = `${sourceRect.height}px`;
+      wrapper.appendChild(clone);
+      document.body.appendChild(wrapper);
+      _ghostEl = wrapper;
+      // Offset = cursor position relative to source's top-left at grab time.
+      _ghostOffsetX = e.clientX - sourceRect.left;
+      _ghostOffsetY = e.clientY - sourceRect.top;
+      _ghostEl.style.transform = `translate3d(${sourceRect.left}px, ${sourceRect.top}px, 0) scale(1.02)`;
+    }
+
+    _refreshCachedRects();
     document.body.style.userSelect = 'none';
-    document.body.style.cursor = 'grabbing';
     try { window.getSelection?.()?.removeAllRanges?.(); } catch {}
-    // Swallow the click event that pointerup will otherwise generate on the
-    // button/element where the drag started.
+    window.addEventListener('scroll', _refreshCachedRects, true);
+    window.addEventListener('resize', _refreshCachedRects);
+    // Swallow the click event that pointerup will otherwise generate.
     window.addEventListener('click', _suppressNextClick, { capture: true, once: true });
+    if (!_rafId) _rafId = requestAnimationFrame(_rafTick);
+  }
+
+  function _rafTick() {
+    _rafId = 0;
+    if (!dragFlowId) return;
+    if (_ghostEl) {
+      const tx = _lastClientX - _ghostOffsetX;
+      const ty = _lastClientY - _ghostOffsetY;
+      _ghostEl.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(1.02)`;
+    }
+    computeDropTarget(_lastClientX, _lastClientY);
+    _rafId = requestAnimationFrame(_rafTick);
   }
 
   function onDragMove(e) {
     if (!pendingDragFlow) return;
+    _lastClientX = e.clientX;
+    _lastClientY = e.clientY;
     if (!dragFlowId) {
       const dx = e.clientX - pendingDragFlow.x;
       const dy = e.clientY - pendingDragFlow.y;
-      const threshold = pendingDragFlow.fromGrip ? 4 : 6;
-      if (dx * dx + dy * dy < threshold * threshold) return;
-      _commitDragStart();
+      if (dx * dx + dy * dy < 9) return; // 3px threshold, uniform
+      _commitDragStart(e);
     }
-    dragGhostStyle = `left:${e.clientX}px;top:${e.clientY}px;`;
-    computeDropTarget(e.clientX, e.clientY);
   }
 
   function computeDropTarget(x, y) {
     const draggedFlow = flows.find(f => f.id === dragFlowId);
-    if (!draggedFlow) { dropIndicator = null; return; }
+    if (!draggedFlow) { dropIndicator = null; _overPhantomCol = false; nearRightEdge = false; return; }
     const draggingGroup = draggedFlow.kind === 'group';
 
-    const colsRoot = document.querySelector('.tv-cols');
-    if (!colsRoot) { dropIndicator = null; return; }
+    if (!_cachedColsRect) { dropIndicator = null; _overPhantomCol = false; nearRightEdge = false; return; }
+
+    // Phantom column detection: cursor is past the right edge of the last
+    // real column AND we have headroom (< 6 cols). Only applies to non-group
+    // flows since groups span all columns.
+    const phantomEligible = !draggingGroup && columnCount < 6;
+    const lastCol = _cachedColRects.length
+      ? _cachedColRects.reduce((a, b) => (b.idx > a.idx ? b : a), _cachedColRects[0])
+      : null;
+    // Reveal the phantom column when the cursor is heading into the right
+    // empty zone — past 60% of the rightmost column's width, within the
+    // grid's vertical extent. Stays hidden otherwise so it doesn't clutter.
+    const inVerticalBand = lastCol && y >= _cachedColsRect.top - 40 && y <= _cachedColsRect.bottom + 40;
+    nearRightEdge = !!(phantomEligible && lastCol && inVerticalBand
+      && x > lastCol.rect.left + lastCol.rect.width * 0.6);
+    if (phantomEligible && lastCol && x > lastCol.rect.right + 4 && inVerticalBand) {
+      _overPhantomCol = true;
+      dropIndicator = { kind: 'col', col: columnCount, beforeId: null, phantom: true };
+      return;
+    }
+    _overPhantomCol = false;
 
     if (draggingGroup) {
+      const colsRoot = document.querySelector('.tv-cols');
+      if (!colsRoot) { dropIndicator = null; return; }
       // Walk all grid items in document order — both other groups and the
-      // first cell of each bucket-row count as drop anchors. We pick the
-      // first anchor whose vertical center is past the cursor; the group
-      // lands above it. If none, drop at the end.
+      // first cell of each bucket-row count as drop anchors.
       const anchors = Array.from(
         colsRoot.querySelectorAll('[data-grid-item-id], [data-cell-id]')
       ).filter(el => el.getAttribute('data-grid-item-id') !== dragFlowId);
@@ -258,79 +339,106 @@
       return;
     }
 
-    // Non-group flow. First check whether the cursor is hovering a group cell
-    // (or the gap immediately above/below one). If so, translate to a
-    // "drop relative to group" indicator so the flow can land between groups
-    // and bucket-rows even though it doesn't share a column with the group.
-    const groupCells = Array.from(colsRoot.querySelectorAll('.tv-group-cell[data-grid-item-id]'));
-    for (const g of groupCells) {
-      const r = g.getBoundingClientRect();
-      // Generous vertical band: include 8px above/below the group as the gap.
+    // Non-group flow. Check whether the cursor is hovering a group cell
+    // (or 8px gap above/below). Use cached rects.
+    for (const g of _cachedGroupRects) {
+      const r = g.rect;
       if (y >= r.top - 8 && y <= r.bottom + 8) {
         const before = y < r.top + r.height / 2;
-        // Pick a column based on cursor x within the group's horizontal extent.
         const localX = Math.max(0, Math.min(r.width - 1, x - r.left));
         const colIdx = Math.max(0, Math.min(columnCount - 1, Math.floor((localX / r.width) * columnCount)));
-        dropIndicator = {
-          kind: 'group-edge',
-          groupId: g.getAttribute('data-grid-item-id'),
-          before,
-          col: colIdx,
-        };
+        dropIndicator = { kind: 'group-edge', groupId: g.id, before, col: colIdx };
         return;
       }
     }
 
-    // Otherwise: find which column-bucket we're over.
-    const colEls = Array.from(document.querySelectorAll('.tv-col[data-col-index]'));
-    if (!colEls.length) { dropIndicator = null; return; }
-    let bestCol = colEls[0];
+    if (!_cachedColRects.length) { dropIndicator = null; return; }
+    // Find which column-bucket we're over.
+    let bestCol = _cachedColRects[0];
     let bestScore = Infinity;
-    for (const el of colEls) {
-      const r = el.getBoundingClientRect();
+    for (const c of _cachedColRects) {
+      const r = c.rect;
       const cx = r.left + r.width / 2;
       const dx = Math.abs(x - cx);
       let dy = 0;
       if (y < r.top) dy = r.top - y;
       else if (y > r.bottom) dy = y - r.bottom;
       const score = dx + dy * 4;
-      if (score < bestScore) { bestScore = score; bestCol = el; }
+      if (score < bestScore) { bestScore = score; bestCol = c; }
     }
-    const colIdx = parseInt(bestCol.getAttribute('data-col-index'), 10);
-    const cells = Array.from(bestCol.querySelectorAll('[data-cell-id]'));
+    const cells = Array.from(bestCol.el.querySelectorAll('[data-cell-id]'));
     let beforeId = null;
     for (const cell of cells) {
+      if (cell.getAttribute('data-cell-id') === dragFlowId) continue;
       const r = cell.getBoundingClientRect();
       if (y < r.top + r.height / 2) {
         beforeId = cell.getAttribute('data-cell-id');
         break;
       }
     }
-    dropIndicator = { kind: 'col', col: colIdx, beforeId };
+    dropIndicator = { kind: 'col', col: bestCol.idx, beforeId };
+  }
+
+  function _animateGhostHome(targetRect) {
+    if (!_ghostEl || !targetRect) { _removeGhost(); return; }
+    _ghostEl.style.transition = 'transform 180ms cubic-bezier(0.2, 0.7, 0.3, 1), opacity 180ms';
+    _ghostEl.style.transform = `translate3d(${targetRect.left}px, ${targetRect.top}px, 0) scale(1)`;
+    _ghostEl.style.opacity = '0';
+    const el = _ghostEl;
+    _ghostEl = null;
+    setTimeout(() => { try { el.remove(); } catch {} }, 200);
+  }
+  function _removeGhost() {
+    if (_ghostEl) { try { _ghostEl.remove(); } catch {} _ghostEl = null; }
   }
 
   function onDragEnd() {
     window.removeEventListener('pointermove', onDragMove);
+    if (_rafId) { cancelAnimationFrame(_rafId); _rafId = 0; }
     if (dragFlowId) {
       document.body.style.userSelect = '';
-      document.body.style.cursor = '';
-      if (dragMoved && dropIndicator) applyDrop();
-      // Click suppressor self-removes on next click; clear it on the next tick
-      // in case no click follows (e.g. pointerup outside any element).
+      window.removeEventListener('scroll', _refreshCachedRects, true);
+      window.removeEventListener('resize', _refreshCachedRects);
+      const dropped = dragMoved && dropIndicator;
+      // Capture target rect for ghost-home animation BEFORE we apply the drop
+      // (since applyDrop may reflow the grid).
+      let targetRect = null;
+      if (dropped) {
+        // Best-effort: animate to current cursor position so the ghost just
+        // settles where it was released. Real-position lookup post-mutation
+        // would require waiting a tick; the cursor-snap is good enough.
+        targetRect = { left: _lastClientX - _ghostOffsetX, top: _lastClientY - _ghostOffsetY };
+        applyDrop();
+      }
+      _animateGhostHome(targetRect);
       setTimeout(() => {
         window.removeEventListener('click', _suppressNextClick, { capture: true });
       }, 0);
+    } else {
+      _removeGhost();
     }
     pendingDragFlow = null;
     dragFlowId = null;
     dragMoved = false;
     dropIndicator = null;
+    _overPhantomCol = false;
+    nearRightEdge = false;
   }
 
   function applyDrop() {
     const draggedFlow = flows.find(f => f.id === dragFlowId);
     if (!draggedFlow) return;
     _normalizeColumnsAndOrder();
+
+    // Phantom-column drop: increment column count first, then write the
+    // new column index against the (now-larger) count.
+    if (dropIndicator.phantom && _overPhantomCol && draggedFlow.kind !== 'group') {
+      if (columnCount < 6 && activeId) {
+        _svc('setProjectFlowColumns', activeId, columnCount + 1);
+      }
+      // Continue with column-bucket flow logic: the new col index is dropIndicator.col
+      // which we already set to columnCount (one past previous max).
+    }
 
     if (dropIndicator.kind === 'group' || draggedFlow.kind === 'group') {
       // Insert the group before the anchor (another group or a non-group
@@ -356,7 +464,10 @@
 
     // Column-bucket drop for a non-group flow, or group-edge drop (insert
     // before/after a group at top level).
-    const targetCol = Math.max(0, Math.min(columnCount - 1, dropIndicator.col));
+    // If we just promoted a phantom column, the cap is one larger than the
+    // current `columnCount` derived from the (not-yet-rerendered) project.
+    const effectiveCount = dropIndicator.phantom ? columnCount + 1 : columnCount;
+    const targetCol = Math.max(0, Math.min(effectiveCount - 1, dropIndicator.col));
     let beforeId = dropIndicator.beforeId;
 
     const list = parentFlows.slice().sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -431,19 +542,71 @@
   }
 
   function addColumn() {
-    if (!activeId) return;
+    if (!activeId || columnCount >= 6) return;
+    const newCol = columnCount;
     _svc('setProjectFlowColumns', activeId, columnCount + 1);
+    // Open the "+ New" popover anchored at the new column so the user gets
+    // the kind picker immediately without an extra click.
+    requestAnimationFrame(() => { addMenuAnchor = 'end:' + newCol; });
   }
-  function removeColumn() {
-    if (!activeId || columnCount <= 1) return;
-    const newN = columnCount - 1;
-    // Reflow any flows in the removed column back into the last remaining column.
-    parentFlows.forEach((f, i) => {
-      const c = (f.column === 0 || f.column > 0) ? f.column : i;
-      if (c >= newN) _svc('updateFlow', f.id, { column: newN - 1 });
-    });
-    _svc('setProjectFlowColumns', activeId, newN);
+
+  // Hover-on-empty-space ghost-column state. Tracked at the .tv-main level
+  // and rendered as an absolutely-positioned overlay so toggling it doesn't
+  // reflow the grid (which previously caused flicker as the layout shifted
+  // out from under the cursor). Hysteresis: once visible, requires a larger
+  // exit zone to hide.
+  let hoverAddVisible = $state(false);
+  let hoverAddRect = $state(null); // { top, height, left } in viewport coords
+  let _hoverRaf = 0;
+  function _hoverUpdate(clientX, clientY) {
+    _hoverRaf = 0;
+    if (dragFlowId || columnCount >= 6) {
+      hoverAddVisible = false;
+      hoverAddRect = null;
+      return;
+    }
+    const colsEl = document.querySelector('.tv-cols');
+    if (!colsEl) { hoverAddVisible = false; return; }
+    const colsRect = colsEl.getBoundingClientRect();
+    // Find rightmost real column (exclude end-add cols since they share the
+    // grid; we want the content columns' right edge for the hover band).
+    const cols = colsEl.querySelectorAll('.tv-col[data-col-index]:not(.tv-end-add-col):not(.tv-phantom-col):not(.tv-hover-add-col)');
+    let rightEdge = -Infinity;
+    for (const c of cols) {
+      const r = c.getBoundingClientRect();
+      if (r.right > rightEdge) rightEdge = r.right;
+    }
+    if (rightEdge === -Infinity) { hoverAddVisible = false; return; }
+    // Hysteresis: smaller activation band, larger keep-alive band.
+    const inBandY = clientY >= colsRect.top - 20 && clientY <= colsRect.bottom + 20;
+    const enterBand = clientX > rightEdge + 8 && clientX < rightEdge + 220;
+    const keepBand  = clientX > rightEdge - 4 && clientX < rightEdge + 280;
+    const want = inBandY && (hoverAddVisible ? keepBand : enterBand);
+    if (want !== hoverAddVisible) hoverAddVisible = want;
+    if (want) {
+      hoverAddRect = {
+        top: colsRect.top,
+        height: colsRect.height,
+        left: rightEdge + 14,
+      };
+    }
   }
+  function onMainPointerMove(e) {
+    const x = e.clientX, y = e.clientY;
+    if (_hoverRaf) return;
+    _hoverRaf = requestAnimationFrame(() => _hoverUpdate(x, y));
+  }
+  function onMainPointerLeave() {
+    if (_hoverRaf) { cancelAnimationFrame(_hoverRaf); _hoverRaf = 0; }
+    hoverAddVisible = false;
+    hoverAddRect = null;
+  }
+
+  let showPhantom = $derived(!!dragFlowId && columnCount < 6 && nearRightEdge);
+  let showHoverAdd = $derived(hoverAddVisible && !dragFlowId && columnCount < 6);
+  // Only the phantom column extends the grid layout; the hover-add affordance
+  // floats outside the grid so it doesn't trigger reflow flicker.
+  let totalGridCols = $derived(columnCount + (showPhantom ? 1 : 0));
 
   async function addItem(kind, opts = {}) {
     if (!activeId) return;
@@ -566,7 +729,8 @@
   </div>
 
   <!-- Flow list -->
-  <main class="tv-main">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <main class="tv-main" onpointermove={onMainPointerMove} onpointerleave={onMainPointerLeave}>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     {#snippet addMenu(opts)}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -608,7 +772,7 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="tv-cell"
-        class:dragging={dragFlowId === flow.id}
+        class:tv-cell-placeholder={dragFlowId === flow.id}
         data-cell-id={flow.id}
         onpointerdown={e => onCellPointerDown(e, flow)}
       >
@@ -631,20 +795,21 @@
         {#if dropIndicator?.kind === 'col' && dropIndicator.beforeId === flow.id}
           <div class="tv-drop-line tv-drop-line-top"></div>
         {/if}
-        {#if !flow.kind || flow.kind === 'flow'}
-          <FlowRow {flow} subFlows={subFlowsOf(flow.id)} depth={0} startExpanded={true} />
-        {:else if flow.kind === 'text'}
-          <TextRow {flow} startExpanded={true} />
-        {:else if flow.kind === 'note'}
-          <NoteRow {flow} startExpanded={true} />
-        {:else if flow.kind === 'checklist'}
-          <ChecklistRow {flow} startExpanded={true} />
-        {:else if flow.kind === 'link'}
-          <LinkRow {flow} startExpanded={true} />
-        {:else if flow.kind === 'divider'}
-          <DividerRow {flow} />
-        {/if}
-
+        <div class="tv-cell-content">
+          {#if !flow.kind || flow.kind === 'flow'}
+            <FlowRow {flow} subFlows={subFlowsOf(flow.id)} depth={0} startExpanded={true} />
+          {:else if flow.kind === 'text'}
+            <TextRow {flow} startExpanded={true} />
+          {:else if flow.kind === 'note'}
+            <NoteRow {flow} startExpanded={true} />
+          {:else if flow.kind === 'checklist'}
+            <ChecklistRow {flow} startExpanded={true} />
+          {:else if flow.kind === 'link'}
+            <LinkRow {flow} startExpanded={true} />
+          {:else if flow.kind === 'divider'}
+            <DividerRow {flow} />
+          {/if}
+        </div>
       </div>
     {/snippet}
 
@@ -653,14 +818,14 @@
       class="tv-cols"
       class:tv-cols-capped={splitMode === 'left'}
       class:tv-cols-dragging={dragFlowId}
-      style="grid-template-columns: repeat({columnCount}, minmax(0, 360px)); --drop-h: {dragSourceHeight}px;"
+      style="grid-template-columns: repeat({totalGridCols}, minmax(0, 360px)); --drop-h: {dragSourceHeight}px;"
     >
       {#each gridItems as item, gi (item.kind === 'group' ? item.flow.id : 'cols-' + gi)}
         {#if item.kind === 'group'}
           <div
             class="tv-group-cell"
             data-grid-item-id={item.flow.id}
-            class:dragging={dragFlowId === item.flow.id}
+            class:tv-cell-placeholder={dragFlowId === item.flow.id}
             style="grid-column: span {Math.max(1, Math.min(columnCount, item.flow.payload?.colSpan || 1))};"
             onpointerdown={e => onCellPointerDown(e, item.flow)}
           >
@@ -703,7 +868,9 @@
           {#each item.buckets as colFlows, ci (ci)}
             <div class="tv-col" data-col-index={ci}>
               {#each colFlows as flow (flow.id)}
-                {@render flowCell(flow)}
+                <div class="tv-cell-anim" animate:flip={{ duration: 200 }}>
+                  {@render flowCell(flow)}
+                </div>
               {/each}
               {#if dropIndicator?.kind === 'col' && dropIndicator.col === ci && !dropIndicator.beforeId}
                 <div class="tv-drop-line tv-drop-line-bottom"></div>
@@ -731,18 +898,32 @@
           </div>
         </div>
       {/each}
+
+      <!-- Phantom column: appears during drag at right edge; releasing here adds a new column.
+           Spans all rows so it visually mirrors the height of the real columns. -->
+      {#if showPhantom}
+        <div class="tv-col tv-phantom-col" data-col-index={columnCount}
+             style="grid-column: {columnCount + 1}; grid-row: 1 / -1;">
+          <div class="tv-phantom-slot" class:active={dropIndicator?.phantom}>
+            <span class="tv-phantom-label">+ new column</span>
+          </div>
+        </div>
+      {/if}
+
     </div>
 
-    {#if dragFlowId && dragMoved}
-      <div class="tv-drag-ghost" style={dragGhostStyle}>
-        {dragGhostLabel}
+    <!-- Hover add column: floats outside the grid as a fixed-position overlay
+         so toggling visibility doesn't reflow the grid (which caused flicker). -->
+    {#if showHoverAdd && hoverAddRect}
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="tv-hover-add-overlay" onclick={addColumn}
+           style="top: {hoverAddRect.top}px; left: {hoverAddRect.left}px; height: {hoverAddRect.height}px;">
+        <div class="tv-phantom-slot tv-hover-add-slot">
+          <span class="tv-phantom-label">+ new column</span>
+        </div>
       </div>
     {/if}
-    <div class="tv-col-controls">
-      <button class="tv-col-btn" onclick={removeColumn} disabled={columnCount <= 1} title="remove column">−</button>
-      <span class="tv-col-count">{columnCount} col{columnCount !== 1 ? 's' : ''}</span>
-      <button class="tv-col-btn" onclick={addColumn} disabled={columnCount >= 6} title="add column">+</button>
-    </div>
   </main>
 
   <!-- Canvas footer: horizontal strip of canvas chips + add button -->
@@ -944,51 +1125,6 @@
   .tv-cols-capped {
     max-width: 760px;
   }
-  .tv-col-controls {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    margin-top: 16px;
-    padding: 4px 0;
-  }
-  .tv-cols-capped + .tv-col-controls { max-width: 760px; }
-  .tv-col-btn {
-    width: 22px; height: 22px;
-    background: transparent;
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 4px;
-    color: rgba(255,255,255,0.5);
-    cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 14px; line-height: 1;
-    transition: color 0.12s, border-color 0.12s, background 0.12s;
-  }
-  .tv-col-btn:hover:not(:disabled) {
-    color: #fff;
-    border-color: rgba(255,255,255,0.3);
-    background: rgba(255,255,255,0.04);
-  }
-  .tv-col-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-  .tv-col-count {
-    font-family: 'Geist Mono', monospace;
-    font-size: 10px;
-    letter-spacing: 0.05em;
-    color: rgba(255,255,255,0.35);
-    text-transform: uppercase;
-    min-width: 50px;
-    text-align: center;
-  }
-  :global(body.dash-light) .tv-col-btn {
-    border-color: rgba(0,0,0,0.15);
-    color: rgba(0,0,0,0.5);
-  }
-  :global(body.dash-light) .tv-col-btn:hover:not(:disabled) {
-    color: #1a1a1c;
-    border-color: rgba(0,0,0,0.3);
-    background: rgba(0,0,0,0.03);
-  }
-  :global(body.dash-light) .tv-col-count { color: rgba(0,0,0,0.4); }
   .tv-col {
     display: flex;
     flex-direction: column;
@@ -996,6 +1132,7 @@
     min-width: 0;
   }
   .tv-group-cell {
+    position: relative;
     min-width: 0;
   }
   .tv-cell {
@@ -1003,16 +1140,95 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    transition: opacity 0.12s;
   }
-  .tv-cell.dragging {
-    opacity: 0.35;
+  .tv-cell-anim { display: contents; }
+  /* Source cell while dragging: fully removed from layout so the surrounding
+     cells close the gap. The FLIP animation on .tv-cell-anim siblings makes
+     the collapse smooth; the floating clone shows the cursor-tracking
+     preview. */
+  .tv-cell.tv-cell-placeholder,
+  .tv-group-cell.tv-cell-placeholder {
+    display: none !important;
   }
-  .tv-group-cell {
-    position: relative;
+
+  /* Floating clone that follows the cursor while dragging. */
+  :global(.tv-drag-clone-wrap) {
+    position: fixed;
+    top: 0; left: 0;
+    pointer-events: none;
+    z-index: 10000;
+    transform-origin: top left;
+    will-change: transform;
+    opacity: 0.94;
+    box-shadow: 0 14px 40px rgba(0,0,0,0.45), 0 2px 6px rgba(0,0,0,0.25);
+    border-radius: 12px;
+    cursor: grabbing;
   }
-  .tv-group-cell.dragging {
-    opacity: 0.35;
+  :global(.tv-drag-clone) {
+    pointer-events: none;
+  }
+  :global(.tv-drag-clone .tv-grip) { display: none !important; }
+
+  /* Phantom column shown during drag. */
+  .tv-phantom-col {
+    align-self: stretch;
+    min-height: 100px;
+  }
+  .tv-phantom-slot {
+    flex: 1;
+    min-height: 100px;
+    border: 1.5px dashed rgba(255,255,255,0.18);
+    border-radius: 12px;
+    background: rgba(255,255,255,0.015);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255,255,255,0.35);
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: lowercase;
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
+  }
+  .tv-phantom-slot.active {
+    border-color: rgba(255,255,255,0.5);
+    background: rgba(255,255,255,0.04);
+    color: rgba(255,255,255,0.75);
+  }
+  /* Hover-add overlay: positioned outside the grid in viewport coordinates,
+     so toggling its visibility doesn't reflow the grid layout. */
+  .tv-hover-add-overlay {
+    position: fixed;
+    width: 200px;
+    cursor: pointer;
+    z-index: 50;
+    display: flex;
+    align-items: stretch;
+    pointer-events: auto;
+  }
+  .tv-hover-add-slot {
+    transition: border-color 0.12s, background 0.12s, color 0.12s;
+    width: 100%;
+  }
+  .tv-hover-add-overlay:hover .tv-hover-add-slot {
+    border-color: rgba(255,255,255,0.4);
+    background: rgba(255,255,255,0.03);
+    color: rgba(255,255,255,0.65);
+  }
+  :global(body.dash-light) .tv-phantom-slot {
+    border-color: rgba(0,0,0,0.18);
+    background: rgba(0,0,0,0.015);
+    color: rgba(0,0,0,0.4);
+  }
+  :global(body.dash-light) .tv-phantom-slot.active {
+    border-color: rgba(0,0,0,0.5);
+    background: rgba(0,0,0,0.03);
+    color: rgba(0,0,0,0.75);
+  }
+  :global(body.dash-light) .tv-hover-add-overlay:hover .tv-hover-add-slot {
+    border-color: rgba(0,0,0,0.4);
+    background: rgba(0,0,0,0.03);
+    color: rgba(0,0,0,0.7);
   }
 
   /* Grip handle: tucked just outside the row's left edge so it doesn't shift
@@ -1078,31 +1294,6 @@
     background: rgba(0,0,0,0.015);
   }
 
-  /* Ghost preview that follows the cursor while dragging */
-  .tv-drag-ghost {
-    position: fixed;
-    pointer-events: none;
-    z-index: 10000;
-    transform: translate(8px, 8px);
-    background: rgba(35,35,40,0.96);
-    color: #fff;
-    border: 1px solid rgba(255,255,255,0.18);
-    border-radius: 6px;
-    padding: 6px 10px;
-    font-family: 'Geist', sans-serif;
-    font-size: 12px;
-    max-width: 240px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    box-shadow: 0 6px 18px rgba(0,0,0,0.35);
-  }
-  :global(body.dash-light) .tv-drag-ghost {
-    background: rgba(255,255,255,0.98);
-    color: #1a1a1c;
-    border-color: rgba(0,0,0,0.15);
-    box-shadow: 0 6px 18px rgba(0,0,0,0.18);
-  }
   @media (max-width: 720px) {
     .tv-cols { grid-template-columns: 1fr !important; }
   }
