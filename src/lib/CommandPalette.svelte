@@ -16,7 +16,8 @@
 
   const commands = [
     { label: 'New note',           shortcut: 'N',        action: () => { const p = _dropPoint(); window._pixiCanvas?.makeNote?.(p.x, p.y); } },
-    { label: 'New AI note',        shortcut: 'I',        action: () => { const p = _dropPoint(); window._pixiCanvas?.makeAiNote?.(p.x, p.y); } },
+    { label: 'New AI note',        shortcut: 'Shift+I',  action: () => { const p = _dropPoint(); window._pixiCanvas?.makeAiNote?.(p.x, p.y); } },
+    { label: 'Import from flow…',  shortcut: 'I',        action: () => { const m = window.getLastMousePos?.(); window.openImportPalette?.(m?.x, m?.y); } },
     { label: 'New to-do',          shortcut: 'O',        action: () => { const p = _dropPoint(); window._pixiCanvas?.makeTodo?.(p.x, p.y); } },
     { label: 'New draw card',      shortcut: 'W',        action: () => { const p = _dropPoint(); window._pixiCanvas?.makeDrawCard?.(p.x, p.y); } },
     { label: 'Zoom to fit',        shortcut: '0',        action: () => window.zoomToFit?.() },

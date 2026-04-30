@@ -2016,7 +2016,8 @@
 
     // Create shortcuts
     if (e.key === 'n' || e.key === 'N') { const wp = c2w(lastMouseClient.x, lastMouseClient.y); makeNote(wp.x, wp.y); }
-    if (e.key === 'i' || e.key === 'I') { const wp = c2w(lastMouseClient.x, lastMouseClient.y); makeAiNote(wp.x, wp.y); }
+    if (e.key === 'I' && e.shiftKey)    { const wp = c2w(lastMouseClient.x, lastMouseClient.y); makeAiNote(wp.x, wp.y); }
+    else if (e.key === 'i')             { e.preventDefault(); window.openImportPalette?.(lastMouseClient.x, lastMouseClient.y); return; }
     if (e.key === 'o' || e.key === 'O') { const wp = c2w(lastMouseClient.x, lastMouseClient.y); makeTodo(wp.x, wp.y); }
     if (e.key === 'w' || e.key === 'W') { const wp = c2w(lastMouseClient.x, lastMouseClient.y); makeDrawCard(wp.x, wp.y); }
     if (e.key === 'b' || e.key === 'B') { brainstormOpenStore.update(v => !v); }

@@ -160,6 +160,11 @@ const canvasImportMount = document.createElement('div');
 document.body.appendChild(canvasImportMount);
 mount(CanvasImportPicker, { target: canvasImportMount });
 
+import ImportPalette from './lib/ImportPalette.svelte';
+const importPaletteMount = document.createElement('div');
+document.body.appendChild(importPaletteMount);
+mount(ImportPalette, { target: importPaletteMount });
+
 import Toast from './lib/Toast.svelte';
 const toastMount = document.createElement('div');
 document.body.appendChild(toastMount);
