@@ -494,7 +494,7 @@ export async function placeExrBlob(blob, wx, wy, sourcePath) {
   const id = await saveImgBlob(blob);
   blobURLCache[id] = dataURL;
 
-  const dispW = Math.min(nw, 600);
+  const dispW = Math.min(nw, 400);
   const dispH = Math.round(nh * (dispW / nw));
 
   if (wx === undefined) {
@@ -529,7 +529,7 @@ export async function placeImageBlob(blob, wx, wy, sourcePath) {
     tmp.src = dataURL;
   });
 
-  const dispW = Math.min(nw, 600);
+  const dispW = Math.min(nw, 400);
   const dispH = Math.round(nh * (dispW / nw));
 
   if (wx === undefined) {
@@ -688,7 +688,7 @@ export async function placeImagesGrid(blobs, sourcePaths, anchor) {
       tmp.onerror = () => res({ nw: 400, nh: 300 });
       tmp.src = dataURL;
     });
-    const dispW = Math.min(nw, 600);
+    const dispW = Math.min(nw, 400);
     const dispH = Math.round(nh * (dispW / nw));
     return { blob, dataURL, nw, nh, dispW, dispH, sourcePath: sourcePaths?.[i] };
   }));

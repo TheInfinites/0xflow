@@ -6,6 +6,7 @@
   let { el } = $props();
 
   let videoEl = $state(null);
+  let cardEl  = $state(null);
   let playing   = $state(false);
   let muted     = $state(false);
   let duration  = $state(0);
@@ -38,6 +39,14 @@
 
   let refPath = $derived(el?.content?.refPath ?? null);
   let sessionPreview = $derived(blobURLCache['ref_display_' + el?.id] ?? null);
+
+  // Footer scales with the card so controls grow with size and the video
+  // region keeps its native aspect (no letterboxing under aspect-locked resize).
+  // Reference width must match onLoaded's initial card width (capped at MAX_INIT_W=400),
+  // not the raw video pixel width — otherwise footerScale ≪ 1 for HD sources.
+  let nativeW = $derived(Number(el?.content?.nativeW) || 0);
+  let refW = $derived(nativeW > 0 ? Math.min(nativeW, 400) : (el?.width || 1));
+  let footerScale = $derived(el?.width ? el.width / refW : 1);
 
   let blobUrl = $derived.by(() => {
     if (embeddedUrl) return embeddedUrl;
@@ -114,7 +123,7 @@
       // native aspect. Stored nativeW/nativeH so subsequent resizes
       // keep the ratio even if the video isn't fully loaded yet.
       const alreadySized = (el.content?.nativeW === vw && el.content?.nativeH === vh);
-      const MAX_INIT_W = 640;
+      const MAX_INIT_W = 400;
       const initW = alreadySized ? el.width : Math.min(vw, MAX_INIT_W);
       const targetH = Math.round(initW * vh / vw) + FOOTER_H;
       if (!alreadySized || Math.abs(targetH - el.height) > 2 || Math.abs(initW - el.width) > 2) {
@@ -201,9 +210,10 @@
   }
 
   function toggleFullscreen() {
-    if (!videoEl) return;
+    const target = cardEl ?? videoEl;
+    if (!target) return;
     if (document.fullscreenElement) document.exitFullscreen();
-    else videoEl.requestFullscreen?.();
+    else target.requestFullscreen?.();
   }
 
   function fmt(s) {
@@ -222,7 +232,7 @@
   });
 </script>
 
-<div class="video-card">
+<div class="video-card" bind:this={cardEl} style="--fs:{footerScale};">
   {#if blobUrl}
     <div class="vc-video-wrap">
       <!-- svelte-ignore a11y_media_has_caption -->
@@ -338,54 +348,55 @@
     flex: 1; display: flex; align-items: center; justify-content: center;
     color: rgba(255,255,255,0.2); font-size: 11px;
   }
+  .video-card { --fs: 1; }
   .vc-footer {
-    display: flex; flex-direction: column; gap: 18px;
-    padding: 20px 0 18px;
+    display: flex; flex-direction: column; gap: calc(18px * var(--fs));
+    padding: calc(20px * var(--fs)) 0 calc(18px * var(--fs));
     background: rgba(0,0,0,0.85);
     flex-shrink: 0;
     pointer-events: auto;
   }
   .vc-row {
     display: flex; align-items: center; gap: 0; width: 100%;
-    padding: 0 22px;
+    padding: 0 calc(22px * var(--fs));
     box-sizing: border-box;
   }
-  .vc-btn-row { padding: 0 10px; gap: 8px; }
+  .vc-btn-row { padding: 0 calc(10px * var(--fs)); gap: calc(8px * var(--fs)); }
   .vc-btn-row .vc-btn {
-    flex: 1 1 0; justify-content: center; padding: 3px 0;
+    flex: 1 1 0; justify-content: center; padding: calc(3px * var(--fs)) 0;
   }
   .vc-btn {
     display: inline-flex; align-items: center; justify-content: center;
-    background: none; border: none; border-radius: 4px;
+    background: none; border: none; border-radius: calc(4px * var(--fs));
     color: rgba(255,255,255,0.35);
-    cursor: pointer; padding: 3px 6px;
+    cursor: pointer; padding: calc(3px * var(--fs)) calc(6px * var(--fs));
     transition: color 0.1s;
   }
   .vc-btn:hover { color: rgba(255,255,255,0.9); }
   .vc-btn.active { color: rgba(74,158,255,0.95); }
-  .vc-btn svg { width: 18px; height: 18px; display: block; }
+  .vc-btn svg { width: calc(18px * var(--fs)); height: calc(18px * var(--fs)); display: block; }
   .vc-play-btn { color: rgba(255,255,255,0.7); }
   .vc-play-btn:hover { color: #fff; }
-  .vc-play-btn svg { width: 16px; height: 16px; }
+  .vc-play-btn svg { width: calc(16px * var(--fs)); height: calc(16px * var(--fs)); }
   .vc-vol.muted { color: rgba(255,255,255,0.15); }
   .vc-seek {
-    flex: 1; height: 4px;
+    flex: 1; height: calc(4px * var(--fs));
     cursor: pointer;
     appearance: none; -webkit-appearance: none;
     background: rgba(255,255,255,0.12);
-    border-radius: 2px; outline: none; border: none;
+    border-radius: calc(2px * var(--fs)); outline: none; border: none;
   }
   .vc-seek::-webkit-slider-thumb {
     appearance: none; -webkit-appearance: none;
-    width: 14px; height: 14px; border-radius: 50%;
+    width: calc(14px * var(--fs)); height: calc(14px * var(--fs)); border-radius: 50%;
     background: rgba(255,255,255,0.75); cursor: pointer;
     transition: background 0.1s, transform 0.1s;
   }
   .vc-seek:hover::-webkit-slider-thumb { background: #fff; transform: scale(1.15); }
   .vc-time {
-    font-size: 11px; color: rgba(255,255,255,0.45);
+    font-size: calc(11px * var(--fs)); color: rgba(255,255,255,0.45);
     font-family: 'DM Mono', monospace; white-space: nowrap;
-    padding-left: 10px; letter-spacing: 0.03em;
+    padding-left: calc(10px * var(--fs)); letter-spacing: 0.03em;
   }
   .vc-clip-btn:disabled { opacity: 0.3; cursor: not-allowed; }
   .vc-clip-btn:disabled:hover { color: rgba(255,255,255,0.22); }
