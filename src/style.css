@@ -101,7 +101,7 @@ html, body {
   top: 48px; left: 50%; transform: translateX(-50%) scale(1);
   width: min(1160px, calc(100vw - 48px));
   height: min(660px, calc(100vh - 80px));
-  z-index: 5000;
+  z-index: 9700;
   background: #141414;
   border-radius: 14px;
   border: 1px solid rgba(255,255,255,0.08);
@@ -118,6 +118,13 @@ body.on-split #view-dashboard {
   opacity: 0;
   pointer-events: none;
   transform: translateX(-50%) scale(0.97) translateY(-8px);
+}
+/* dash-open forces the dashboard to overlay the current view without
+   tearing down on-canvas / on-flows / on-split layout underneath. */
+body.dash-open #view-dashboard {
+  opacity: 1;
+  pointer-events: all;
+  transform: translateX(-50%) scale(1);
 }
 /* Tasks view hides canvas chrome (top bar, canvas itself, toolbar, status bar, etc.) */
 body.on-flows #bar,
@@ -748,13 +755,14 @@ body.dash-light .ghost-half.ghost-folder:hover .ghost-half-label { color: rgba(0
 
 /* dash-backdrop — shown on dashboard, hidden on canvas, driven by body.on-canvas */
 #dash-backdrop {
-  position: fixed; inset: 0; z-index: 4999;
-  background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  position: fixed; inset: 0; z-index: 9600;
+  background: rgba(0,0,0,0.5);
   opacity: 1; pointer-events: all; transition: opacity 0.2s;
 }
 body.on-canvas #dash-backdrop,
 body.on-flows #dash-backdrop,
 body.on-split #dash-backdrop { opacity: 0; pointer-events: none; }
+body.dash-open #dash-backdrop { opacity: 1; pointer-events: all; }
 
 /* dashboard light mode */
 body.dash-light #view-dashboard { background: #F0EDE8; }

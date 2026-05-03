@@ -240,7 +240,7 @@
 
   // ── keyboard ─────────────────────────────────
   function onKeydown(e) {
-    if (document.body.classList.contains('on-canvas')) return;
+    if (document.body.classList.contains('on-canvas') && !document.body.classList.contains('dash-open')) return;
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
     if (e.key === 'n' || e.key === 'N') openNewModal();
     if ((e.metaKey || e.ctrlKey) && e.key === 'f') {

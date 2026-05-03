@@ -665,6 +665,7 @@ async function openProject(id, e) {
   }
 
   // Routing: v3 projects land on split view (flows + canvas); v2 projects go straight to canvas.
+  document.body.classList.remove('dash-open');
   if (p.schemaVersion === 3) {
     setActiveView('canvas');
     setSplitMode('split');
@@ -751,22 +752,25 @@ function setSplitPanel(mode) {
 async function goToDashboard() {
   clearTimeout(_debounceSaveTimer);
   _debounceSaveTimer = null;
-  _clearSecondaryUnsubs();
   await _saveCurrentCanvas();
-  document.body.classList.remove('on-canvas', 'on-flows', 'on-split', 'split-left', 'split-right', 'dual-canvas');
-  setSplitMode(false);
-  setActiveView('dashboard');
-  // Clear stores so the dashboard doesn't show stale flow/tag/canvas data.
-  setProjectFlows([]);
-  setProjectTags([]);
-  setProjectCanvases([]);
-  setActiveCanvasKey('__project__');
-  setSecondaryCanvasKey(null);
+  // Overlay the dashboard on top of the current view without tearing down
+  // the underlying on-canvas / on-flows / on-split layout or activeView.
+  // The dashboard hides again when a project is opened (see openProject)
+  // or when the user closes it (see closeDashboard).
+  document.body.classList.add('dash-open');
   dashRender();
 }
 
+function closeDashboard() {
+  document.body.classList.remove('dash-open');
+}
+
 async function toggleDashboard() {
-  if (get(isOnCanvasStore)) {
+  if (document.body.classList.contains('dash-open')) {
+    closeDashboard();
+    return;
+  }
+  if (get(isOnCanvasStore) || get(activeViewStore) === 'flows') {
     await goToDashboard();
   } else {
     const id = getActiveProjectId() || createProject('untitled canvas').id;
@@ -1219,6 +1223,7 @@ export function mountProjectsBridge() {
     deleteProject,
     openProject,
     goToDashboard,
+    closeDashboard,
     toggleDashboard,
     // v3 flows/tags
     createFlow,
