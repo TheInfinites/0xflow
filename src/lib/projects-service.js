@@ -28,6 +28,7 @@ import {
   projectCanvasesStore, setProjectCanvases, getProjectCanvases,
 } from '../stores/projects.js';
 import { elementsStore } from '../stores/elements.js';
+import { setSelected, setSelectedStrokeIds } from '../stores/canvas.js';
 import { toastMsgStore, toastVisibleStore, isOnCanvasStore, activeViewStore, setActiveView, splitModeStore, setSplitMode, secondaryCanvasKeyStore, setSecondaryCanvasKey } from '../stores/ui.js';
 import {
   saveCanvasV2, loadCanvasV2, saveCanvasV3, loadCanvasV3,
@@ -691,6 +692,11 @@ function setCanvasView(newKey) {
   const prev = get(activeCanvasKeyStore);
   if (prev === newKey) return;
   stashCurrentViewport(prev);
+  // Clear selection — selection IDs from the previous canvas would otherwise
+  // bleed into the new one (the SelectionBar/marching-ants render any selected
+  // ids regardless of whether they're visible on the current canvas).
+  setSelected(new Set());
+  setSelectedStrokeIds(new Set());
   setActiveCanvasKey(newKey);
   restoreViewport(newKey);
 }
@@ -935,6 +941,11 @@ async function switchToCanvas(newKey) {
   // flow ↔ project switches: no reload needed, visibleElementsStore handles filtering
 
   // 4. Switch the key and restore viewport
+  // Clear selection — selection IDs from the previous canvas would otherwise
+  // bleed into the new one (SelectionBar renders any selected ids regardless
+  // of whether they're visible on the current canvas).
+  setSelected(new Set());
+  setSelectedStrokeIds(new Set());
   setActiveCanvasKey(newKey);
   restoreViewport(newKey);
 

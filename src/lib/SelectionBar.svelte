@@ -138,12 +138,21 @@
     const ids = new Set(selected);
     const count = tagCount(tagId);
     const addToAll = count < selEls.length; // if not all have it, add; else remove
+    // If the tag belongs to a flow, adding it signals "share this element with
+    // that flow's canvas". Clear flowScope so the element isn't filtered out
+    // there by the visibility filter.
+    const isFlowTag = $projectFlowsStore.some(f => f.tagId === tagId);
     snapshot();
     elementsStore.update(els => els.map(e => {
       if (!ids.has(e.id)) return e;
       const cur = Array.isArray(e.tags) ? e.tags : [];
       const has = cur.includes(tagId);
-      if (addToAll && !has) return { ...e, tags: [...cur, tagId] };
+      if (addToAll && !has) {
+        const nextContent = isFlowTag && e.content?.flowScope
+          ? { ...e.content, flowScope: null }
+          : e.content;
+        return { ...e, tags: [...cur, tagId], content: nextContent };
+      }
       if (!addToAll && has) return { ...e, tags: cur.filter(t => t !== tagId) };
       return e;
     }));

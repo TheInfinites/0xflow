@@ -261,17 +261,50 @@
 
   function _close() { open = false; committed = []; tail = ''; selected = new Set(); }
 
+  // Resolve a world-space drop point from the cursor / palette position.
+  function _dropWorld() {
+    const c2w = window.c2w;
+    if (typeof c2w !== 'function') return null;
+    // posX/posY were captured when the palette opened (cursor at that moment).
+    // Falling back to current mouse pos in case the palette was opened
+    // without explicit coords.
+    let sx = posX, sy = posY;
+    if (sx == null || sy == null) {
+      const m = window.getLastMousePos?.();
+      sx = m?.x; sy = m?.y;
+    }
+    if (sx == null || sy == null) return null;
+    try { return c2w(sx, sy); } catch { return null; }
+  }
+
   function doLink() {
     if (!selected.size || !destInfo) return;
     snapshot();
     const destTagId = destInfo.tagId;
+    const destKey   = get(activeCanvasKeyStore);
     const ids = selected;
     const n = ids.size;
+    const drop = _dropWorld();
+    let i = 0;
     elementsStore.update(els => els.map(e => {
       if (!ids.has(e.id)) return e;
       const tags = Array.isArray(e.tags) ? e.tags : [];
-      if (tags.includes(destTagId)) return e;
-      return { ...e, tags: [...tags, destTagId] };
+      const nextTags = tags.includes(destTagId) ? tags : [...tags, destTagId];
+      // Clear flowScope so the element isn't hidden by the visibility filter
+      // on the destination canvas (it's scoped to the source canvas key).
+      const content = { ...(e.content || {}), flowScope: null };
+      // Place at cursor on the destination canvas via per-view position.
+      // Stagger multiple elements so they don't pile on top of each other.
+      let viewPositions = e.viewPositions || {};
+      if (drop && destKey && destKey !== '__project__') {
+        const w = e.width ?? 0, h = e.height ?? 0;
+        const off = (i++) * 24;
+        viewPositions = {
+          ...viewPositions,
+          [destKey]: { x: drop.x - w / 2 + off, y: drop.y - h / 2 + off },
+        };
+      }
+      return { ...e, tags: nextTags, content, viewPositions };
     }));
     window.showToast?.(`Linked ${n} element${n === 1 ? '' : 's'} into ${destInfo.title}`);
     _close();
@@ -285,14 +318,22 @@
     const now = Date.now();
     const els = get(elementsStore);
     const toAdd = [];
+    const drop = _dropWorld();
     let i = 0;
     for (const id of selected) {
       const src = els.find(e => e.id === id);
       if (!src) continue;
       const c = structuredClone(src);
       c.id = (src.type.replace('-', '') || 'el') + '_' + now + '_' + (i++) + '_' + Math.random().toString(36).slice(2, 6);
-      c.x = (src.x ?? 0) + 60;
-      c.y = (src.y ?? 0) + 60;
+      if (drop) {
+        const w = src.width ?? 0, h = src.height ?? 0;
+        const off = (i - 1) * 24;
+        c.x = drop.x - w / 2 + off;
+        c.y = drop.y - h / 2 + off;
+      } else {
+        c.x = (src.x ?? 0) + 60;
+        c.y = (src.y ?? 0) + 60;
+      }
       // Replace source flow tag with destination flow tag, keep other tags.
       const otherTags = (Array.isArray(src.tags) ? src.tags : []).filter(t => t !== srcTagId && t !== destTagId);
       c.tags = [destTagId, ...otherTags];
