@@ -1869,10 +1869,10 @@
   function makeNote(wx, wy) {
     snapshot();
     const id = 'note_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
-    const { x, y } = snapXY(wx - 120, wy - 64);
+    const { x, y } = snapXY(wx - 100, wy - 28);
     elementsStore.update(els => [...els, {
       id, type: 'note',
-      x, y, width: 240, height: 180, zIndex: Date.now(),
+      x, y, width: 200, height: 56, zIndex: Date.now(),
       pinned: false, locked: false, votes: 0, reactions: [],
       color: null, content: { blocks: [], fontSize: 14, flowScope: _autoFlowScope() },
       tags: _autoTags(),

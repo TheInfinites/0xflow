@@ -146,6 +146,7 @@
 
   let fontSize = $derived(el.content?.fontSize ?? 12);
   let previewHtml = $derived(blocksToHtml(el.content?.blocks));
+  let isEmpty = $derived(previewHtml.replace(/<[^>]*>/g, '').trim().length === 0);
   let noteIdx = $derived((() => {
     const els = $elementsStore;
     const notes = els.filter(e => e.type === 'note' || e.type === 'ai-note');
@@ -171,8 +172,12 @@
     {#if el.type === 'ai-note'}
       <span class="ai-badge">AI</span>
     {/if}
-    <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-    {@html previewHtml}
+    {#if isEmpty}
+      <span class="note-placeholder">let's cook</span>
+    {:else}
+      <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+      {@html previewHtml}
+    {/if}
   </div>
 
   <div class="note-bottom">
@@ -194,8 +199,8 @@
 <style>
   .note {
     width: 100%; height: 100%;
-    background: var(--note-bg, #1a1a1b);
-    border: 1px solid var(--note-border, rgba(255,255,255,0.08));
+    background: transparent;
+    border: 1px solid transparent;
     border-radius: 8px;
     padding: 12px 12px 0;
     box-sizing: border-box;
@@ -204,10 +209,29 @@
     position: relative;
     overflow: hidden;
     cursor: grab;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .note:hover {
+    border-color: rgba(255,255,255,0.08);
   }
   .note.selected {
     border-color: rgba(232,68,10,0.8);
     box-shadow: 0 0 0 3px rgba(232,68,10,0.06);
+  }
+  :global(body.on-canvas.light) .note:hover {
+    border-color: rgba(0,0,0,0.12);
+  }
+
+  .note-idx,
+  .note-bottom {
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .note:hover .note-idx,
+  .note:hover .note-bottom,
+  .note.selected .note-idx,
+  .note.selected .note-bottom {
+    opacity: 1;
   }
   .note-preview {
     flex: 1;
@@ -215,12 +239,28 @@
     font-size: var(--note-font-size, 12px);
     font-weight: 300;
     line-height: 1.6;
-    color: rgba(255,255,255,0.7);
+    color: rgba(255,255,255,0.85);
     overflow: hidden;
     word-break: break-word;
     pointer-events: none;
     user-select: none;
   }
+  :global(body.on-canvas.light) .note-preview { color: rgba(0,0,0,0.85); }
+  :global(body.on-canvas.light) .note-preview :global(h1) { color: rgba(0,0,0,0.95); }
+  :global(body.on-canvas.light) .note-preview :global(h2) { color: rgba(0,0,0,0.9); }
+  :global(body.on-canvas.light) .note-preview :global(h3) { color: rgba(0,0,0,0.88); }
+  :global(body.on-canvas.light) .note-preview :global(strong) { color: rgba(0,0,0,0.92); }
+  :global(body.on-canvas.light) .note-preview :global(em) { color: rgba(0,0,0,0.7); }
+  :global(body.on-canvas.light) .note-preview :global(blockquote) { border-left-color: rgba(0,0,0,0.18); color: rgba(0,0,0,0.55); }
+  :global(body.on-canvas.light) .note-preview :global(pre) { background: rgba(0,0,0,0.06); color: rgba(0,0,0,0.7); }
+  :global(body.on-canvas.light) .note-preview :global(code) { background: rgba(0,0,0,0.07); }
+  :global(body.on-canvas.light) .note-preview :global(hr) { border-top-color: rgba(0,0,0,0.12); }
+  :global(body.on-canvas.light) .note-preview :global(li.task-item .cb) { color: rgba(0,0,0,0.4); }
+  :global(body.on-canvas.light) .note-preview :global(li.task-item.checked .cb) { color: rgba(0,0,0,0.6); }
+  :global(body.on-canvas.light) .note-idx { color: rgba(0,0,0,0.3); }
+  :global(body.on-canvas.light) .note-votes { color: rgba(0,0,0,0.45); }
+  :global(body.on-canvas.light) .note-copy { color: rgba(0,0,0,0.4); }
+  :global(body.on-canvas.light) .note-copy:hover { color: rgba(0,0,0,0.8); background: rgba(0,0,0,0.06); }
   .note-preview :global(.task-item) { cursor: pointer; pointer-events: auto; }
   .note-preview :global(p)          { margin: 0 0 2px; }
   .note-preview :global(h1)         { font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.92); margin: 0 0 3px; }
@@ -240,6 +280,12 @@
   .note-preview :global(li.task-item .cb-text) { line-height: 1.4; }
   .note-preview :global(li.task-item.checked .cb)      { color: rgba(255,255,255,0.55); }
   .note-preview :global(li.task-item.checked .cb-text) { text-decoration: line-through; opacity: 0.4; }
+  .note-placeholder {
+    color: rgba(255,255,255,0.3);
+    font-style: italic;
+    font-weight: 300;
+  }
+  :global(body.on-canvas.light) .note-placeholder { color: rgba(0,0,0,0.3); }
   .note-idx {
     position: absolute;
     top: 8px; right: 10px;
@@ -282,5 +328,4 @@
     letter-spacing: 0.1em; color: #E8440A;
     text-transform: uppercase; margin-right: 4px;
   }
-  .ai-note { background: #1e2030; }
 </style>

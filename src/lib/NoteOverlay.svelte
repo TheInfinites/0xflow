@@ -71,10 +71,10 @@
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
-    background: #141415;
-    border: 1px solid rgba(255,255,255,0.1);
+    background: transparent;
+    border: none;
     box-shadow: none;
-    border-radius: 10px;
+    border-radius: 0;
     overflow: visible;
   }
 </style>

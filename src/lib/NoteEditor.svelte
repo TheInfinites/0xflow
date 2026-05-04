@@ -75,6 +75,7 @@
   let slashOpen  = $state(false);
   let slashQuery = $state('');
   let slashIdx   = $state(0);
+  let slashPos   = $state({ left: 0, top: 0 });
 
   const SLASH_COMMANDS = [
     { label: 'Text',        icon: '¶',   run: e => e.chain().focus().setParagraph().run() },
@@ -102,9 +103,21 @@
   function saveContent() {
     if (!editor || !elId) return;
     const json = editor.getJSON();
+    // Auto-grow: ensure element height fits content. Never shrink below user-set size.
+    const pm = editorEl?.querySelector?.('.ProseMirror');
+    let neededHeight = null;
+    if (pm) {
+      // 22px = wrap padding (10 top + 12 bottom). +4px breathing room.
+      neededHeight = Math.ceil(pm.scrollHeight) + 22 + 4;
+    }
     snapshot();
     elementsStore.update(els =>
-      els.map(e => e.id === elId ? { ...e, content: { ...e.content, blocks: json } } : e)
+      els.map(e => {
+        if (e.id !== elId) return e;
+        const next = { ...e, content: { ...e.content, blocks: json } };
+        if (neededHeight && neededHeight > (e.height ?? 0)) next.height = neededHeight;
+        return next;
+      })
     );
   }
 
@@ -112,6 +125,16 @@
     slashQuery = query;
     slashIdx   = 0;
     slashOpen  = true;
+    // Anchor menu just below the caret, relative to the editor container
+    try {
+      const { from } = editor.state.selection;
+      const coords = editor.view.coordsAtPos(from);
+      const containerRect = containerEl.getBoundingClientRect();
+      slashPos = {
+        left: coords.left - containerRect.left,
+        top: coords.bottom - containerRect.top + 4,
+      };
+    } catch {}
   }
 
   function closeSlash() {
@@ -163,7 +186,7 @@
         CodeBlock,
         TaskList,
         CustomTaskItem.configure({ nested: true }),
-        Placeholder.configure({ placeholder: 'Type / for commands…' }),
+        Placeholder.configure({ placeholder: "let's cook" }),
       ],
       content: initialContent,
       onUpdate: () => saveContent(),
@@ -230,7 +253,7 @@
   </div>
 
   {#if slashOpen && filteredCmds.length > 0}
-    <div class="slash-menu" bind:this={slashMenuEl} role="listbox" aria-label="Block type">
+    <div class="slash-menu" bind:this={slashMenuEl} role="listbox" aria-label="Block type" style="left:{slashPos.left}px; top:{slashPos.top}px;">
       {#each filteredCmds as cmd, i}
         <button
           class="slash-item"
@@ -250,32 +273,48 @@
 
 <style>
   .ne-container {
+    position: relative;
     display: flex; flex-direction: column;
     width: 100%; height: 100%;
     min-height: 0;
   }
   .ne-toolbar {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 0;
     display: flex; align-items: center; gap: 1px;
     padding: 4px 8px;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    background: rgba(20,20,22,0.95);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
     flex-shrink: 0;
     overflow: hidden;
+    backdrop-filter: blur(8px);
+  }
+  :global(body.on-canvas.light) .ne-toolbar {
+    background: rgba(245,243,238,0.95);
+    border-color: rgba(0,0,0,0.1);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.08);
   }
   .ne-tb-btn {
     display: inline-flex; align-items: center; justify-content: center;
     width: 24px; height: 24px;
     background: none; border: none; border-radius: 4px;
-    color: rgba(255,255,255,0.3);
+    color: rgba(255,255,255,0.45);
     cursor: pointer; padding: 0; flex-shrink: 0;
     transition: color 0.1s, background 0.1s;
   }
-  .ne-tb-btn:hover { color: rgba(255,255,255,0.85); background: rgba(255,255,255,0.05); }
+  .ne-tb-btn:hover { color: rgba(255,255,255,0.95); background: rgba(255,255,255,0.06); }
+  :global(body.on-canvas.light) .ne-tb-btn { color: rgba(0,0,0,0.5); }
+  :global(body.on-canvas.light) .ne-tb-btn:hover { color: rgba(0,0,0,0.9); background: rgba(0,0,0,0.06); }
   .ne-tb-btn svg { width: 12px; height: 12px; display: block; fill: currentColor; }
   .ne-tb-sep {
     width: 1px; height: 14px;
-    background: rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.1);
     margin: 0 3px; flex-shrink: 0;
   }
+  :global(body.on-canvas.light) .ne-tb-sep { background: rgba(0,0,0,0.1); }
 
   .note-editor-wrap {
     flex: 1;
@@ -346,19 +385,35 @@
 
   :global(.ProseMirror ::selection) { background: rgba(74,158,255,0.2); }
 
+  :global(body.on-canvas.light .ProseMirror) { color: rgba(0,0,0,0.85); }
+  :global(body.on-canvas.light .ProseMirror h1) { color: rgba(0,0,0,0.95); }
+  :global(body.on-canvas.light .ProseMirror h2) { color: rgba(0,0,0,0.9); }
+  :global(body.on-canvas.light .ProseMirror h3) { color: rgba(0,0,0,0.88); }
+  :global(body.on-canvas.light .ProseMirror strong) { color: rgba(0,0,0,0.95); }
+  :global(body.on-canvas.light .ProseMirror em) { color: rgba(0,0,0,0.7); }
+  :global(body.on-canvas.light .ProseMirror blockquote) { border-left-color: rgba(0,0,0,0.18); color: rgba(0,0,0,0.55); }
+  :global(body.on-canvas.light .ProseMirror pre) { background: rgba(0,0,0,0.06); color: rgba(0,0,0,0.75); }
+  :global(body.on-canvas.light .ProseMirror code) { background: rgba(0,0,0,0.07); color: rgba(0,0,0,0.75); }
+  :global(body.on-canvas.light .ProseMirror hr) { border-top-color: rgba(0,0,0,0.12); }
+  :global(body.on-canvas.light .ProseMirror p.is-editor-empty:first-child::before) { color: rgba(0,0,0,0.25); }
+
   .slash-menu {
     position: absolute;
-    bottom: calc(100% + 6px);
-    left: 0;
-    background: var(--card-bg, #1e1e1e);
-    border: 1px solid var(--border, #2a2a2a);
-    border-radius: 6px;
+    background: rgba(20,20,22,0.96);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
     padding: 4px;
-    min-width: 160px;
+    min-width: 180px;
     z-index: 2000;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.4);
     max-height: 240px;
     overflow-y: auto;
+    backdrop-filter: blur(8px);
+  }
+  :global(body.on-canvas.light) .slash-menu {
+    background: rgba(245,243,238,0.96);
+    border-color: rgba(0,0,0,0.1);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.1);
   }
 
   .slash-item {
@@ -372,10 +427,14 @@
     border-radius: 4px;
     cursor: pointer;
     text-align: left;
-    color: var(--text-primary, #e0e0e0);
+    color: rgba(255,255,255,0.85);
     font-size: 12px;
   }
-  .slash-item.active { background: var(--hover-bg, #252525); }
-  .slash-icon { width: 20px; text-align: center; color: var(--text-faint, #666); font-family: 'DM Mono', monospace; font-size: 11px; }
-  .slash-label { color: var(--text-secondary, #ccc); }
+  .slash-item.active { background: rgba(255,255,255,0.08); }
+  .slash-icon { width: 20px; text-align: center; color: rgba(255,255,255,0.4); font-family: 'DM Mono', monospace; font-size: 11px; }
+  .slash-label { color: rgba(255,255,255,0.85); }
+  :global(body.on-canvas.light) .slash-item { color: rgba(0,0,0,0.85); }
+  :global(body.on-canvas.light) .slash-item.active { background: rgba(0,0,0,0.06); }
+  :global(body.on-canvas.light) .slash-icon { color: rgba(0,0,0,0.45); }
+  :global(body.on-canvas.light) .slash-label { color: rgba(0,0,0,0.85); }
 </style>
